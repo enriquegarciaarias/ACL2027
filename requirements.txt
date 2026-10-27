@@ -1,0 +1,22 @@
+# =============================================================================
+# requirements.txt — Dependencias base del esqueleto de proyecto
+# Añade aquí las dependencias específicas de cada proyecto (p. ej. torch,
+# transformers, sentence-transformers, ollama, etc.)
+# =============================================================================
+
+# Core
+colorama>=0.4.6
+pathlib
+typing-extensions
+
+# Configuración y entorno
+python-dotenv>=1.0.0
+
+# Logging y utilidades
+# (logging, json, hashlib, socket, argparse están en la stdlib)
+
+# Ejemplo de dependencias opcionales (descomentar según el proyecto):
+# torch>=2.0.0
+# sentence-transformers>=2.2.0
+# ollama>=0.1.0
+# huggingface_hub>=0.16.0

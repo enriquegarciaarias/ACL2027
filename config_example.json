@@ -1,0 +1,50 @@
+{
+    "uid": "ACL2027",
+    "project": "ACL2027",
+    "defaults": {
+        "huggingFaceToken": "REEMPLAZAR_CON_TU_TOKEN_DE_HUGGING_FACE",
+        "modelNames": {},
+        "search": {
+            "availables": [],
+            "refresh": false,
+            "max_results": 500,
+            "request_timeout": 30,
+            "max_retries": 3,
+            "backoff_seconds": 2.0,
+            "sleep_between_calls": 0.4,
+            "providers": {},
+            "merge": {
+                "by_title_only_min_chars": 25
+            },
+            "decomposition": {
+                "enabled": false
+            },
+            "streams": {}
+        },
+        "llm": {
+            "primary_model": "qwen3:8b",
+            "fallback_model": ["qwen2.5:7b", "llama3.1:8b"],
+            "max_retries": 1,
+            "temperature": 0.3,
+            "max_tokens": 800,
+            "llm_timeout": 120.0,
+            "llm_keep_alive": "5m"
+        },
+        "url_blacklist": {
+            "_help": "Opcional. Dominios/URLs desde los que NO se descargan PDFs (aplica a todos los proyectos).",
+            "urls": [],
+            "domains": []
+        }
+    },
+    "environment": {
+        "realPath": "",
+        "results_root": "",
+        "models": "models",
+        "input": "results/input",
+        "output": "results/output",
+        "logs": "",
+        "cache": ".pycache"
+    },
+    "datasetVars": {},
+    "params": {}
+}

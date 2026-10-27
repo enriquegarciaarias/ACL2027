@@ -1,0 +1,67 @@
+# =============================================================================
+# .gitignore — Esqueleto de proyecto (base reutilizable para ACL2027 y futuros)
+# =============================================================================
+
+# Configuración con secretos (no versionar)
+config.json
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+.env
+
+# Caché de Python y bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.pycache/
+.cache/
+*.so
+
+# Caché de pip y build
+.pip-cache/
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Resultados y datos generados (pueden ser grandes y contener datos sensibles)
+results/
+out/
+
+# Logs del proceso
+ProcessLog.txt
+Process.txt
+*.log
+
+# IDE y editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Documentación generada (LaTeX)
+paper/
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.pdf
+
+# Paquetes de terceros clonados (ej. repositorios externos)
+sources/third_party/
+
+# Bytecode compilado
+*.pyc

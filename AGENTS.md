@@ -116,27 +116,50 @@ sincronizada.
 
 ---
 
-## 7. Estado de esta sesión (cierre — 2026-10-26)
+## 7. Estado de esta sesión (cierre — 2026-10-27)
 
-### Qué salió bien
-- Esqueleto base de ACL2027 creado completo, siguiendo el patrón común de PSRI y SLIP.
-- Todos los archivos Python compilan correctamente (`py_compile` OK).
-- `config_example.json` validado como JSON correcto.
-- Estructura de directorios, módulos comunes, documentación y tests creados.
+### Qué salió bien en esta sesión
+- Repositorio git inicializado localmente con `git init` y rama `main`.
+- Primer commit realizado (`60ca167`): 22 archivos, 2869 líneas, incluyendo
+  esqueleto base, módulos comunes, documentación y `.gitignore`.
+- `.gitignore` verificado: excluye correctamente `config.json`, `.venv/`,
+  `results/`, `paper/`, `__pycache__/`, `.idea/` y otros archivos no versionables.
+- Remote configurado: `origin -> https://github.com/enriquegarciaarias/ACL2027.git`
 
-### Qué falló
-- Al ejecutar `python main.py` directamente en el entorno base del sistema falló por falta de `colorama` (y `pip` no está disponible en ese entorno). **No es un fallo del esqueleto**: `colorama` es una dependencia de runtime que se instala en el `.venv` del proyecto mediante `pip install -r requirements.txt`, exactamente como en PSRI y SLIP.
+### Qué falló en esta sesión
+- El `git push -u origin main` falló por falta de autenticación:
+  `could not read Username for 'https://github.com': No existe el dispositivo o la dirección`.
+  El commit existe localmente pero aún no se subió a GitHub.
+- (Previo, ya documentado) Al ejecutar `python main.py` directamente en el
+  entorno base del sistema falló por falta de `colorama`; no es un fallo del
+  esqueleto, se resuelve instalando dependencias en el `.venv`.
+
+### Cambios en estructura de directorios, módulos, configuración o flujos
+- No hubo cambios en la estructura de archivos; solo se inicializó el control
+  de versiones git y se preparó el remoto hacia GitHub.
 
 ### Próximos pasos sugeridos (pendientes)
 
-1. Crear `config.json` a partir de `config_example.json` y editarlo con rutas y tokens.
-2. Crear el entorno e instalar dependencias:
+1. Completar el push a GitHub. Opciones:
+   - Token PAT:
+     ```bash
+     git remote set-url origin https://<TOKEN>@github.com/enriquegarciaarias/ACL2027.git
+     git push -u origin main
+     ```
+   - SSH:
+     ```bash
+     git remote set-url origin git@github.com:enriquegarciaarias/ACL2027.git
+     git push -u origin main
+     ```
+   - GitHub CLI: `gh auth login && git push -u origin main`
+2. Crear `config.json` a partir de `config_example.json` y editarlo con rutas y tokens.
+3. Crear el entorno e instalar dependencias:
    ```bash
    python -m venv .venv
    source .venv/bin/activate
    pip install -r requirements.txt
    ```
-3. Registrar los procesos del proyecto en `PROCESS_REGISTRY` de `main.py`.
-4. Implementar los módulos del pipeline bajo `sources/`.
-5. Añadir tests unitarios en `tests/`.
-6. Documentar el pipeline en `docs/`.
+4. Registrar los procesos del proyecto en `PROCESS_REGISTRY` de `main.py`.
+5. Implementar los módulos del pipeline bajo `sources/`.
+6. Añadir tests unitarios en `tests/`.
+7. Documentar el pipeline en `docs/`.

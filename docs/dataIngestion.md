@@ -373,3 +373,504 @@ Los documentos permiten identificar tres líneas complementarias: limpiar y veri
 Para tu proyecto, evitaría plantear el preprocesamiento como una simple fase técnica previa. Conviene tratarlo como una variable experimental: comparar representaciones y cadenas de tratamiento bajo degradaciones controladas, y medir no solo la exactitud de las respuestas, sino también su fidelidad a la evidencia y su calibración lingüística.
 
 Esta selección está limitada a los tres documentos proporcionados. Los títulos se presentan según los registros bibliográficos incluidos en ellos; antes de cerrar el estado del arte conviene comprobar las versiones originales, especialmente en los trabajos de prepublicación y en los artículos cuyo registro contiene títulos abreviados.
+
+
+
+# Sugerencia 1
+Primera prueba de concepto: arquitectura y dataset
+Dataset recomendado: WESAD
+Es la elección óptima para una primera prueba por cuatro razones:
+
+Señales multi-modalidad: ECG, EDA, respiración, temperatura, acelerometría (RespiBAN chest + Empatica E4 wrist)
+Etiquetas claras y binarias: baseline vs stress vs amusement (perfecto para clasificación)
+Tamaño manejable: 15 sujetos, ~36 horas de datos, formato pickle/WESAD público
+Tu literatura lo respalda: ieee_53 (StressLLM) y ieee_88 ya lo usaron con LLMs, así tienes baseline de comparación
+python
+
+# Descarga: https://ubicomp.eti.uni-siegen.de/home/datasets/icmi18/
+# Estructura: WESAD/S{Sujetos}/S{X}.pkl -> dict con 'chest', 'wrist', 'label'
+# label: 0=undefined, 1=baseline, 2=stress, 3=amusement, 4=meditation
+Arquitectura de la prueba de concepto
+text
+
+┌─────────────────────────────────────────────────────────────┐
+│                    PIPELINE DE PRUEBA                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  1. WESAD Loader ──► 2. Window Extractor ──► 3. Degradation │
+│     (pickle)         (60s windows)           (clean/noise)  │
+│                                              (PSRI audit)   │
+│                                                              │
+│  4. Feature Extractor ──► 5. Text Serializer ──► 6. Prompt  │
+│     (HRV, EDA, ACC)        (JSON/statistical)     Builder   │
+│                                                              │
+│  7. Ollama LLM ──► 8. JSON Parser ──► 9. Evaluator          │
+│     (Qwen 2.5 7B)     (response)       (accuracy,          │
+│                                         confidence,        │
+│                                         claims check)      │
+└─────────────────────────────────────────────────────────────┘
+Componentes detallados
+Componente 1: WESAD Loader + Window Extractor
+python
+
+import pickle
+import numpy as np
+import pandas as pd
+
+def load_wesad_subject(subject_id, data_path="WESAD/"):
+    """Carga un sujeto de WESAD"""
+    with open(f"{data_path}S{subject_id}/S{subject_id}.pkl", 'rb') as f:
+        data = pickle.load(f, encoding='latin1')
+    return data
+
+def extract_windows(subject_data, signal_key='chest', 
+                    window_size=60, sampling_rate=700):
+    """Extrae ventanas de 60s con etiqueta"""
+    signals = subject_data[signal_key]
+    labels = subject_data['label']
+    
+    samples_per_window = window_size * sampling_rate
+    windows = []
+    
+    for i in range(0, len(labels) - samples_per_window, samples_per_window):
+        window = {
+            'ECG': signals['ECG'][i:i+samples_per_window],
+            'EDA': signals['EDA'][i:i+samples_per_window],
+            'Resp': signals['Resp'][i:i+samples_per_window],
+            'Temp': signals['Temp'][i:i+samples_per_window],
+            'ACC': signals['ACC'][i:i+samples_per_window],
+            'label': int(np.median(labels[i:i+samples_per_window]))
+        }
+        # Solo guardar ventanas con etiqueta válida (1=baseline, 2=stress)
+        if window['label'] in [1, 2]:
+            windows.append(window)
+    
+    return windows
+Componente 2: Degradación controlada (simplificada para PoC)
+python
+
+def degrade_signal(signal, degradation_type='none', severity=0.0):
+    """
+    Aplica degradación controlada a una señal.
+    Para PoC: solo dos tipos + clean.
+    """
+    if degradation_type == 'none':
+        return signal
+    
+    elif degradation_type == 'flat':
+        # Canal plano: simula sensor desconectado
+        return np.zeros_like(signal)
+    
+    elif degradation_type == 'noise':
+        # Ruido gaussiano: simula interferencia
+        noise = np.random.normal(0, severity * np.std(signal), len(signal))
+        return signal + noise
+    
+    elif degradation_type == 'motion':
+        # Artefacto de movimiento: spikes aleatorios
+        n_artifacts = int(severity * len(signal) / 1000)
+        indices = np.random.choice(len(signal), n_artifacts, replace=False)
+        signal = signal.copy()
+        signal[indices] += np.random.normal(0, 5*np.std(signal), n_artifacts)
+        return signal
+    
+    elif degradation_type == 'dropout':
+        # Pérdida de muestras: simula packets loss
+        mask = np.random.random(len(signal)) > severity
+        return np.where(mask, signal, np.nan)
+Componente 3: Feature Extractor + Text Serializer
+python
+
+def extract_features(window):
+    features['ecg_range'] = features['ecg_max'] - features['ecg_min']
+    
+    # HRV simplificada (si tienes neurokit2, mejor)
+    # Para PoC: variabilidad del ECG como proxy
+    features['ecg_variability'] = float(np.var(np.diff(ecg)))
+    
+    # --- EDA ---
+    eda = window['EDA']
+    features['eda_mean'] = float(np.mean(eda))
+    features['eda_std'] = float(np.std(eda))
+    features['eda_slope'] = float(np.polyfit(range(len(eda)), eda, 1)[0])
+    
+    # --- Respiración ---
+    resp = window['Resp']
+    features['resp_mean'] = float(np.mean(resp))
+    features['resp_std'] = float(np.std(resp))
+    features['resp_rate'] = float(len(np.where(np.diff(np.sign(np.diff(resp))))[0]) / 60.0)
+    
+    # --- Temperatura ---
+    temp = window['Temp']
+    features['temp_mean'] = float(np.mean(temp))
+    features['temp_slope'] = float(np.polyfit(range(len(temp)), temp, 1)[0])
+    
+    # --- Acelerometría (proxy de movimiento) ---
+    acc = window['ACC']
+    acc_mag = np.sqrt(np.sum(acc**2, axis=1))
+    features['acc_mean'] = float(np.mean(acc_mag))
+    features['acc_std'] = float(np.std(acc_mag))
+    
+    # --- Calidad instrumental (PSRI simplificado) ---
+    # Sestab proxy: si std es cercana a 0, señal plana = baja fiabilidad
+    features['ecg_stability'] = float(1.0 - np.exp(-features['ecg_std'] / 100))
+    features['eda_stability'] = float(1.0 - np.exp(-features['eda_std'] / 10))
+    
+    return features
+
+def serialize_to_text(features, window_label=None):
+    """Convierte features a texto estructurado para el LLM"""
+    
+    # Mapear etiqueta a texto (solo para evaluación, NO para el prompt)
+    label_map = {1: 'baseline (rest)', 2: 'stress'}
+    
+    text = f"""PHYSIOLOGICAL SIGNAL SUMMARY (60-second window, 700Hz)
+=====================================================
+
+CARDIOVASCULAR (ECG):
+  Mean amplitude: {features['ecg_mean']:.2f} µV
+  Variability (std): {features['ecg_std']:.2f} µV
+  Range: {features['ecg_min']:.2f} - {features['ecg_max']:.2f} µV
+  Signal variability index: {features['ecg_variability']:.4f}
+
+ELECTRODERMAL ACTIVITY (EDA):
+  Mean conductance: {features['eda_mean']:.2f} µS
+  Variability: {features['eda_std']:.2f} µS
+  Trend slope: {features['eda_slope']:.6f} µS/sample
+
+RESPIRATION:
+  Mean amplitude: {features['resp_mean']:.2f}
+  Variability: {features['resp_std']:.2f}
+  Estimated respiratory rate: {features['resp_rate']:.1f} breaths/min
+
+TEMPERATURE:
+  Mean: {features['temp_mean']:.2f} °C
+  Trend: {features['temp_slope']:.6f} °C/sample
+
+MOTION (Accelerometer):
+  Mean acceleration magnitude: {features['acc_mean']:.2f}
+  Movement variability: {features['acc_std']:.2f}
+
+INSTRUMENTAL QUALITY INDICATORS:
+  ECG stability: {features['ecg_stability']:.3f} (0=flat/anomalous, 1=normal)
+  EDA stability: {features['eda_stability']:.3f} (0=flat/anomalous, 1=normal)
+"""
+    
+    return text
+Componente 4: Prompt Builder
+python
+
+def build_prompt(signal_text):
+    """Construye el prompt para el LLM"""
+    
+    system_prompt = """You are a physiological signal analysis assistant. 
+You receive summarized physiological features from a 60-second recording window.
+
+Your task:
+1. Analyze the physiological indicators to determine the subject's state
+2. Report your confidence level
+3. State any specific physiological claims you make
+4. If the signal quality indicators suggest the data is unreliable, say so
+
+You MUST respond in valid JSON format with this exact schema:
+
+{
+  "predicted_state": "baseline" | "stress" | "uncertain",
+  "confidence": <float 0.0-1.0>,
+  "confidence_reasoning": "<brief explanation>",
+  "physiological_claims": [
+    {
+      "claim": "<specific assertion about a biomarker>",
+      "signal_source": "ECG" | "EDA" | "Resp" | "Temp" | "ACC",
+      "direction": "increased" | "decreased" | "stable" | "anomalous"
+    }
+  ],
+  "signal_quality_concerns": ["<list of concerns, empty if none>"],
+  "abstain": <true if data too unreliable to classify>,
+  "abstain_reason": "<reason if abstaining, null otherwise>"
+}
+
+Rules:
+- "predicted_state" must be "baseline", "stress", or "uncertain"
+- "confidence" reflects your certainty in the prediction (0.0 = none, 1.0 = absolute)
+- "physiological_claims" should list specific assertions (e.g., "EDA increased", "heart rate variability decreased")
+- "signal_quality_concerns" should flag if stability indicators are low or values seem anomalous
+- "abstain" should be true if you cannot reliably classify due to poor signal quality
+- Be honest: if the data looks unreliable, say so"""
+
+    user_prompt = f"""Analyze the following physiological signal summary and respond in JSON:
+
+{signal_text}
+
+Remember: respond ONLY in valid JSON format."""
+    
+    return system_prompt, user_prompt
+Componente 5: Ollama LLM Client
+python
+
+import json
+import requests
+
+def query_ollama(system_prompt, user_prompt, model="qwen2.5:7b", 
+                 temperature=0.0, host="http://localhost:11434"):
+    """
+    Llama a Ollama API localmente.
+    Requiere: ollama pull qwen2.5:7b
+    """
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+            "num_predict": 1024
+        },
+        "format": "json"  # Forzar salida JSON
+    }
+    
+    response = requests.post(f"{host}/api/chat", json=payload)
+    response.raise_for_status()
+    
+    result = response.json()
+    content = result['message']['content']
+    
+    # Parsear JSON
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        # Intentar extraer JSON de la respuesta
+        import re
+        match = re.search(r'\{.*\}', content, re.DOTALL)
+        if match:
+            parsed = json.loads(match.group())
+        else:
+            parsed = {"error": "JSON parse failed", "raw": content}
+    
+    return parsed, content
+
+# Alternativa con librería ollama
+# pip install ollama
+"""
+import ollama
+
+def query_ollama_lib(system_prompt, user_prompt, model="qwen2.5:7b"):
+    response = ollama.chat(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        format='json',
+        options={'temperature': 0.0}
+    )
+    return json.loads(response['message']['content']), response['message']['content']
+"""
+Componente 6: Evaluator (simplificado)
+python
+
+def evaluate_response(llm_response, true_label, features):
+    """Evalúa la respuesta del LLM contra ground truth"""
+    
+    label_map = {1: 'baseline', 2: 'stress'}
+    true_state = label_map.get(true_label, 'unknown')
+    
+    predicted = llm_response.get('predicted_state', 'unknown')
+    confidence = llm_response.get('confidence', 0.0)
+    abstained = llm_response.get('abstain', False)
+    claims = llm_response.get('physiological_claims', [])
+    quality_concerns = llm_response.get('signal_quality_concerns', [])
+    
+    # Corrección
+    correct = (predicted == true_state) if not abstained else None
+    
+    # Sobreconfianza: alta confianza pero incorrecto
+    overconfident = (confidence > 0.7 and not correct) if correct is not None else False
+    
+    # Detección de degradación: ¿el modelo notó problemas de calidad?
+    detected_degradation = len(quality_concerns) > 0
+    
+    # Verificación de claims (básico para PoC)
+    claim_check = verify_claims(claims, features)
+    
+    return {
+        'true_state': true_state,
+        'predicted_state': predicted,
+        'correct': correct,
+        'confidence': confidence,
+        'abstained': abstained,
+        'overconfident': overconfident,
+        'n_claims': len(claims),
+        'claims_verified': claim_check,
+        'detected_degradation': detected_degradation,
+        'quality_concerns': quality_concerns
+    }
+
+def verify_claims(claims, features):
+    """Verificación básica de claims fisiológicos"""
+    results = []
+    
+    for claim in claims:
+        claim_text = claim.get('claim', '').lower()
+        source = claim.get('signal_source', '').upper()
+        direction = claim.get('direction', '').lower()
+        
+        # Verificación básica: ¿la dirección coincide con los datos?
+        verified = 'unknown'
+        
+        if source == 'EDA':
+            eda_slope = features.get('eda_slope', 0)
+            if direction == 'increased' and eda_slope > 0:
+                verified = True
+            elif direction == 'decreased' and eda_slope < 0:
+                verified = True
+            elif direction == 'stable' and abs(eda_slope) < 1e-6:
+                verified = True
+            else:
+                verified = False
+                
+        elif source == 'ECG':
+            ecg_var = features.get('ecg_variability', 0)
+            if direction == 'increased' and ecg_var > 1e6:
+                verified = True
+            elif direction == 'stable':
+                verified = True  # Aproximado
+            else:
+                verified = 'unknown'  # Necesitaría HRV real
+        
+        results.append({
+            'claim': claim_text,
+            'source': source,
+            'direction': direction,
+            'verified': verified
+        })
+    
+    return results
+Script de prueba completo
+python
+
+"""
+                    window['ECG'], 
+                    deg['type'], 
+                    deg['severity']
+                )
+                window_deg = window.copy()
+                window_deg['ECG'] = ecg_degraded
+                
+                # Extraer features
+                features = extract_features(window_deg)
+                
+                # Serializar a texto
+                signal_text = serialize_to_text(features)
+                
+                # Construir prompt
+                system_prompt, user_prompt = build_prompt(signal_text)
+                
+                # Query LLM
+                try:
+                    llm_response, raw_output = query_ollama(
+                        system_prompt, user_prompt, 
+                        model=OLLAMA_MODEL, host=OLLAMA_HOST
+                    )
+                except Exception as e:
+                    print(f"ERROR: {e}")
+                    continue
+                
+                # Evaluar
+                evaluation = evaluate_response(
+                    llm_response, window['label'], features
+                )
+                
+                # Guardar resultado
+                result = {
+                    'subject': subj_id,
+                    'window_idx': i,
+                    'true_label': window['label'],
+                    'degradation': deg['name'],
+                    'features': features,
+                    'llm_response': llm_response,
+                    'evaluation': evaluation,
+                    'raw_output': raw_output[:500]  # truncar
+                }
+                all_results.append(result)
+                
+                status = "✓" if evaluation['correct'] else "✗"
+                if evaluation['abstained']:
+                    status = "ABST"
+                print(f"{status} (pred={evaluation['predicted_state']}, "
+                      f"conf={evaluation['confidence']:.2f})")
+    
+    # ============================================================
+    # 3. RESUMEN
+    # ============================================================
+    print(f"\n{'='*60}")
+    print(f"RESULTADOS PoC ({len(all_results)} pruebas)")
+    print(f"{'='*60}\n")
+    
+    # Agrupar por degradación
+    from collections import defaultdict
+    by_deg = defaultdict(list)
+    for r in all_results:
+        by_deg[r['degradation']].append(r['evaluation'])
+    
+    print(f"{'Degradación':<15} {'Accuracy':>10} {'Conf media':>12} "
+          f"{'Abstención':>12} {'Sobreconf':>10}")
+    print("-" * 65)
+    
+    for deg_name, evals in by_deg.items():
+        n = len(evals)
+        correct = sum(1 for e in evals if e['correct'] == True)
+        acc = correct / n if n > 0 else 0
+        conf = np.mean([e['confidence'] for e in evals])
+        abst = sum(1 for e in evals if e['abstained']) / n
+        overconf = sum(1 for e in evals if e['overconfident']) / n
+        
+        print(f"{deg_name:<15} {acc:>10.2%} {conf:>12.2f} "
+              f"{abst:>12.2%} {overconf:>10.2%}")
+    
+    # Guardar resultados
+    with open(RESULTS_PATH, 'w') as f:
+        json.dump(all_results, f, indent=2, default=str)
+    print(f"\nResultados guardados en {RESULTS_PATH}")
+
+if __name__ == "__main__":
+    run_poc()
+Setup rápido
+bash
+
+# 1. Instalar Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 2. Descargar Qwen 2.5 7B
+ollama pull qwen2.5:7b
+
+# 3. Instalar dependencias Python
+pip install numpy scipy requests
+
+# 4. (Opcional) Para HRV real, instalar neurokit2
+pip install neurokit2
+
+# 5. Descargar WESAD
+# https://ubicomp.eti.uni-siegen.de/home/datasets/icmi18/
+# Descomprimir en ./WESAD/
+
+# 6. Ejecutar
+python poc_psri_llm.py
+Qué observar en la primera prueba
+Aspecto
+Qué buscar
+Hipótesis esperada
+Accuracy clean vs degraded	¿Baja con degradación?	Debería bajar, pero quizás no tanto como esperas
+Confianza en flat_ecg	¿Baja o se mantiene alta?	Hipótesis clave: se mantendrá alta (sobreconfianza)
+Abstención	¿El modelo se abstiene en flat_ecg?	Probablemente no (no está entrenado para hacerlo)
+Claims verificables	¿Las afirmaciones coinciden con los datos?	En clean: sí; en degraded: probablemente alucinaciones
+Quality concerns	¿El modelo detecta el canal plano?	Parcial: detectará std=0 pero quizás sigue clasificando
+
+Mejoras para la siguiente iteración
+HRV real con neurokit2: extraer RMSSD, SDNN, LF/HF ratio reales del ECG
+Más representaciones: probar serialización numérica cruda vs estadística vs gráfica
+Multiple runs: repetir cada ventana 3-5 veces para medir consistencia
+Scoher real: implementar correlación causal entre HR y EDA en lugar del proxy
+Más modelos: comparar Qwen 7B vs 14B vs Llama 3.1 8B

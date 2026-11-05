@@ -8,6 +8,7 @@ Este directorio contiene la documentación del proyecto.
 - [AGENTS.md](../AGENTS.md) — contexto para agentes (memoria del proyecto).
 - [SESSION_STATE.md](../SESSION_STATE.md) — bitácora operativa.
 - [CHANGELOG.md](../CHANGELOG.md) — historial de cambios.
+- [ingestion.md](ingestion.md) — pipeline `INGEST` de WESAD (Fase 1).
 
 ## Convenciones
 

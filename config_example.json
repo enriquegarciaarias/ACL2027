@@ -24,6 +24,7 @@
         "llm": {
             "primary_model": "qwen3:8b",
             "fallback_model": ["qwen2.5:7b", "llama3.1:8b"],
+            "embedding_model": "mxbai-embed-large",
             "max_retries": 1,
             "temperature": 0.3,
             "max_tokens": 800,
@@ -46,5 +47,89 @@
         "cache": ".pycache"
     },
     "datasetVars": {},
-    "params": {}
+    "params": {
+        "ingestion": {
+            "dataset": "WESAD",
+            "source_dir": ".",
+            "subjects": "auto",
+            "seed": 42,
+            "labels": {
+                "keep": [1, 2, 3, 4]
+            },
+            "windows": {
+                "length_s": 60.0,
+                "stride_s": 60.0,
+                "purity_min": 0.999,
+                "guard_s": 5.0
+            },
+            "features": {
+                "enabled": ["ecg", "eda", "resp", "temp", "acc", "emg",
+                            "bvp", "wrist_eda", "wrist_temp", "wrist_acc"],
+                "sqi": {
+                    "good_threshold": 0.8,
+                    "poor_threshold": 0.5
+                }
+            },
+            "representations": {
+                "enabled": ["numeric", "text", "embeddings"],
+                "numeric": {
+                    "round_digits": 4,
+                    "include_quality": true,
+                    "include_units": true,
+                    "include_provenance": true,
+                    "llm_view": {
+                        "enabled": false,
+                        "include_quality": false,
+                        "include_coverage": false,
+                        "include_provenance": false,
+                        "include_window_meta": false,
+                        "opaque_window_id": true,
+                        "allowed_fields": ["value", "unit"],
+                        "exclude_motion_channels": true
+                    }
+                },
+                "text": {
+                    "include_quality": true,
+                    "include_methods": false,
+                    "float_format": ".4g",
+                    "max_flags": 10,
+                    "llm_view": {
+                        "enabled": false,
+                        "include_quality": false,
+                        "include_times": false,
+                        "include_ids": false,
+                        "opaque_window_id": true,
+                        "exclude_motion_channels": true
+                    }
+                },
+                "embeddings": {
+                    "model": "mxbai-embed-large",
+                    "source": "text",
+                    "batch_size": 1,
+                    "include_quality": true
+                }
+            },
+            "persist": {
+                "canonical_arrays": true,
+                "compression": false
+            },
+            "package": {
+                "corpus_version": "0.1.0"
+            },
+            "experiment": {
+                "minimal_channels": ["chest_Resp", "chest_EDA"],
+                "degradation_enabled": true,
+                "degradation_conditions": [
+                    {"id": "C0_clean", "channels": [], "severity": 0.0},
+                    {"id": "C1_partial_resp", "channels": ["chest_Resp"], "severity": 0.5},
+                    {"id": "C2_partial_eda", "channels": ["chest_EDA"], "severity": 0.5},
+                    {"id": "C3_total_resp", "channels": ["chest_Resp"], "severity": 1.0},
+                    {"id": "C4_total_eda", "channels": ["chest_EDA"], "severity": 1.0},
+                    {"id": "C5_total_both", "channels": ["chest_Resp", "chest_EDA"], "severity": 1.0}
+                ],
+                "control_motion_confounder": true,
+                "exclude_motion_features_from_llm": true
+            }
+        }
+    }
 }

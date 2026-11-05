@@ -19,6 +19,7 @@ import argparse
 import os
 import sys
 import socket
+import warnings
 
 # Intentar detección de GPU (opcional: torch puede no estar instalado en todos
 # los entornos; se degrada graceful a CPU si no está disponible).
@@ -46,45 +47,75 @@ def manageArgs():
     parser.add_argument('--proc', type=str, help="Tipo de proceso (despacha al pipeline correspondiente)", default="default")
     parser.add_argument('--step', type=str, help="Iniciar el pipeline directamente desde este paso (nombre case-insensitive)", default=None)
     parser.add_argument('--serverGPU', type=str, help="Modo dividido local↔servidor GPU: 'start' (parte interactiva local) o 'server' (parte GPU no interactiva)", default=None)
+    parser.add_argument('--subjects', type=str, help="Subconjunto de sujetos del dataset (p. ej. 'S2,S3'); vacío = todos", default=None)
+    parser.add_argument('--force', action='store_true', help="Recalcular artefactos aunque existan con el mismo fingerprint")
+    parser.add_argument('--dry-run', action='store_true', help="Resolver configuración y rutas sin ejecutar el pipeline")
 
     args = parser.parse_args()
     return args
 
 
-def check_gpu(min_memory_gb=8.0):
-    """Detecta GPUs CUDA disponibles con memoria suficiente.
+def _detect_gpus_nvidia_smi(min_memory_gb: float) -> list[dict]:
+    """Detecta GPUs físicas usando ``nvidia-smi`` (no requiere torch).
 
-    Filtra GPUs con memoria total >= `min_memory_gb`, fija la variable de
-    entorno `CUDA_VISIBLE_DEVICES` y actualiza
+    Devuelve una lista de diccionarios con claves ``index``, ``name`` y
+    ``memory_gb`` para cada GPU que cumple el umbral de memoria.
+    """
+    return [
+        g for g in _detect_all_gpus_nvidia_smi()
+        if g["memory_gb"] >= min_memory_gb
+    ]
+
+
+def check_gpu() -> None:
+    """Detecta GPUs CUDA disponibles y selecciona la mejor.
+
+    Usa cualquier GPU CUDA disponible sin imponer un umbral de memoria
+    fijo: el sistema es adaptativo y funcionará tanto en GPUs modestas
+    (p. ej. RTX 4060 Ti 8 GB) como en GPUs de gama alta (p. ej. RTX 4090
+    24 GB). La memoria reportada es solo informativa.
+
+    Fija la variable de entorno `CUDA_VISIBLE_DEVICES` y actualiza
     `processControl.defaults['device']` a 'cuda' o 'cpu'.
 
     Returns:
         None
     """
-    suitable_gpus = []
     if _TORCH_AVAILABLE and torch.cuda.is_available():
         num_gpus = torch.cuda.device_count()
-        writeLog("info", logger, f"{num_gpus} CUDA devices available")
+        writeLog("info", logger, f"{num_gpus} CUDA device(s) available")
 
+        best_gpu = None
+        best_memory_gb = 0.0
         for i in range(num_gpus):
             props = torch.cuda.get_device_properties(i)
             memory_gb = props.total_memory / (1024 ** 3)
-            if memory_gb >= min_memory_gb:
-                suitable_gpus.append(i)
-                writeLog("info", logger, f"GPU {i} suitable: {props.name} ({memory_gb:.1f} GB)")
-            else:
-                writeLog("info", logger, f"GPU {i} skipped: {props.name} ({memory_gb:.1f} GB < {min_memory_gb} GB)")
+            writeLog(
+                "info",
+                logger,
+                f"GPU {i}: {props.name} ({memory_gb:.1f} GB)",
+            )
+            if memory_gb > best_memory_gb:
+                best_memory_gb = memory_gb
+                best_gpu = i
+
+        if best_gpu is not None:
+            os.environ['CUDA_VISIBLE_DEVICES'] = str(best_gpu)
+            processControl.defaults['device'] = 'cuda'
+            writeLog(
+                "info",
+                logger,
+                f"Selected GPU {best_gpu} ({best_memory_gb:.1f} GB)",
+            )
+        else:
+            os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+            processControl.defaults['device'] = 'cpu'
+            writeLog("info", logger, "No suitable GPUs found; falling back to CPU")
     else:
         writeLog("info", logger, "No CUDA devices available (torch not installed or no CUDA)")
-
-    if suitable_gpus:
-        os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(map(str, suitable_gpus))
-        processControl.defaults['device'] = 'cuda'
-        writeLog("info", logger, f"Selected GPUs: {os.environ['CUDA_VISIBLE_DEVICES']}")
-    else:
         os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
         processControl.defaults['device'] = 'cpu'
-        writeLog("info", logger, "No suitable GPUs found; falling back to CPU")
+        writeLog("info", logger, "Falling back to CPU")
 
 
 def huggingface_login():
@@ -131,8 +162,7 @@ def setEnvironment():
     except Exception:
         pass
 
-    min_memory = float(processControl.defaults.get('min_gpu_memory_gb', 8.0))
-    check_gpu(min_memory_gb=min_memory)
+    check_gpu()
 
 
 def deep_merge(base, override):
@@ -157,7 +187,23 @@ def deep_merge(base, override):
     return result
 
 
-def manageEnv():
+def _config_document(config=None):
+    """Normaliza un ``configLoader`` o un diccionario a documento de config."""
+    if config is None:
+        return configLoader().config
+    if isinstance(config, configLoader):
+        return config.config
+    return config
+
+
+def _environment(config, base_path):
+    """Copia la sección ``environment`` y le añade ``realPath``."""
+    environment = dict(config.get("environment", {}))
+    environment["realPath"] = base_path
+    return environment
+
+
+def manageEnv(config=None):
     """Construye el diccionario de rutas y variables del entorno.
 
     Lee la sección `environment` de la configuración, resuelve las rutas
@@ -165,11 +211,29 @@ def manageEnv():
     para results/), crea el directorio de caché y añade el nombre del
     sistema vía `socket.getfqdn()`.
 
+    Args:
+        config: documento de configuración ya fusionado (opcional). Si no se
+            indica, se carga `config.json` con `configLoader`.
+
     Returns:
         dict: Diccionario con las rutas de entorno y el nombre del sistema.
     """
-    config = configLoader()
-    environment = config.get_environment()
+    # Suprimir warnings ruidosos de neurokit2 (EDA a baja frecuencia de
+    # muestreo). Son informativos y no bloqueantes; se documentan en
+    # SESSION_STATE.md. Se filtran aquí para evitar que ensucien el log
+    # una vez por ventana y sujeto.
+    warnings.filterwarnings(
+        "ignore",
+        message=".*very low frequency.*",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=".*missing data points in your signal.*",
+    )
+
+    config = _config_document(config)
+    base_path = os.path.realpath(os.getcwd())
+    environment = _environment(config, base_path)
 
     env_data = {}
     results_root = environment.get("results_root", "") or ""
@@ -198,77 +262,91 @@ def manageEnv():
     return env_data
 
 
-def manageDefaults():
+def manageDefaults(config=None):
     """Carga la sección de valores por defecto de la configuración.
 
     Returns:
         dict: Valores por defecto definidos en `config.json`.
     """
-    config = configLoader()
-    environment = config.get_defaults()
-    return environment
+    config = _config_document(config)
+    return config.get("defaults", {})
 
 
-def manageDatasetVars():
+def manageDatasetVars(config=None):
     """Carga las variables del dataset y añade un timestamp.
 
     Returns:
         dict: Variables del dataset con el campo `timestamp` añadido.
     """
-    config = configLoader()
-    datasetVars = config.get_datasetVars()
+    config = _config_document(config)
+    datasetVars = dict(config.get("datasetVars", {}))
     datasetVars['timestamp'] = dbTimestamp()
     return datasetVars
 
 
-def load_subject_config(subject):
-    """Carga la configuración específica de un subject si existe.
+def load_subject_config(subject, base_config=None):
+    """Fusiona la configuración del subject sobre la configuración global.
 
     Busca `results/input/{subject}/config.json` y, si existe, hace un merge
-    profundo sobre los valores por defecto globales (las claves del subject
-    sobrescriben las globales).
+    profundo del documento completo (``environment``, ``defaults``, ``params``
+    y ``datasetVars``); las claves del subject sobrescriben las globales.
+
+    Args:
+        subject (str): nombre de la carpeta en ``results/input``.
+        base_config: documento global (``configLoader`` o dict). Si no se
+            indica, se carga ``config.json``.
 
     Returns:
-        dict: Configuración fusionada (global + subject).
+        dict: Documento de configuración fusionado (global + subject).
     """
     from pathlib import Path
 
-    config = configLoader()
-    defaults = config.get_defaults()
+    if base_config is None:
+        base_config = configLoader()
+    base_doc = _config_document(base_config)
 
-    env = processControl.env
-    input_root = Path(env.get("input", "results/input"))
-    subject_cfg_path = input_root / subject / "config.json"
+    # Resolver la ruta de entrada con la configuración global (results_root
+    # incluido) antes de que processControl.env esté poblado.
+    global_env = manageEnv(base_doc)
+    input_root = Path(global_env.get("input", "results/input"))
+    subject_cfg_path = input_root / str(subject) / "config.json"
 
-    if subject_cfg_path.exists():
-        try:
-            import json
-            with subject_cfg_path.open("r", encoding="utf-8") as f:
-                subject_cfg = json.load(f)
-            subject_defaults = subject_cfg.get("defaults", {})
-            merged = deep_merge(defaults, subject_defaults)
-            writeLog("info", logger, f"Configuración de subject '{subject}' fusionada (deep merge).")
-            return merged
-        except Exception as exc:
-            writeLog("warning", logger, f"No se pudo cargar config de subject '{subject}': {exc}")
-    return defaults
+    if not subject_cfg_path.exists():
+        return base_doc
+
+    try:
+        import json
+        with subject_cfg_path.open("r", encoding="utf-8") as f:
+            subject_cfg = json.load(f)
+        merged = deep_merge(base_doc, subject_cfg)
+        writeLog("info", logger, f"Configuración de subject '{subject}' fusionada (deep merge).")
+        return merged
+    except Exception as exc:
+        writeLog("warning", logger, f"No se pudo cargar config de subject '{subject}': {exc}")
+        return base_doc
 
 
 def getConfigs():
     """Carga la configuración completa en el singleton `processControl`.
 
-    Puebla `processControl.env`, `processControl.args`,
-    `processControl.defaults` y `processControl.datasetVars`, y aplica la
+    Puebla `processControl.config` (global + subject), `processControl.env`,
+    `processControl.args`, `processControl.defaults`,
+    `processControl.parms` y `processControl.datasetVars`, y aplica la
     configuración del entorno (GPU, variables de entorno).
 
     Returns:
         None
     """
-    processControl.env = manageEnv()
     processControl.args = manageArgs()
 
-    processControl.defaults = manageDefaults()
-    processControl.datasetVars = manageDatasetVars()
+    base_config = configLoader()
+    merged = load_subject_config(processControl.args.subject, base_config)
+
+    processControl.config = merged
+    processControl.env = manageEnv(merged)
+    processControl.defaults = manageDefaults(merged)
+    processControl.parms = dict(merged.get("params", {}))
+    processControl.datasetVars = manageDatasetVars(merged)
 
     setEnvironment()
     writeLog("info", logger, "Configuration loaded.")

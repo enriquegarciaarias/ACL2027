@@ -1,7 +1,5 @@
 # =============================================================================
-# requirements.txt — Dependencias base del esqueleto de proyecto
-# Añade aquí las dependencias específicas de cada proyecto (p. ej. torch,
-# transformers, sentence-transformers, ollama, etc.)
+# requirements.txt — Dependencias del proyecto ACL2027
 # =============================================================================
 
 # Core
@@ -12,11 +10,18 @@ typing-extensions
 # Configuración y entorno
 python-dotenv>=1.0.0
 
+# Ingesta y análisis de señales fisiológicas
+numpy>=1.26
+scipy>=1.11
+neurokit2>=0.2.10
+
+# PyTorch (requerido para detección de GPU CUDA; instalar con soporte CUDA vía
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+# si se desea aceleración de GPU en lugar de CPU).
+torch>=2.0
+
+# Cliente HTTP para Ollama (embeddings)
+requests>=2.31.0
+
 # Logging y utilidades
 # (logging, json, hashlib, socket, argparse están en la stdlib)
-
-# Ejemplo de dependencias opcionales (descomentar según el proyecto):
-# torch>=2.0.0
-# sentence-transformers>=2.2.0
-# ollama>=0.1.0
-# huggingface_hub>=0.16.0

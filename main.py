@@ -25,8 +25,7 @@ from sources.common.paramsManager import getConfigs
 # La función se importa y ejecuta de forma diferida.
 # ---------------------------------------------------------------------------
 PROCESS_REGISTRY: dict[str, str] = {
-    # Ejemplo (descomentar y adaptar al proyecto concreto):
-    # "ACL2027": "sources.acl2027.pipeline.process_acl2027",
+    "INGEST": "sources.ingestion.pipeline.process_ingest",
 }
 
 
@@ -67,21 +66,17 @@ def customProcess():
 
 
 if __name__ == '__main__':
+    getConfigs()
     writeLog("info", logger,
              f"********** STARTING {processControl.args.proc.upper() if processControl.args and processControl.args.proc else 'PROJECT'} Process **********")
-    getConfigs()
 
     proc = getattr(processControl.args, "proc", None)
     step = getattr(processControl.args, "step", None)
 
-    # Si se indica --step, iniciar desde ese paso (solo aplica a procesos con
-    # registro de pasos; el esqueleto base lo registra como aviso).
+    # El módulo concreto gestiona --step internamente (p. ej. INGEST).
     if step is not None:
-        writeLog("warning", logger,
-                 f"--step '{step}' indicado pero el proceso '{proc}' no define "
-                 f"registro de pasos. Ejecutando proceso completo.")
-        # Se ejecuta el proceso completo; el módulo concreto puede leer
-        # processControl.args.step internamente.
+        writeLog("debug", logger,
+                 f"--step '{step}' delegado al proceso '{proc}'.")
 
     if proc in PROCESS_REGISTRY:
         _run_registered_process(proc)

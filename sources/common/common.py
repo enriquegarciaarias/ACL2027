@@ -47,14 +47,16 @@ class controlProcess:
         defaults (dict): Valores por defecto cargados de la configuración.
         parms (dict): Parámetros adicionales del proceso.
         env (dict): Rutas y variables del entorno resueltas por paramsManager.
+        config (dict): Configuración completa ya fusionada (global + subject).
     """
 
-    def __init__(self, datasetVars=None, args=None, defaults=None, parms=None, env=None):
+    def __init__(self, datasetVars=None, args=None, defaults=None, parms=None, env=None, config=None):
         self.datasetVars = datasetVars or {}
         self.args = args or {}
         self.defaults = defaults or {}
         self.parms = parms or {}
         self.env = env or {}
+        self.config = config or {}
 
     def to_dict(self):
         """Serializa el estado del control de proceso en un diccionario."""
@@ -64,6 +66,7 @@ class controlProcess:
             "defaults": self.defaults,
             "parms": self.parms,
             "env": self.env,
+            "config": self.config,
         }
 
 

@@ -65,3 +65,8 @@ sources/third_party/
 
 # Bytecode compilado
 *.pyc
+
+# ficheros de opencode
+AGENTS.md
+CHANGELOG.md
+SESSION_STATE.md

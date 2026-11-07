@@ -26,6 +26,7 @@ from sources.common.paramsManager import getConfigs
 # ---------------------------------------------------------------------------
 PROCESS_REGISTRY: dict[str, str] = {
     "INGEST": "sources.ingestion.pipeline.process_ingest",
+    "PHASE2": "sources.phase2.orchestrator.run_phase2",
 }
 
 

@@ -137,7 +137,7 @@ DEFAULTS: dict = {
             "clean_method": "neurokit",
             "phasic_method": "highpass",
             "highpass_hz": 0.05,
-            "min_scr_amplitude_us": 0.01,
+            "min_scr_amplitude_us": 0.05,
         },
         "resp": {
             "clean_method": "khodadad2018",

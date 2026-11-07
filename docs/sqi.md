@@ -407,7 +407,7 @@ Aunque el agregado sea `good`, `sqi_min = 0.50` revela que al menos dos modalida
 
 ## 9. Limitaciones conocidas (pendientes de validar)
 
-1. **Umbral SCR:** El filtro de amplitud de EDA (`min_scr_amplitude_us = 0.01 µS`) es un parámetro de investigación; no está validado con literatura ni anotación humana.
+1. **Umbral SCR:** El filtro de amplitud de EDA (`min_scr_amplitude_us = 0.05 µS`) se calibró empíricamente sobre S3 (2026-11-07): con 0.01 µS el conteo SCR era ruido (baseline 52 > stress 40, invertido); con 0.05 µS separa correctamente stress (≈5.4/ventana) de baseline/amusement/meditation (≈0). Pendiente de validar con literatura y anotación humana.
 2. **cvxEDA:** No disponible (falta `cvxopt`). Se usa `highpass` para la descomposición fásica de EDA.
 3. **EDA de muñeca a 4 Hz:** `nk.eda_clean` emite un aviso no bloqueante ("very low frequency").
 4. **Solo S2 validado end-to-end:** El pipeline completo con SQI se ha verificado en S2 (45 ventanas, SQI medio 0,934, 45/45 `good`). Falta validar en S3–S17.

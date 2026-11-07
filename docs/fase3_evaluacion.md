@@ -77,25 +77,64 @@ AUROC stress-vs-baseline por feature, tras recalibrar el umbral SCR:
 | `eda_scr_rate_per_min` | 0.818 |
 | `eda_mean_us` | 0.676 |
 
+## Evaluación agregada del corpus completo (15 sujetos, 705 ventanas)
+
+Tras completar la validación LLM de los 14 sujetos restantes (job PHASE2,
+5931 llamadas, 0 errores), se evaluó el corpus completo con el `evaluator`
+corregido, separando condición (C0_clean vs NC) y representación (numeric vs
+text). Script: `scripts/evaluate_phase3.py`; reporte:
+`results/output/WESAD/PHASE2/evaluation_report.json`.
+
+### C0_clean (datos reales)
+
+| Métrica | numeric_llm | text_llm |
+|---|---|---|
+| Accuracy (decididas) | 48.5% | 61.3% |
+| Accuracy (incl. abstain) | 33.9% | 20.1% |
+| Tasa de abstención | 30.0% | 67.2% |
+| Invalid output | 1 (0.1%) | 58 (8.2%) |
+| AUROC stress | 0.804 | 0.909 |
+| AUROC baseline | 0.644 | 0.652 |
+| AUROC amusement | 0.501 | 0.497 |
+| AUROC meditation | 0.500 | 0.500 |
+| ECE | 0.272 | 0.176 |
+| Brier | 0.209 | 0.167 |
+
+- **Binario stress-vs-baseline**: numeric 0.802 · text 0.869.
+- `meditation` 0/178 correctas (numeric) y `amusement` 2/86; ambas se confunden
+  con `baseline` (meditation→baseline 119/178, amusement→baseline 36/86).
+- `text_llm` decide mejor cuando decide (61.3%) pero es más conservador
+  (67% de abstención) y aún produce 8.2% de salidas inválidas.
+
+### Controles negativos
+
+| Condición | numeric_llm | text_llm |
+|---|---|---|
+| NC_zero / NC_nan / NC_absent | 100% abstain | 100% abstain |
+| NC_shuffled | 24.8% abstain | 96.7% abstain |
+
+`NC_shuffled numeric` sigue prediciendo baseline/stress (24.8% de abstención):
+confirma que el modelo aplica umbrales de valor absoluto, no análisis de
+estructura.
+
 ## Conclusión (corregida)
 
 El colapso a "stress" y la conclusión "el modelo no discrimina" eran artefactos
 de los bugs. Con las correcciones, el modelo **sí discrimina stress vs
-baseline** (AUROC 0.896, accuracy 54.2%) y abstiene cuando no tiene evidencia.
-El problema de 4 clases sigue abierto: `amusement` y `meditation` no se separan
-con EDA+HR (AUROC ≈ 0.5).
+baseline** (AUROC 0.896 en S3; 0.80–0.91 en el corpus completo) y abstiene
+cuando no tiene evidencia. El problema de 4 clases sigue abierto: `amusement`
+y `meditation` no se separan con EDA+HR (AUROC ≈ 0.5). La clasificación binaria
+stress vs no-stress es el experimento principal viable.
 
 ## Opciones de Investigación Futura
 
 1. **Clasificación binaria (estrés vs no-estrés):** AUROC 0.896 de stress lo hace
    la opción más viable.
-2. **Validación completa en los 14 sujetos restantes:** job PHASE2 en background
-   (log `/tmp/opencode/phase2_14subjects.log`); al terminar, evaluar con el
-   `evaluator` corregido separando C0_clean de controles negativos y numeric de
-   text.
-3. **Confounders de diseño pendientes:** unificar canales `text_llm`/`numeric_llm`,
-   corregir few-shot contradictorio, repeticiones con semillas distintas,
-   implementar `max_retries`.
+2. **Validación completa en los 14 sujetos restantes:** completada (5931 llamadas,
+   0 errores); resultados agregados arriba.
+3. **Confounders de diseño pendientes:** resueltos en `docs/fase2_diseno.md`
+   (unificar canales `text_llm`/`numeric_llm`, corregir few-shot, repeticiones
+   con semillas distintas, `max_retries`).
 4. **Validar el umbral SCR 0.05 µS** con literatura y anotación humana.
 
 ## Archivos Creados/Modificados

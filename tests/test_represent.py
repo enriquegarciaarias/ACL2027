@@ -116,3 +116,46 @@ def test_list_form_is_backward_compatible(synthetic_dataset, ingestion_cfg):
 def test_represent_without_features_fails(workspace, ingestion_cfg):
     with pytest.raises(ValidationError, match="no existe el canónico"):
         represent.run_represent(ingestion_cfg, "S2")
+
+
+def test_llm_view_features_excludes_wrist():
+    """La vista LLM excluye modalidades de muñeca (unificación de canales)."""
+    feature_row = {
+        "features": {
+            "ecg": {"ecg_hr_bpm": {"value": 72.0, "unit": "bpm"}},
+            "eda": {"eda_mean_us": {"value": 3.0, "unit": "uS"}},
+            "resp": {"resp_rate_bpm": {"value": 12.0, "unit": "1/min"}},
+            "temp": {"temp_mean_degc": {"value": 32.0, "unit": "degC"}},
+            "bvp": {"bvp_hr_bpm": {"value": 70.0, "unit": "bpm"}},
+            "acc": {"acc_mean_g": {"value": 0.01, "unit": "g"}},
+            "emg": {"emg_mean_abs_mv": {"value": 0.5, "unit": "mV"}},
+            "wrist_eda": {"eda_mean_us": {"value": 5.0, "unit": "uS"}},
+            "wrist_temp": {"temp_mean_degc": {"value": 33.0, "unit": "degC"}},
+            "wrist_acc": {"acc_mean_g": {"value": 0.02, "unit": "g"}},
+        },
+    }
+    # Sin canales de movimiento: solo pecho.
+    features = represent._llm_view_features(feature_row, exclude_motion_channels=True)
+    assert set(features) == {"ecg", "eda", "resp", "temp", "bvp"}
+
+    # Con canales de movimiento: pecho + acc/emg, muñeca siempre fuera.
+    features2 = represent._llm_view_features(feature_row, exclude_motion_channels=False)
+    assert set(features2) == {"ecg", "eda", "resp", "temp", "bvp", "acc", "emg"}
+
+
+def test_build_text_llm_view_excludes_wrist():
+    """El texto LLM no incluye secciones de muñeca (coincide con numeric_llm)."""
+    feature_row = {
+        "features": {
+            "ecg": {"ecg_hr_bpm": {"value": 72.0, "unit": "bpm"}},
+            "eda": {"eda_mean_us": {"value": 3.0, "unit": "uS"}},
+            "wrist_eda": {"eda_mean_us": {"value": 5.0, "unit": "uS"}},
+            "wrist_temp": {"temp_mean_degc": {"value": 33.0, "unit": "degC"}},
+        },
+    }
+    window_meta = {"window_id": "WESAD:S2:w00001", "duration_s": 60.0}
+    text = represent.build_text(
+        feature_row, window_meta, {}, llm_view=True, exclude_motion_channels=True
+    )
+    assert "WRIST" not in text
+    assert "ELECTRODERMAL ACTIVITY (EDA)" in text

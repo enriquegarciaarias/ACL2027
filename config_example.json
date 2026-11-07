@@ -25,11 +25,13 @@
             "primary_model": "qwen3:8b",
             "fallback_model": ["qwen2.5:7b", "llama3.1:8b"],
             "embedding_model": "mxbai-embed-large",
-            "max_retries": 1,
+            "max_retries": 3,
             "temperature": 0.3,
             "max_tokens": 800,
             "llm_timeout": 120.0,
-            "llm_keep_alive": "5m"
+            "llm_keep_alive": "5m",
+            "repetitions": 1,
+            "seeds": [42]
         },
         "url_blacklist": {
             "_help": "Opcional. Dominios/URLs desde los que NO se descargan PDFs (aplica a todos los proyectos).",

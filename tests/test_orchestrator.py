@@ -29,6 +29,8 @@ from sources.phase2.orchestrator import (
     REPRESENTATION_NUMERIC,
     REPRESENTATION_TEXT,
     _build_manifest_entry,
+    _call_ollama_chat,
+    _config_for_hash,
     _prompt_hash,
     build_execution_manifest,
     run_orchestrator,
@@ -674,3 +676,106 @@ def test_constant_values():
     assert PROMPT_VARIANT_NO_ABSTAIN == "no_abstain"
     assert REPRESENTATION_NUMERIC == "numeric"
     assert REPRESENTATION_TEXT == "text"
+
+
+def _make_chat_config(max_retries: int = 0) -> LlmExperimentConfig:
+    return LlmExperimentConfig(
+        model="qwen2.5:7b",
+        temperature=0.3,
+        num_ctx=32768,
+        seed=42,
+        top_p=0.9,
+        max_tokens=800,
+        timeout=120.0,
+        keep_alive="5m",
+        max_retries=max_retries,
+        cascade_enabled=False,
+    )
+
+
+def _make_chat_client(max_retries: int = 0) -> dict:
+    return {
+        "host": "http://localhost:11434",
+        "model": "qwen2.5:7b",
+        "keep_alive": "5m",
+        "max_retries": max_retries,
+    }
+
+
+def _valid_ollama_json() -> dict:
+    return {
+        "model": "qwen2.5:7b",
+        "message": {
+            "content": '{"decision": "abstain", "confidence": 30, '
+            '"claims": [], "reasoning": "no evidence"}'
+        },
+        "done": True,
+        "total_duration": 1000000000,
+        "prompt_eval_count": 100,
+        "prompt_eval_duration": 200000000,
+        "eval_count": 50,
+        "eval_duration": 100000000,
+    }
+
+
+def test_config_for_hash_sets_repetition_seed():
+    """_config_for_hash reemplaza la semilla conservando el resto de parámetros."""
+    config = _make_chat_config()
+    forked = _config_for_hash(config, 123)
+    assert forked.seed == 123
+    assert forked.model == config.model
+    assert forked.temperature == config.temperature
+    assert forked.num_ctx == config.num_ctx
+    assert _prompt_hash("prompt", forked) != _prompt_hash("prompt", config)
+
+
+def test_call_ollama_chat_uses_per_repetition_seed():
+    """_call_ollama_chat envía la semilla de la repetición (no config.seed)."""
+    config = _make_chat_config()
+    client = _make_chat_client()
+    captured: dict = {}
+
+    def fake_post(url, json=None, timeout=None):
+        captured["payload"] = json
+        return _MockResponse(_valid_ollama_json())
+
+    with patch("requests.post", side_effect=fake_post):
+        _call_ollama_chat(client, "prompt", config, seed=999)
+
+    assert captured["payload"]["options"]["seed"] == 999
+
+
+def test_call_ollama_chat_retries_on_failure():
+    """_call_ollama_chat reintenta hasta max_retries veces ante error de red."""
+    import requests as requests_mod
+
+    config = _make_chat_config(max_retries=2)
+    client = _make_chat_client(max_retries=2)
+    attempts = {"n": 0}
+
+    def fake_post(url, json=None, timeout=None):
+        attempts["n"] += 1
+        if attempts["n"] <= 2:
+            raise requests_mod.RequestException("connection refused")
+        return _MockResponse(_valid_ollama_json())
+
+    with patch("requests.post", side_effect=fake_post), patch("time.sleep"):
+        text, meta = _call_ollama_chat(client, "prompt", config)
+
+    assert attempts["n"] == 3  # 1 intento + 2 reintentos
+    assert "abstain" in text
+
+
+def test_call_ollama_chat_raises_after_retries_exhausted():
+    """Si todos los reintentos fallan, _call_ollama_chat lanza ValidationError."""
+    import requests as requests_mod
+
+    config = _make_chat_config(max_retries=1)
+    client = _make_chat_client(max_retries=1)
+
+    def fake_post(url, json=None, timeout=None):
+        raise requests_mod.RequestException("connection refused")
+
+    with patch("requests.post", side_effect=fake_post), patch("time.sleep"):
+        with pytest.raises(Exception, match="Ollama no respondió"):
+            _call_ollama_chat(client, "prompt", config)

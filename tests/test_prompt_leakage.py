@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from sources.phase2.prompt_builder import (
+    FEW_SHOT_EXAMPLES,
     assert_no_leakage,
     build_numeric_prompt,
     check_prompt_leakage,
@@ -204,3 +205,29 @@ def test_build_numeric_prompt_rejects_excessive_length():
             window_id_opaque="win_x",
             num_ctx=10,  # Muy pequeño para forzar el error
         )
+
+
+def test_few_shot_examples_reflect_real_scr_values():
+    """Los ejemplos few-shot usan valores SCR reales (umbral 0.05 µS)."""
+    # Valores inflados del ejemplo anterior (SCR 8 stress, 5 amusement, 2 baseline)
+    # no deben aparecer.
+    assert "eda_scr_count=8" not in FEW_SHOT_EXAMPLES
+    assert "eda_scr_count=2 count" not in FEW_SHOT_EXAMPLES
+    # El "amusement" elevado (HR 85) era contradictorio con los datos reales.
+    assert "ecg_hr_bpm=85.0" not in FEW_SHOT_EXAMPLES
+    # Valores reales: baseline/amusement SCR≈1, stress≈5, meditation≈0.
+    assert "eda_scr_count=5 count" in FEW_SHOT_EXAMPLES  # stress
+    assert "eda_scr_count=1 count" in FEW_SHOT_EXAMPLES  # baseline/amusement
+    assert "eda_scr_count=0 count" in FEW_SHOT_EXAMPLES  # meditation
+
+
+def test_few_shot_examples_do_not_leak_labels():
+    """El prompt con few-shot no introduce fugas de etiqueta."""
+    payload = _make_numeric_payload()
+    prompt = build_numeric_prompt(
+        payload=payload,
+        window_id_opaque="win_a1b2c3d4",
+        num_ctx=32768,
+        use_few_shot=True,
+    )
+    assert_no_leakage(prompt)

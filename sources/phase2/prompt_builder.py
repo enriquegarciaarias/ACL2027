@@ -90,27 +90,33 @@ LEAKAGE_PATTERNS: dict[str, re.Pattern[str]] = {
 
 # Ejemplos few-shot para mitigar el sesgo del modelo hacia "stress".
 # Un ejemplo por clase afectiva para equilibrar las prioridades del modelo.
+#
+# Los valores reflejan las medias reales del corpus (15 sujetos, recalibración
+# SCR a 0.05 µS): stress destaca por HR≈98 y SCR≈5; amusement es fisiológicamente
+# casi idéntico a baseline (HR≈73, SCR≈1); meditation destaca por HRV alta
+# (RMSSD≈68) y SCR≈0. Los valores anteriores (SCR 2/8/5/1) estaban inflados y
+# describían un "amusement" elevado que no existe en los datos.
 FEW_SHOT_EXAMPLES: str = """Examples:
 
 Example 1 - Baseline:
-Features: ecg_hr_bpm=65.0 bpm, ecg_rmssd_ms=45.0 ms, eda_mean_us=2.1 uS, eda_scr_count=2 count
+Features: ecg_hr_bpm=73.0 bpm, ecg_rmssd_ms=50.5 ms, eda_mean_us=2.6 uS, eda_scr_count=1 count
 Decision: baseline
-Reasoning: Heart rate and EDA are within resting ranges, consistent with baseline.
+Reasoning: Resting heart rate and low SCR count are consistent with baseline.
 
 Example 2 - Stress:
-Features: ecg_hr_bpm=95.0 bpm, ecg_rmssd_ms=28.0 ms, eda_mean_us=5.2 uS, eda_scr_count=8 count
+Features: ecg_hr_bpm=98.3 bpm, ecg_rmssd_ms=43.9 ms, eda_mean_us=4.6 uS, eda_scr_count=5 count
 Decision: stress
-Reasoning: Elevated heart rate and high EDA SCR rate indicate stress.
+Reasoning: Elevated heart rate and high SCR count indicate stress.
 
 Example 3 - Amusement:
-Features: ecg_hr_bpm=85.0 bpm, ecg_rmssd_ms=35.0 ms, eda_mean_us=3.5 uS, eda_scr_count=5 count
+Features: ecg_hr_bpm=73.0 bpm, ecg_rmssd_ms=52.3 ms, eda_mean_us=2.9 uS, eda_scr_count=1 count
 Decision: amusement
-Reasoning: Moderately elevated heart rate with positive arousal pattern.
+Reasoning: Similar to baseline at rest; amusement shows no strong EDA/HR response in these channels.
 
 Example 4 - Meditation:
-Features: ecg_hr_bpm=58.0 bpm, ecg_rmssd_ms=55.0 ms, eda_mean_us=1.8 uS, eda_scr_count=1 count
+Features: ecg_hr_bpm=69.5 bpm, ecg_rmssd_ms=68.4 ms, eda_mean_us=3.0 uS, eda_scr_count=0 count
 Decision: meditation
-Reasoning: Low heart rate with high HRV and minimal EDA activity indicate meditation."""
+Reasoning: Low heart rate with high HRV (RMSSD) and minimal SCR indicate meditation."""
 
 
 def estimate_tokens(text: str) -> int:

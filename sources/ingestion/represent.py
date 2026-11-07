@@ -160,6 +160,36 @@ def _filter_motion_channels(feature_block: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Modalidades visibles en la vista LLM. Se excluyen las de muñeca
+# (wrist_eda, wrist_temp, wrist_acc) para que ``numeric_llm`` y ``text_llm``
+# compartan el mismo conjunto de canales (pecho). El canal de movimiento
+# (acc/emg) se controla aparte con ``exclude_motion_channels``.
+LLM_CHEST_MODALITIES: frozenset[str] = frozenset({"ecg", "eda", "resp", "temp", "bvp"})
+LLM_MOTION_MODALITIES: frozenset[str] = frozenset({"acc", "emg"})
+WRIST_MODALITIES: frozenset[str] = frozenset({"wrist_eda", "wrist_temp", "wrist_acc"})
+
+
+def _llm_view_features(
+    feature_row: Mapping[str, Any],
+    exclude_motion_channels: bool,
+) -> dict[str, dict[str, Any]]:
+    """Devuelve las features visibles en la vista LLM (pecho, sin muñeca).
+
+    Unifica el conjunto de canales entre ``numeric_llm`` y ``text_llm``: solo
+    modalidades de pecho (ecg, eda, resp, temp, bvp) y, opcionalmente, los
+    canales de movimiento (acc/emg) cuando no se excluyen. Las modalidades de
+    muñeca nunca forman parte del conjunto experimental mínimo.
+    """
+    allowed = LLM_CHEST_MODALITIES
+    if not exclude_motion_channels:
+        allowed = allowed | LLM_MOTION_MODALITIES
+    return {
+        modality: block
+        for modality, block in feature_row.get("features", {}).items()
+        if modality in allowed
+    }
+
+
 def index_path(kind: str) -> Path:
     return kind_dir(kind) / f"{kind}_index.jsonl"
 
@@ -250,10 +280,13 @@ def build_numeric(
         include_window_meta = True
         opaque_id = False
 
+    if llm_view:
+        features_source = _llm_view_features(feature_row, exclude_motion_channels)
+    else:
+        features_source = feature_row.get("features", {})
+
     modalities: dict[str, dict] = {}
-    for modality, feature_block in feature_row.get("features", {}).items():
-        if exclude_motion_channels:
-            feature_block = _filter_motion_channels(feature_block)
+    for modality, feature_block in features_source.items():
         modalities[modality] = {}
         for name, meta in feature_block.items():
             item: dict[str, Any] = {"value": _round(meta.get("value"), digits)}
@@ -336,9 +369,12 @@ def build_text(
             )
         lines.append("")
 
-    for modality, feature_block in feature_row.get("features", {}).items():
-        if exclude_motion_channels:
-            feature_block = _filter_motion_channels(feature_block)
+    if llm_view:
+        features_source = _llm_view_features(feature_row, exclude_motion_channels)
+    else:
+        features_source = feature_row.get("features", {})
+
+    for modality, feature_block in features_source.items():
         lines.append("")
         lines.append(MODALITY_TITLES.get(modality, modality.upper()))
         for name, meta in feature_block.items():

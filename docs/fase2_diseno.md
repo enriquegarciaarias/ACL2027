@@ -48,16 +48,31 @@ partir de:
 
 - Nueva función `_llm_view_features(feature_row, exclude_motion_channels)` que
   filtra a nivel de **modalidad** (no de feature).
-- Constantes `LLM_CHEST_MODALITIES = {ecg, eda, resp, temp, bvp}`,
+- Constantes `LLM_CHEST_MODALITIES = {ecg, eda, resp, temp}`,
   `LLM_MOTION_MODALITIES = {acc, emg}` y
-  `WRIST_MODALITIES = {wrist_eda, wrist_temp, wrist_acc}`.
+  `WRIST_MODALITIES = {bvp, wrist_eda, wrist_temp, wrist_acc}`.
+  **Corrección 2026-11-08:** `bvp` se extrae de `wrist_BVP` (ver
+  `features/registry.py`) y es, por tanto, una modalidad de muñeca; antes se
+  había clasificado erróneamente como pecho. Se reserva para el experimento
+  de sobre-confianza en medidas derivadas (HR de BVP vs ECG de referencia),
+  no para la vista principal.
 - La vista LLM (tanto `numeric_llm` como `text_llm`, y también las vistas
   `*_llm_motion`) excluye siempre las modalidades de muñeca; los canales de
   movimiento (`acc`/`emg`) se controlan con `exclude_motion_channels`.
 
 **Resultado.** `numeric_llm` y `text_llm` comparten el mismo conjunto de
-canales (pecho + movimiento opcional), diferiendo solo en el formato (numérico
-vs textual).
+canales (pecho + movimiento opcional) y el mismo conjunto de features
+(`LLM_ALLOWED_FEATURES`, 23 features: 5 ECG, 9 EDA, 5 resp, 4 temp),
+diferiendo solo en el formato (numérico vs textual). `representation_version`
+se incrementó a `1.3` para invalidar las vistas antiguas. Se excluyó
+`eda_scr_candidates` de la vista LLM (es un diagnóstico interno: se confunde
+con el número real de SCR y no aporta al modelo).
+
+**Few-shot (2026-11-08).** Los ejemplos usan ahora medias reales de las 705
+ventanas e incluyen `resp_rate_bpm`, que es la señal que mejor separa
+`meditation` (≈9 rpm) del resto (≈14–17 rpm). Se omiten deliberadamente
+`temp` (deriva con el orden del protocolo WESAD y puede actuar como confusor)
+y `bvp` (muñeca).
 
 ---
 
@@ -137,3 +152,24 @@ bucle de hasta `max_retries + 1` intentos con backoff progresivo
     reintentos y agotamiento de reintentos.
 - Script de evaluación agregada: `scripts/evaluate_phase3.py` (reporte en
   `results/output/WESAD/PHASE2/evaluation_report.json`).
+
+---
+
+## 7. Compuerta de consistencia (P1)
+
+La revisión de E12 mostró que la vista centrada pierde sensibilidad a la
+corrupción estructural (`NC_shuffled`: 23,6 % de abstención frente a 95,3 % de
+la vista absoluta). Se añadió una **compuerta determinista de coherencia
+fisiológica** antes de aceptar la decisión del LLM:
+
+- `sources/phase2/consistency.py`: 8 comprobaciones (identidades HR↔RR,
+  latidos↔HR, SCR↔tasa, amplitud media ≤ máxima, EDA media↔tónica; empíricas
+  ciclos↔FR, rango↔DE, DE↔DE fásica), severidad `hard`/`soft` y
+  `should_abstain`.
+- Integración en `run_orchestrator` (`consistency_gate=True` por defecto):
+  cada respuesta guarda `consistency.*`, conserva `decision_llm` y usa
+  `status="gate_abstention"` si la compuerta anula una decisión concreta.
+- La caché guarda la respuesta cruda del LLM: el veredicto se recalcula siempre.
+- Ablación: `--noGate` o `defaults.llm.consistency_gate=false`.
+- Resultados: ver `docs/consistencia.md` (0 % de falsos positivos en limpio,
+  100 % de detección en `NC_shuffled`, 128 vetos en el corpus).

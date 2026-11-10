@@ -324,6 +324,11 @@ contiene la etiqueta**: la unión con las ventanas se hace por `window_id`.
 | `acc` | `chest_ACC` | magnitud media/std/p95, energía, fracción de movimiento |
 | `emg` | `chest_EMG` | media absoluta, std, RMS, p95 |
 | `bvp` | `wrist_BVP` | HR, RR medio, RMSSD, outliers, nº latidos |
+
+> **Nota (2026-11-08):** `bvp` procede de `wrist_BVP`, por lo que es una
+> modalidad de muñeca. La vista LLM principal (`numeric_llm`/`text_llm`)
+> incluye solo `{ecg, eda, resp, temp}`; `bvp` se reserva para el experimento
+> de sobre-confianza en medidas derivadas (HR de BVP vs ECG de referencia).
 | `wrist_eda` | `wrist_EDA` | mismas features EDA a 4 Hz |
 | `wrist_temp` | `wrist_TEMP` | mismas features de temperatura |
 | `wrist_acc` | `wrist_ACC` | mismas features ACC |
@@ -369,7 +374,7 @@ todas las ventanas en categoría `good`.
 
 ## 9. Representaciones (H5)
 
-Dos formatos versionados (`representation_version = "1.0"`). Ambos se generan
+Dos formatos versionados (`representation_version = "1.3"`). Ambos se generan
 con las mismas ventanas y features, y ambos excluyen la etiqueta.
 
 ### Numérica
@@ -549,19 +554,19 @@ el paso de embebidos se omite sin afectar a `numeric` y `text`.
 #### Numérica (JSONL)
 
 ```json
-{"window_id":"WESAD:S2:w00001","subject":"S2","representation":"numeric","representation_version":"1.0","payload":{"window":{"window_id":"WESAD:S2:w00001","subject":"S2","t_start_s":311.5,"t_end_s":371.5,"duration_s":60.0,"coverage":{"chest":1,"wrist_acc":1,"wrist_bvp":1,"wrist_eda":1,"wrist_temp":1}},"modalities":{"ecg":{"ecg_n_beats":{"value":79,"unit":"count"},"ecg_hr_bpm":{"value":79.5686,"unit":"bpm"},"ecg_rmssd_ms":{"value":64.02,"unit":"ms"}},"eda":{"eda_mean_us":{"value":4.848,"unit":"uS"}}},"quality":{"sqi_overall":0.8988,"category":"good"}},"feature_version":"1.0","schema_version":"1.0","config_fingerprint":"..."}
+{"window_id":"WESAD:S2:w00001","subject":"S2","representation":"numeric","representation_version":"1.3","payload":{"window":{"window_id":"WESAD:S2:w00001","subject":"S2","t_start_s":311.5,"t_end_s":371.5,"duration_s":60.0,"coverage":{"chest":1,"wrist_acc":1,"wrist_bvp":1,"wrist_eda":1,"wrist_temp":1}},"modalities":{"ecg":{"ecg_n_beats":{"value":79,"unit":"count"},"ecg_hr_bpm":{"value":79.5686,"unit":"bpm"},"ecg_rmssd_ms":{"value":64.02,"unit":"ms"}},"eda":{"eda_mean_us":{"value":4.848,"unit":"uS"}}},"quality":{"sqi_overall":0.8988,"category":"good"}},"feature_version":"1.0","schema_version":"1.0","config_fingerprint":"..."}
 ```
 
 #### Textual (JSONL, campo `payload` como string)
 
 ```json
-{"window_id":"WESAD:S2:w00001","subject":"S2","representation":"text","representation_version":"1.0","payload":"PHYSIOLOGICAL SIGNAL SUMMARY\n==================================================\n\nWindow: WESAD:S2:w00001\nSubject: S2\nTime: 311.5 s - 371.5 s (duration 60 s)\n\nCARDIOVASCULAR (ECG)\n  Heart rate: 79.57 bpm\n  RMSSD: 64.02 ms\n  ...\n\nSIGNAL QUALITY\n  Overall SQI: 0.8988 (good)\n  ...\n","config_fingerprint":"...","feature_version":"1.0","schema_version":"1.0"}
+{"window_id":"WESAD:S2:w00001","subject":"S2","representation":"text","representation_version":"1.3","payload":"PHYSIOLOGICAL SIGNAL SUMMARY\n==================================================\n\nWindow: WESAD:S2:w00001\nSubject: S2\nTime: 311.5 s - 371.5 s (duration 60 s)\n\nCARDIOVASCULAR (ECG)\n  Heart rate: 79.57 bpm\n  RMSSD: 64.02 ms\n  ...\n\nSIGNAL QUALITY\n  Overall SQI: 0.8988 (good)\n  ...\n","config_fingerprint":"...","feature_version":"1.0","schema_version":"1.0"}
 ```
 
 #### Embebidos (JSONL) — Material complementario
 
 ```json
-{"window_id":"WESAD:S2:w00001","subject":"S2","representation":"embeddings","representation_version":"1.0","payload":{"vector":[-0.0057,0.0638,-0.0023,0.0245,...],"dimension":1024,"model":"mxbai-embed-large","source":"text"},"config_fingerprint":"...","feature_version":"1.0","schema_version":"1.0"}
+{"window_id":"WESAD:S2:w00001","subject":"S2","representation":"embeddings","representation_version":"1.3","payload":{"vector":[-0.0057,0.0638,-0.0023,0.0245,...],"dimension":1024,"model":"mxbai-embed-large","source":"text"},"config_fingerprint":"...","feature_version":"1.0","schema_version":"1.0"}
 ```
 
 *Nota: este vector no se presenta al LLM. Se mantiene como material complementario para exploración futura (línea base densa, recuperación, sondas).*

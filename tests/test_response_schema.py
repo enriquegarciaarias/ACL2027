@@ -149,11 +149,10 @@ def test_validate_claim_alias_electrodermal():
 
 
 def test_validate_claim_additional_channels_allowed():
-    """Los canales adicionales (resp, temp, bvp) se aceptan."""
+    """Los canales de pecho adicionales (resp, temp) se aceptan."""
     for channel, metric in [
         ("respiration", "resp_rate_bpm"),
         ("temperature", "temp_mean_degc"),
-        ("pulse", "bvp_hr_bpm"),
     ]:
         raw = (
             '{"decision": "stress", "confidence": 80, '
@@ -163,6 +162,33 @@ def test_validate_claim_additional_channels_allowed():
         )
         resp = validate_llm_output(raw)
         assert resp.status == "valid_response", f"{channel} debería aceptarse"
+
+
+def test_validate_claim_bvp_rejected_as_wrist_channel():
+    """BVP es una modalidad de muñeca: no se acepta en la vista de pecho."""
+    raw = (
+        '{"decision": "stress", "confidence": 80, '
+        '"claims": [{"metric": "bvp_hr_bpm", "channel": "pulse", '
+        '"direction": "increase", "magnitude": "high"}], '
+        '"reasoning": "x"}'
+    )
+    resp = validate_llm_output(raw)
+    assert resp.status == "invalid_output"
+    assert "canales permitidos" in resp.error_message
+
+
+def test_validate_claim_magnitude_and_direction_aliases():
+    """Variaciones de vocabulario se normalizan (no son invalid_output)."""
+    raw = (
+        '{"decision": "abstain", "confidence": 50, '
+        '"claims": [{"metric": "eda_mean_us", "channel": "EDA", '
+        '"direction": "decreased", "magnitude": "very low"}], '
+        '"reasoning": "x"}'
+    )
+    resp = validate_llm_output(raw)
+    assert resp.status == "valid_abstention"
+    assert resp.claims[0].direction == "decrease"
+    assert resp.claims[0].magnitude == "low"
 
 
 def test_validate_claim_wrist_channel_rejected():
@@ -281,3 +307,75 @@ def test_validate_decision_case_insensitive():
     resp = validate_llm_output(raw)
     assert resp.status == "valid_response"
     assert resp.decision == "stress"
+
+
+# ---------------------------------------------------------------------------
+# Modo binario stress vs non-stress (P2)
+# ---------------------------------------------------------------------------
+
+from sources.phase2.response_schema import (  # noqa: E402
+    BINARY_DECISIONS,
+    DECISION_MODE_AFFECTIVE,
+    DECISION_MODE_STRESS_BINARY,
+    validate_llm_output,
+)
+
+
+def _binary_payload(decision: str, confidence: int = 80) -> str:
+    import json
+
+    return json.dumps(
+        {
+            "decision": decision,
+            "confidence": confidence,
+            "claims": [],
+            "reasoning": "patrón de activación",
+        }
+    )
+
+
+def test_binary_mode_accepts_stress_and_non_stress():
+    for decision in ("stress", "non-stress", "abstain"):
+        result = validate_llm_output(
+            _binary_payload(decision), decision_mode=DECISION_MODE_STRESS_BINARY
+        )
+        expected_status = (
+            "valid_abstention" if decision == "abstain" else "valid_response"
+        )
+        assert result.status == expected_status
+        assert result.decision == decision
+
+
+def test_binary_mode_normalizes_aliases():
+    for alias in ("non_stress", "nonstress", "no-stress", "no stress", "not stress"):
+        result = validate_llm_output(
+            _binary_payload(alias), decision_mode=DECISION_MODE_STRESS_BINARY
+        )
+        assert result.status == "valid_response"
+        assert result.decision == "non-stress"
+
+
+def test_binary_mode_rejects_four_class_labels():
+    result = validate_llm_output(
+        _binary_payload("baseline"), decision_mode=DECISION_MODE_STRESS_BINARY
+    )
+    assert result.status == "invalid_output"
+    assert "no permitido" in result.error_message
+
+
+def test_affective_mode_rejects_non_stress():
+    result = validate_llm_output(
+        _binary_payload("non-stress"), decision_mode=DECISION_MODE_AFFECTIVE
+    )
+    assert result.status == "invalid_output"
+
+
+def test_unknown_decision_mode_raises():
+    import pytest
+
+    with pytest.raises(ValueError, match="decision_mode"):
+        validate_llm_output(_binary_payload("stress"), decision_mode="ternary")
+
+
+def test_binary_decisions_constant():
+    assert BINARY_DECISIONS == frozenset({"stress", "non-stress", "abstain"})

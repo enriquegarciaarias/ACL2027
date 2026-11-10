@@ -31,7 +31,9 @@
             "llm_timeout": 120.0,
             "llm_keep_alive": "5m",
             "repetitions": 1,
-            "seeds": [42]
+            "seeds": [42],
+            "consistency_gate": true,
+            "consistency_tolerance_scale": 1.0
         },
         "url_blacklist": {
             "_help": "Opcional. Dominios/URLs desde los que NO se descargan PDFs (aplica a todos los proyectos).",

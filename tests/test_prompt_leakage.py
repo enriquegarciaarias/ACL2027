@@ -48,6 +48,15 @@ def _make_numeric_payload() -> dict:
             "emg": {
                 "emg_mean_abs_mv": {"value": 0.5, "unit": "mV", "kind": "observed"},
             },
+            "resp": {
+                "resp_rate_bpm": {"value": 14.0, "unit": "1/min", "kind": "derived"},
+            },
+            "temp": {
+                "temp_mean_degc": {"value": 33.5, "unit": "degC", "kind": "observed"},
+            },
+            "bvp": {
+                "bvp_hr_bpm": {"value": 70.0, "unit": "bpm", "kind": "derived"},
+            },
         },
         "feature_version": "1.0",
         "window": {
@@ -144,6 +153,90 @@ def test_build_numeric_prompt_excludes_acc_and_emg():
     assert "emg_std_mv" not in prompt
 
 
+def test_build_numeric_prompt_with_additional_features_describes_chest_channels():
+    """Con ``include_additional`` el prompt declara los canales de pecho reales.
+
+    Evita que el modelo reciba un encabezado que diga "EDA + HR only" mientras
+    se le envían también respiración y temperatura. BVP es de muñeca y no debe
+    aparecer.
+    """
+    payload = _make_numeric_payload()
+    prompt = build_numeric_prompt(
+        payload=payload,
+        window_id_opaque="win_x",
+        num_ctx=32768,
+        include_additional=True,
+    )
+
+    assert "chest physiological features" in prompt
+    assert "respiration" in prompt
+    assert "resp_rate_bpm" in prompt
+    assert "temp_mean_degc" in prompt
+    assert "EDA + HR only" not in prompt
+    assert "wrist_" not in prompt
+    assert "bvp" not in prompt
+
+
+def test_build_numeric_prompt_standardized_uses_zscore_scale():
+    """La variante E12 declara la escala z y usa ejemplos en la misma escala."""
+    payload = _make_numeric_payload()
+    prompt = build_numeric_prompt(
+        payload=payload,
+        window_id_opaque="win_x",
+        num_ctx=32768,
+        use_few_shot=True,
+        include_additional=True,
+        standardized=True,
+    )
+    assert "within-subject z-scores" in prompt
+    assert "0 is the subject's session reference" in prompt
+    assert "ecg_hr_bpm=+2.1 SD" in prompt  # mediana de dev (stress)
+    assert "EDA + HR only" not in prompt
+    assert "wrist_" not in prompt
+    assert_no_leakage(prompt)
+
+
+def test_build_numeric_prompt_consistency_rule_is_optional():
+    """La comprobación de consistencia solo aparece si se pide."""
+    payload = _make_numeric_payload()
+    base = build_numeric_prompt(
+        payload=payload,
+        window_id_opaque="win_x",
+        num_ctx=32768,
+        include_additional=True,
+        standardized=True,
+    )
+    with_rule = build_numeric_prompt(
+        payload=payload,
+        window_id_opaque="win_x",
+        num_ctx=32768,
+        include_additional=True,
+        standardized=True,
+        consistency_check=True,
+    )
+    assert "Consistency check" not in base
+    assert "Consistency check" in with_rule
+    assert "eda_scr_count and eda_scr_rate_per_min" in with_rule
+    assert "ecg_n_beats and ecg_hr_bpm" in with_rule
+    assert_no_leakage(with_rule)
+
+
+def test_build_text_prompt_accepts_scale_options():
+    """``build_text_prompt`` admite la escala y la comprobación (regresión)."""
+    from sources.phase2.prompt_builder import build_text_prompt
+
+    prompt = build_text_prompt(
+        text_representation="ecg_hr_bpm: 72 bpm\neda_mean_us: 4 uS",
+        window_id_opaque="win_x",
+        num_ctx=32768,
+        standardized=True,
+        rubric=True,
+        consistency_check=True,
+    )
+    assert "Consistency check" in prompt
+    assert_no_leakage(prompt)
+
+
 def test_check_prompt_leakage_detects_labels():
     """Se detectan etiquetas de estado afectivo."""
     prompt_ok = "The heart rate is 72 bpm and EDA is 12 uS."
@@ -207,18 +300,75 @@ def test_build_numeric_prompt_rejects_excessive_length():
         )
 
 
-def test_few_shot_examples_reflect_real_scr_values():
-    """Los ejemplos few-shot usan valores SCR reales (umbral 0.05 µS)."""
-    # Valores inflados del ejemplo anterior (SCR 8 stress, 5 amusement, 2 baseline)
-    # no deben aparecer.
-    assert "eda_scr_count=8" not in FEW_SHOT_EXAMPLES
-    assert "eda_scr_count=2 count" not in FEW_SHOT_EXAMPLES
-    # El "amusement" elevado (HR 85) era contradictorio con los datos reales.
-    assert "ecg_hr_bpm=85.0" not in FEW_SHOT_EXAMPLES
-    # Valores reales: baseline/amusement SCR≈1, stress≈5, meditation≈0.
-    assert "eda_scr_count=5 count" in FEW_SHOT_EXAMPLES  # stress
-    assert "eda_scr_count=1 count" in FEW_SHOT_EXAMPLES  # baseline/amusement
-    assert "eda_scr_count=0 count" in FEW_SHOT_EXAMPLES  # meditation
+def test_few_shot_examples_come_from_development_subjects():
+    """Los ejemplos usan medianas de S2-S4, nunca estadísticos del test."""
+    from sources.phase2.development_split import DEV_SUBJECTS
+    from sources.phase2.prompt_builder import (
+        FEW_SHOT_EXEMPLARS,
+        FEW_SHOT_PROVENANCE,
+    )
+
+    assert FEW_SHOT_PROVENANCE["subjects"] == list(DEV_SUBJECTS)
+    assert FEW_SHOT_PROVENANCE["statistic"].startswith("median")
+    # Valores de desarrollo: stress con SCR alto y baseline/amusement/meditation ~0.
+    assert FEW_SHOT_EXEMPLARS["stress"]["eda_scr_count"] == 4
+    for label in ("baseline", "amusement", "meditation"):
+        assert FEW_SHOT_EXEMPLARS[label]["eda_scr_count"] == 0
+    # La respiración separa meditation del resto.
+    assert FEW_SHOT_EXEMPLARS["meditation"]["resp_rate_bpm"] == 12.8
+    assert FEW_SHOT_EXEMPLARS["baseline"]["resp_rate_bpm"] == 17.6
+    # Guarda anti-fuga: si alguien reintroduce las medias de las 705 ventanas
+    # evaluadas (HR baseline 72.4, EDA baseline 3.9), el test falla.
+    assert FEW_SHOT_EXEMPLARS["baseline"]["ecg_hr_bpm"] != 72.4
+    assert FEW_SHOT_EXEMPLARS["baseline"]["eda_mean_us"] != 3.9
+
+
+def test_few_shot_values_match_development_features():
+    """Los valores del prompt coinciden con las medianas recalculadas en S2-S4."""
+    import json
+    from pathlib import Path
+
+    import numpy as np
+    import pytest
+
+    from sources.phase2.development_split import DEV_SUBJECTS
+    from sources.phase2.prompt_builder import FEW_SHOT_EXEMPLARS
+
+    ingest = Path("results/output/WESAD/INGEST")
+    if not (ingest / "windows" / "S2.windows.jsonl").is_file():
+        pytest.skip("corpus WESAD no disponible")
+
+    modality = {
+        "ecg_hr_bpm": "ecg",
+        "ecg_rmssd_ms": "ecg",
+        "eda_mean_us": "eda",
+        "eda_scr_count": "eda",
+        "resp_rate_bpm": "resp",
+    }
+    values: dict[str, dict[str, list[float]]] = {}
+    for subject in DEV_SUBJECTS:
+        windows = {
+            json.loads(line)["window_id"]: json.loads(line)["label"]["name"]
+            for line in (ingest / "windows" / f"{subject}.windows.jsonl").open()
+        }
+        for line in (ingest / "features" / f"{subject}.features.jsonl").open():
+            record = json.loads(line)
+            label = windows.get(record["window_id"])
+            if not label:
+                continue
+            for name, mod in modality.items():
+                value = record["features"].get(mod, {}).get(name, {}).get("value")
+                if value is not None:
+                    values.setdefault(label, {}).setdefault(name, []).append(value)
+
+    for label, exemplar in FEW_SHOT_EXEMPLARS.items():
+        for name, expected in exemplar.items():
+            median = float(np.median(values[label][name]))
+            # Comparamos con el redondeo publicado en el prompt.
+            assert float(f"{median:.1f}") == pytest.approx(expected, abs=0.1), (
+                label,
+                name,
+            )
 
 
 def test_few_shot_examples_do_not_leak_labels():
@@ -231,3 +381,77 @@ def test_few_shot_examples_do_not_leak_labels():
         use_few_shot=True,
     )
     assert_no_leakage(prompt)
+
+
+# ---------------------------------------------------------------------------
+# Prompt binario stress vs non-stress (P2)
+# ---------------------------------------------------------------------------
+
+from sources.phase2.response_schema import DECISION_MODE_STRESS_BINARY  # noqa: E402
+
+
+def test_build_numeric_prompt_binary_mode_schema_and_leakage():
+    payload = _make_numeric_payload()
+    prompt = build_numeric_prompt(
+        payload=payload,
+        window_id_opaque="win_x",
+        num_ctx=32768,
+        use_few_shot=True,
+        include_additional=True,
+        standardized=True,
+        decision_mode=DECISION_MODE_STRESS_BINARY,
+    )
+    assert '"decision": "stress" | "non-stress" | "abstain"' in prompt
+    assert "acute stress response" in prompt
+    # El prompt binario no ofrece las etiquetas de 4 clases como decisión.
+    assert '"amusement" | "meditation"' not in prompt
+    assert "Decision: non-stress" in prompt
+    assert_no_leakage(prompt)
+
+
+def test_build_text_prompt_binary_mode():
+    from sources.phase2.prompt_builder import build_text_prompt
+
+    prompt = build_text_prompt(
+        text_representation="ecg_hr_bpm: 72 bpm\neda_mean_us: 4 uS",
+        window_id_opaque="win_x",
+        num_ctx=32768,
+        decision_mode=DECISION_MODE_STRESS_BINARY,
+    )
+    assert '"stress" | "non-stress" | "abstain"' in prompt
+    assert "Calm baseline" not in prompt
+    assert_no_leakage(prompt)
+
+
+def test_invalid_decision_mode_raises_in_prompt():
+    import pytest
+
+    with pytest.raises(ValueError, match="decision_mode"):
+        build_numeric_prompt(
+            payload=_make_numeric_payload(),
+            window_id_opaque="win_x",
+            decision_mode="ternary",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Rúbrica de confianza graduada (P4)
+# ---------------------------------------------------------------------------
+
+
+def test_graded_confidence_rubric_is_optional_and_leakage_free():
+    payload = _make_numeric_payload()
+    base = build_numeric_prompt(
+        payload=payload, window_id_opaque="win_x", standardized=True
+    )
+    graded = build_numeric_prompt(
+        payload=payload,
+        window_id_opaque="win_x",
+        standardized=True,
+        graded_confidence=True,
+    )
+    assert "Confidence guidance" not in base
+    assert "Confidence guidance" in graded
+    assert "90-100" in graded
+    assert "do not default" in graded
+    assert_no_leakage(graded)

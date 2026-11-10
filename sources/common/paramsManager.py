@@ -50,6 +50,16 @@ def manageArgs():
     parser.add_argument('--subjects', type=str, help="Subconjunto de sujetos del dataset (p. ej. 'S2,S3'); vacío = todos", default=None)
     parser.add_argument('--force', action='store_true', help="Recalcular artefactos aunque existan con el mismo fingerprint")
     parser.add_argument('--dry-run', action='store_true', help="Resolver configuración y rutas sin ejecutar el pipeline")
+    parser.add_argument(
+        '--noGate',
+        action='store_true',
+        help="Desactivar la compuerta de consistencia fisiológica en PHASE2 (ablación)",
+    )
+    parser.add_argument(
+        '--allowDev',
+        action='store_true',
+        help="Permitir sujetos de desarrollo (S2-S4) en PHASE2; por defecto solo se advierte",
+    )
 
     args = parser.parse_args()
     return args

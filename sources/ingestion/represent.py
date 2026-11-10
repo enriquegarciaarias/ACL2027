@@ -48,7 +48,7 @@ from sources.ingestion.config import representations_config
 from sources.ingestion.features.common import FEATURE_VERSION
 from sources.ingestion.schemas import RepresentationRecord, SCHEMA_VERSION
 
-REPRESENTATION_VERSION = "1.0"
+REPRESENTATION_VERSION = "1.3"
 KINDS = ("numeric", "text", "embeddings")
 
 MODALITY_TITLES = {
@@ -164,9 +164,60 @@ def _filter_motion_channels(feature_block: dict[str, Any]) -> dict[str, Any]:
 # (wrist_eda, wrist_temp, wrist_acc) para que ``numeric_llm`` y ``text_llm``
 # compartan el mismo conjunto de canales (pecho). El canal de movimiento
 # (acc/emg) se controla aparte con ``exclude_motion_channels``.
-LLM_CHEST_MODALITIES: frozenset[str] = frozenset({"ecg", "eda", "resp", "temp", "bvp"})
+LLM_CHEST_MODALITIES: frozenset[str] = frozenset({"ecg", "eda", "resp", "temp"})
 LLM_MOTION_MODALITIES: frozenset[str] = frozenset({"acc", "emg"})
-WRIST_MODALITIES: frozenset[str] = frozenset({"wrist_eda", "wrist_temp", "wrist_acc"})
+# ``bvp`` se extrae de ``wrist_BVP`` (ver registry.py): es una modalidad de
+# muñeca, no de pecho, y por tanto queda fuera del conjunto experimental
+# mínimo (se reserva para el experimento de sobre-confianza en medidas
+# derivadas, donde se compara HR de BVP con el ECG de referencia).
+WRIST_MODALITIES: frozenset[str] = frozenset(
+    {"bvp", "wrist_eda", "wrist_temp", "wrist_acc"}
+)
+
+# Conjunto curado de features que forma la vista LLM. Se aplica tanto a
+# ``numeric_llm`` como a ``text_llm`` para que la comparación entre
+# representaciones no esté confundida por un conjunto distinto de features.
+LLM_ALLOWED_FEATURES: frozenset[str] = frozenset(
+    {
+        # EDA
+        "eda_mean_us",
+        "eda_std_us",
+        "eda_slope_us_per_s",
+        "eda_tonic_mean_us",
+        "eda_phasic_std_us",
+        "eda_scr_count",
+        "eda_scr_rate_per_min",
+        "eda_scr_amplitude_mean_us",
+        "eda_scr_amplitude_max_us",
+        # ECG / cardiovascular
+        "ecg_hr_bpm",
+        "ecg_rr_mean_ms",
+        "ecg_sdnn_ms",
+        "ecg_rmssd_ms",
+        "ecg_n_beats",
+        # Respiración
+        "resp_rate_bpm",
+        "resp_interval_cv",
+        "resp_amplitude_pct",
+        "resp_std_pct",
+        "resp_n_cycles",
+        # Temperatura
+        "temp_mean_degc",
+        "temp_std_degc",
+        "temp_slope_degc_per_s",
+        "temp_range_degc",
+        # Movimiento (solo en la vista *_llm_motion)
+        "acc_mean_g",
+        "acc_std_g",
+        "acc_p95_g",
+        "acc_energy_g2",
+        "acc_motion_fraction",
+        "emg_mean_abs_mv",
+        "emg_std_mv",
+        "emg_rms_mv",
+        "emg_p95_abs_mv",
+    }
+)
 
 
 def _llm_view_features(
@@ -175,19 +226,28 @@ def _llm_view_features(
 ) -> dict[str, dict[str, Any]]:
     """Devuelve las features visibles en la vista LLM (pecho, sin muñeca).
 
-    Unifica el conjunto de canales entre ``numeric_llm`` y ``text_llm``: solo
-    modalidades de pecho (ecg, eda, resp, temp, bvp) y, opcionalmente, los
-    canales de movimiento (acc/emg) cuando no se excluyen. Las modalidades de
-    muñeca nunca forman parte del conjunto experimental mínimo.
+    Unifica el conjunto de canales y de features entre ``numeric_llm`` y
+    ``text_llm``: solo modalidades de pecho (ecg, eda, resp, temp), solo
+    features de ``LLM_ALLOWED_FEATURES`` y, opcionalmente, los canales de
+    movimiento (acc/emg) cuando no se excluyen. Las modalidades de muñeca
+    (incluida ``bvp``, derivada de ``wrist_BVP``) nunca forman parte del
+    conjunto experimental mínimo.
     """
     allowed = LLM_CHEST_MODALITIES
     if not exclude_motion_channels:
         allowed = allowed | LLM_MOTION_MODALITIES
-    return {
-        modality: block
-        for modality, block in feature_row.get("features", {}).items()
-        if modality in allowed
-    }
+    result: dict[str, dict[str, Any]] = {}
+    for modality, block in feature_row.get("features", {}).items():
+        if modality not in allowed:
+            continue
+        kept = {
+            name: meta
+            for name, meta in block.items()
+            if name in LLM_ALLOWED_FEATURES
+        }
+        if kept:
+            result[modality] = kept
+    return result
 
 
 def index_path(kind: str) -> Path:

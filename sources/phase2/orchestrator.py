@@ -38,6 +38,19 @@ from sources.common.validation import ValidationError
 from sources.ingestion import discover, features, loader, qc, represent, window
 from sources.ingestion.config import get_ingestion_config
 from sources.ingestion.represent import _opaque_window_id
+from sources.phase2.development_split import (
+    DEV_SUBJECTS,
+    SPLIT_VERSION,
+    contains_development_subjects,
+    split_warning,
+)
+from sources.phase2.consistency import (
+    ConsistencyReport,
+    DEFAULT_MAX_HARD_FAILURES,
+    DEFAULT_MAX_SOFT_FAILURES,
+    check_consistency,
+    should_abstain,
+)
 from sources.phase2.llm_config import (
     LlmExperimentConfig,
     build_experiment_config,
@@ -76,6 +89,126 @@ REPRESENTATION_NUMERIC = "numeric"
 REPRESENTATION_TEXT = "text"
 
 CONDITION_CLEAN = "C0_clean"
+
+#: Estado de la respuesta cuando la compuerta de consistencia fuerza la
+#: abstención (el LLM había emitido una decisión concreta).
+GATE_STATUS = "gate_abstention"
+
+
+def _gate_values(numeric_row: Mapping[str, Any] | None) -> dict[str, float | None] | None:
+    """Extrae los valores absolutos de una fila ``numeric_llm``.
+
+    Devuelve ``None`` si la fila no tiene payload numérico (p. ej. una
+    representación textual sin homólogo numérico).
+    """
+    if not isinstance(numeric_row, Mapping):
+        return None
+    payload = numeric_row.get("payload")
+    if not isinstance(payload, Mapping):
+        return None
+    modalities = payload.get("modalities")
+    if not isinstance(modalities, Mapping):
+        return None
+    return {
+        name: meta.get("value") if isinstance(meta, Mapping) else meta
+        for block in modalities.values()
+        if isinstance(block, Mapping)
+        for name, meta in block.items()
+    }
+
+
+def build_consistency_reports(
+    numeric_rows: Mapping[str, Mapping[str, Any]],
+    duration_by_window: Mapping[str, float | None],
+    conditions: list[str],
+    tolerance_scale: float = 1.0,
+) -> dict[tuple[str, str], ConsistencyReport]:
+    """Calcula el veredicto de consistencia por (ventana, condición).
+
+    La compuerta se evalúa sobre los valores **absolutos** de la vista
+    numérica, que son los mismos features que ve el LLM en ambas
+    representaciones (el conjunto curado está unificado). Para las condiciones
+    de control negativo se aplica antes la misma degradación que recibe el LLM,
+    de modo que la compuerta juzgue exactamente la evidencia enviada.
+
+    Args:
+        numeric_rows: filas ``numeric_llm`` indexadas por ``window_id``.
+        duration_by_window: duración de la ventana en segundos.
+        conditions: condiciones a evaluar (``C0_clean`` y/o ``NC_*``).
+        tolerance_scale: laxitud de las tolerancias (ver ``check_consistency``).
+
+    Returns:
+        dict ``(window_id, condition_id) -> ConsistencyReport``.
+    """
+    reports: dict[tuple[str, str], ConsistencyReport] = {}
+    for window_id, row in numeric_rows.items():
+        duration = duration_by_window.get(window_id) or 60.0
+        for condition in conditions:
+            condition_row = row
+            if condition.startswith("NC_"):
+                condition_row = generate_negative_control_rep_row(row, condition)
+            values = _gate_values(condition_row)
+            if values is None:
+                continue
+            reports[(window_id, condition)] = check_consistency(
+                values,
+                duration_s=duration,
+                tolerance_scale=tolerance_scale,
+            )
+    return reports
+
+
+def apply_consistency_gate(
+    result: dict[str, Any],
+    report: ConsistencyReport | None,
+    max_hard_failures: int = DEFAULT_MAX_HARD_FAILURES,
+    max_soft_failures: int = DEFAULT_MAX_SOFT_FAILURES,
+) -> bool:
+    """Aplica el veredicto de la compuerta a un registro de respuesta.
+
+    El registro conserva la decisión original del modelo en ``decision_llm`` /
+    ``confidence_llm``; si la compuerta se abstiene, ``decision`` pasa a
+    ``abstain``, ``confidence`` a 0 y ``status`` a ``gate_abstention``.
+
+    Args:
+        result: registro de respuesta (se modifica in situ).
+        report: informe de consistencia de la ventana, o ``None`` si no se pudo
+            evaluar (no hay vista numérica).
+        max_hard_failures: fallos ``hard`` tolerados.
+        max_soft_failures: fallos ``soft`` tolerados.
+
+    Returns:
+        True si la compuerta forzó la abstención.
+    """
+    if report is None:
+        result["consistency"] = {"evaluated": False}
+        return False
+
+    gate_abstains = should_abstain(
+        report,
+        max_hard_failures=max_hard_failures,
+        max_soft_failures=max_soft_failures,
+    )
+    payload = report.to_dict()
+    payload["evaluated"] = True
+    payload["gate_abstained"] = gate_abstains
+    result["consistency"] = payload
+
+    result.setdefault("decision_llm", result.get("decision"))
+    result.setdefault("confidence_llm", result.get("confidence"))
+
+    if not gate_abstains:
+        return False
+
+    if result.get("status") == "valid_response" and result.get("decision") not in (
+        None,
+        "abstain",
+    ):
+        result["status"] = GATE_STATUS
+        result["decision"] = "abstain"
+        result["confidence"] = 0
+        return True
+    return False
 
 
 def _prompt_hash(prompt: str, config: LlmExperimentConfig) -> str:
@@ -117,7 +250,7 @@ def _config_for_hash(config: LlmExperimentConfig, seed: int) -> LlmExperimentCon
 
 
 def responses_dir() -> Path:
-    """Directorio de respuestas LLM: results/output/{subject}/INGEST/llm_responses/."""
+    """Directorio de respuestas LLM: ``output/{subject}/{proc}/llm_responses/``."""
     return corpus_dir() / RESPONSES_DIR_NAME
 
 
@@ -129,6 +262,11 @@ def response_path(subject: str) -> Path:
 def manifest_path(subject: str) -> Path:
     """Ruta del manifiesto de ejecución de un sujeto."""
     return responses_dir() / f"{subject}.manifest.json"
+
+
+def subject_split(subject: str) -> str:
+    """Etiqueta el sujeto como ``development`` o ``evaluation`` (split congelado)."""
+    return "development" if subject in DEV_SUBJECTS else "evaluation"
 
 
 def _build_manifest_entry(
@@ -145,6 +283,7 @@ def _build_manifest_entry(
     """Crea una entrada del manifiesto de ejecución."""
     return {
         "subject": subject,
+        "split": subject_split(subject),
         "window_id": window_id,
         "window_id_opaque": window_id_opaque,
         "condition_id": condition_id,
@@ -546,6 +685,10 @@ def run_orchestrator(
     condition_ids: list[str] | None = None,
     negative_controls: list[str] | None = None,
     force: bool = False,
+    consistency_gate: bool = True,
+    gate_max_hard_failures: int = DEFAULT_MAX_HARD_FAILURES,
+    gate_max_soft_failures: int = DEFAULT_MAX_SOFT_FAILURES,
+    gate_tolerance_scale: float = 1.0,
 ) -> dict[str, Any]:
     """Ejecuta el orquestador factorial para una lista de sujetos.
 
@@ -560,6 +703,14 @@ def run_orchestrator(
         negative_controls: tipos de control negativo a generar
             (default: None, sin controles).
         force: si True, recalcula aunque exista en caché.
+        consistency_gate: si True (default), aplica la compuerta determinista de
+            consistencia fisiológica antes de aceptar la decisión del LLM. La
+            compuerta evalúa las features absolutas de la ventana; para los
+            controles negativos evalúa la versión degradada. La decisión
+            original del modelo se conserva en ``decision_llm``.
+        gate_max_hard_failures: fallos ``hard`` tolerados por la compuerta.
+        gate_max_soft_failures: fallos ``soft`` tolerados por la compuerta.
+        gate_tolerance_scale: laxitud de las tolerancias de la compuerta.
 
     Returns:
         dict con resumen de ejecución por sujeto.
@@ -582,11 +733,20 @@ def run_orchestrator(
     summary: dict[str, Any] = {
         "schema_version": RESPONSES_VERSION,
         "config": config.to_dict(),
+        "consistency_gate": {
+            "enabled": consistency_gate,
+            "max_hard_failures": gate_max_hard_failures,
+            "max_soft_failures": gate_max_soft_failures,
+            "tolerance_scale": gate_tolerance_scale,
+        },
         "subjects": {},
         "total_calls": 0,
         "total_cached": 0,
         "total_errors": 0,
+        "total_gate_abstentions": 0,
         "generated_at": utc_now(),
+        "split_version": SPLIT_VERSION,
+        "development_subjects": list(DEV_SUBJECTS),
     }
 
     for subject in subjects:
@@ -606,6 +766,7 @@ def run_orchestrator(
         subject_calls = 0
         subject_cached = 0
         subject_errors = 0
+        subject_gate_abstentions = 0
 
         reps_data: dict[str, dict[str, dict[str, Any]]] = {}
         window_by_id: dict[str, dict[str, Any]] = {}
@@ -615,6 +776,46 @@ def run_orchestrator(
             rep_rows = read_jsonl(represent.llm_representation_path(rep, subject))
             for rep_row in rep_rows:
                 reps_data.setdefault(f"{rep}_llm", {})[rep_row["window_id"]] = rep_row
+
+        # Veredictos de consistencia: se calculan una vez por (ventana,
+        # condición) sobre la vista numérica (mismas features que el LLM).
+        gate_reports: dict[tuple[str, str], ConsistencyReport] = {}
+        if consistency_gate:
+            numeric_path = represent.llm_representation_path(
+                REPRESENTATION_NUMERIC, subject
+            )
+            numeric_rows: dict[str, dict[str, Any]] = {}
+            if numeric_path.is_file():
+                for rep_row in read_jsonl(numeric_path):
+                    numeric_rows[rep_row["window_id"]] = rep_row
+            all_conditions = list(dict.fromkeys(list(condition_ids) + list(negative_controls)))
+            gate_reports = build_consistency_reports(
+                numeric_rows=numeric_rows,
+                duration_by_window={
+                    wid: row.get("duration_s") for wid, row in window_by_id.items()
+                },
+                conditions=all_conditions,
+                tolerance_scale=gate_tolerance_scale,
+            )
+            if not numeric_rows:
+                writeLog(
+                    "warning",
+                    logger,
+                    f"[PHASE2] {subject}: sin vista numérica; la compuerta de "
+                    "consistencia no se aplica",
+                )
+
+        def _apply_gate(result: dict[str, Any], window_id: str) -> None:
+            """Aplica la compuerta a un registro y actualiza el contador."""
+            nonlocal subject_gate_abstentions
+            report = gate_reports.get((window_id, result.get("condition_id")))
+            if apply_consistency_gate(
+                result,
+                report,
+                max_hard_failures=gate_max_hard_failures,
+                max_soft_failures=gate_max_soft_failures,
+            ):
+                subject_gate_abstentions += 1
 
         for entry in entries:
             window_id = entry["window_id"]
@@ -637,6 +838,7 @@ def run_orchestrator(
                     cached["prompt_variant"] = variant
                     cached["repetition"] = repetition
                     cached["seed"] = seed
+                    _apply_gate(cached, window_id)
                     subject_results.append(cached)
                     subject_cached += 1
                     continue
@@ -656,6 +858,7 @@ def run_orchestrator(
                     "raw_output": "",
                     "generated_at": utc_now(),
                 }
+                _apply_gate(result, window_id)
                 subject_results.append(result)
                 subject_errors += 1
                 continue
@@ -696,6 +899,7 @@ def run_orchestrator(
                     "raw_output": "",
                     "generated_at": utc_now(),
                 }
+                _apply_gate(result, window_id)
                 subject_results.append(result)
                 subject_errors += 1
                 continue
@@ -717,6 +921,7 @@ def run_orchestrator(
                     "raw_output": "",
                     "generated_at": utc_now(),
                 }
+                _apply_gate(result, window_id)
                 subject_results.append(result)
                 subject_errors += 1
                 continue
@@ -739,6 +944,7 @@ def run_orchestrator(
                     "generated_at": utc_now(),
                     "ollama_meta": {},
                 }
+                _apply_gate(result, window_id)
                 subject_results.append(result)
                 subject_errors += 1
                 continue
@@ -747,6 +953,7 @@ def run_orchestrator(
 
             result = {
                 "subject": subject,
+                "split": subject_split(subject),
                 "window_id_opaque": window_id_opaque,
                 "condition_id": condition_id,
                 "representation": representation,
@@ -769,6 +976,7 @@ def run_orchestrator(
             _save_cached_response(
                 cache_dir, _prompt_hash(prompt, _config_for_hash(config, seed)), result
             )
+            _apply_gate(result, window_id)
             subject_results.append(result)
             subject_calls += 1
 
@@ -777,8 +985,17 @@ def run_orchestrator(
                 logger,
                 f"[PHASE2] {subject}: llamada {subject_calls}/{len(entries)} "
                 f"({entry['condition_id']}, {entry['representation']}, rep={entry['repetition']}) "
-                f"→ {result['status']}, decision={result.get('decision', '—')}",
+                f"→ {result['status']}, decision={result.get('decision', '—')}"
+                + (
+                    f" (LLM: {result['decision_llm']})"
+                    if result.get("status") == GATE_STATUS
+                    else ""
+                ),
             )
+
+        # Etiqueta de split congelado en TODOS los registros (incluidos caché y errores).
+        for record in subject_results:
+            record.setdefault("split", subject_split(subject))
 
         responses_path = response_path(subject)
         atomic_write_jsonl(responses_path, subject_results)
@@ -792,6 +1009,13 @@ def run_orchestrator(
                 "n_calls": subject_calls,
                 "n_cached": subject_cached,
                 "n_errors": subject_errors,
+                "n_gate_abstentions": subject_gate_abstentions,
+                "consistency_gate": {
+                    "enabled": consistency_gate,
+                    "max_hard_failures": gate_max_hard_failures,
+                    "max_soft_failures": gate_max_soft_failures,
+                    "tolerance_scale": gate_tolerance_scale,
+                },
                 "config": config.to_dict(),
                 "entries": entries,
             },
@@ -802,10 +1026,12 @@ def run_orchestrator(
             "n_calls": subject_calls,
             "n_cached": subject_cached,
             "n_errors": subject_errors,
+            "n_gate_abstentions": subject_gate_abstentions,
         }
         summary["total_calls"] += subject_calls
         summary["total_cached"] += subject_cached
         summary["total_errors"] += subject_errors
+        summary["total_gate_abstentions"] += subject_gate_abstentions
 
     return summary
 
@@ -839,6 +1065,12 @@ def run_phase2() -> None:
         )
 
     subjects = [s.strip() for s in str(subjects_arg).split(",") if s.strip()]
+    force = bool(getattr(args, "force", False))
+
+    # Split congelado dev/test: avisar (no bloquear) si hay sujetos de desarrollo.
+    warning = split_warning(subjects)
+    if warning and not getattr(args, "allowDev", False):
+        writeLog("warning", logger, f"[PHASE2] {warning}")
 
     cfg = copy.deepcopy(get_ingestion_config())
     for kind in ("numeric", "text"):
@@ -846,6 +1078,20 @@ def run_phase2() -> None:
         llm_opts["enabled"] = True
         llm_opts["exclude_motion_channels"] = True
         llm_opts["opaque_window_id"] = True
+    # Fase 2 solo consume las vistas numérica y textual (las únicas que se
+    # envían al LLM). Los embeddings son material complementario y no se usan
+    # aquí: se evita recalcularlos (requiere Ollama y es costoso).
+    requested_kinds = list(cfg["representations"].get("enabled", []))
+    cfg["representations"]["enabled"] = [
+        kind for kind in requested_kinds if kind in ("numeric", "text")
+    ]
+    if len(cfg["representations"]["enabled"]) != len(requested_kinds):
+        writeLog(
+            "info",
+            logger,
+            f"[PHASE2] representaciones omitidas (no usadas en Fase 2): "
+            f"{[k for k in requested_kinds if k not in ('numeric', 'text')]}",
+        )
 
     config = build_experiment_config(
         model="qwen2.5:7b",
@@ -867,6 +1113,14 @@ def run_phase2() -> None:
         seeds = seeds + [config.seed] * (repetitions - len(seeds))
     seeds = seeds[:repetitions]
 
+    # Compuerta determinista de consistencia fisiológica (P1). Activa por
+    # defecto; se puede desactivar con --noGate o con
+    # config.json > defaults.llm.consistency_gate = false (ablación).
+    consistency_gate = bool(llm_defaults.get("consistency_gate", True))
+    if getattr(args, "noGate", False):
+        consistency_gate = False
+    gate_tolerance_scale = float(llm_defaults.get("consistency_tolerance_scale", 1.0))
+
     representations = [REPRESENTATION_NUMERIC, REPRESENTATION_TEXT]
     prompt_variants = [PROMPT_VARIANT_BASE]
     condition_ids = [CONDITION_CLEAN]
@@ -878,11 +1132,14 @@ def run_phase2() -> None:
         f"[PHASE2] Sujetos: {subjects}, representaciones: {representations}, "
         f"variantes: {prompt_variants}, condiciones: {condition_ids}, "
         f"controles negativos: {negative_controls}, "
-        f"repeticiones: {repetitions}, semillas: {seeds}",
+        f"repeticiones: {repetitions}, semillas: {seeds}, "
+        f"compuerta de consistencia: {'on' if consistency_gate else 'off'} "
+        f"(tolerance_scale={gate_tolerance_scale})",
     )
 
     total_calls = 0
     total_errors = 0
+    total_gate_abstentions = 0
 
     for subject in subjects:
         writeLog("info", logger, f"[PHASE2] Procesando sujeto: {subject}")
@@ -901,7 +1158,7 @@ def run_phase2() -> None:
         window.run_window(cfg, subject)
         features.run_features(cfg, subject)
 
-        rep_result = represent.run_represent(cfg, subject, force=False)
+        rep_result = represent.run_represent(cfg, subject, force=force)
         writeLog(
             "info",
             logger,
@@ -918,26 +1175,33 @@ def run_phase2() -> None:
             seeds=seeds,
             condition_ids=condition_ids,
             negative_controls=negative_controls,
+            force=force,
+            consistency_gate=consistency_gate,
+            gate_tolerance_scale=gate_tolerance_scale,
         )
 
         subj_summary = summary["subjects"].get(subject, {})
         total_calls += subj_summary.get("n_calls", 0)
         total_errors += subj_summary.get("n_errors", 0)
+        total_gate_abstentions += subj_summary.get("n_gate_abstentions", 0)
 
         writeLog(
             "info",
             logger,
             f"[PHASE2] {subject}: llamadas={subj_summary.get('n_calls', 0)}, "
             f"caché={subj_summary.get('n_cached', 0)}, "
-            f"errores={subj_summary.get('n_errors', 0)}",
+            f"errores={subj_summary.get('n_errors', 0)}, "
+            f"abstenciones por compuerta={subj_summary.get('n_gate_abstentions', 0)}",
         )
 
     writeLog(
         "info",
         logger,
-        f"[PHASE2] Completado. Total llamadas: {total_calls}, total errores: {total_errors}",
+        f"[PHASE2] Completado. Total llamadas: {total_calls}, total errores: {total_errors}, "
+        f"abstenciones por compuerta: {total_gate_abstentions}",
     )
     print(f"\nFase 2 completada para sujetos: {subjects}")
     print(f"  Llamadas LLM totales: {total_calls}")
     print(f"  Errores totales: {total_errors}")
-    print("  Respuestas en: results/output/WESAD/INGEST/llm_responses/")
+    print(f"  Abstenciones forzadas por la compuerta de consistencia: {total_gate_abstentions}")
+    print(f"  Respuestas en: {responses_dir()}/")

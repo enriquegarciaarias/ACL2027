@@ -66,7 +66,7 @@ def test_numeric_and_text_representations(synthetic_dataset, ingestion_cfg):
 
     assert represent.spec_path().is_file()
     spec = read_json(represent.spec_path())
-    assert spec["representation_version"] == "1.0"
+    assert spec["representation_version"] == represent.REPRESENTATION_VERSION
     assert set(spec["enabled"]) == {"numeric", "text"}
 
 
@@ -134,13 +134,33 @@ def test_llm_view_features_excludes_wrist():
             "wrist_acc": {"acc_mean_g": {"value": 0.02, "unit": "g"}},
         },
     }
-    # Sin canales de movimiento: solo pecho.
+    # Sin canales de movimiento: solo pecho. ``bvp`` es de muñeca (wrist_BVP).
     features = represent._llm_view_features(feature_row, exclude_motion_channels=True)
-    assert set(features) == {"ecg", "eda", "resp", "temp", "bvp"}
+    assert set(features) == {"ecg", "eda", "resp", "temp"}
 
     # Con canales de movimiento: pecho + acc/emg, muñeca siempre fuera.
     features2 = represent._llm_view_features(feature_row, exclude_motion_channels=False)
-    assert set(features2) == {"ecg", "eda", "resp", "temp", "bvp", "acc", "emg"}
+    assert set(features2) == {"ecg", "eda", "resp", "temp", "acc", "emg"}
+
+
+def test_llm_view_features_filters_feature_allowlist():
+    """Solo se conservan features de ``LLM_ALLOWED_FEATURES`` (numeric == text)."""
+    feature_row = {
+        "features": {
+            "ecg": {
+                "ecg_hr_bpm": {"value": 72.0, "unit": "bpm"},
+                "ecg_amplitude_std_mv": {"value": 0.2, "unit": "mV"},  # fuera
+            },
+            "eda": {
+                "eda_mean_us": {"value": 3.0, "unit": "uS"},
+                "eda_scr_count": {"value": 2, "unit": "count"},  # dentro
+            },
+        },
+    }
+    features = represent._llm_view_features(feature_row, exclude_motion_channels=True)
+    assert "ecg_amplitude_std_mv" not in features["ecg"]
+    assert "ecg_hr_bpm" in features["ecg"]
+    assert "eda_scr_count" in features["eda"]
 
 
 def test_build_text_llm_view_excludes_wrist():

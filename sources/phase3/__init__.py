@@ -23,6 +23,14 @@ from .evaluator import (
     match_opaque_to_window,
     EvaluationResult,
 )
+from .claims import (
+    parse_prompt_features,
+    summarize_verdicts,
+    verify_claim,
+    verify_claims,
+)
+from .certainty import linguistic_certainty
+from .records import evaluate_binary_records, evaluate_records
 
 __all__ = [
     "evaluate_subject",
@@ -31,4 +39,11 @@ __all__ = [
     "load_responses",
     "match_opaque_to_window",
     "EvaluationResult",
+    "evaluate_records",
+    "evaluate_binary_records",
+    "parse_prompt_features",
+    "summarize_verdicts",
+    "verify_claim",
+    "verify_claims",
+    "linguistic_certainty",
 ]

@@ -21,9 +21,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
+
+# Permite ejecutar el script directamente (`python scripts/evaluate_phase3.py`)
+# sin depender de PYTHONPATH.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sources.phase3.evaluator import (
     LABEL_ORDER,
@@ -51,8 +56,17 @@ def _opaque_window_id(window_id: str) -> str:
 def build_matched(
     responses_dir: Path,
     ground_truth_path: Path,
+    raw_decisions: bool = False,
 ) -> list[dict[str, Any]]:
-    """Une todas las respuestas con el ground truth usando el ID opaco."""
+    """Une todas las respuestas con el ground truth usando el ID opaco.
+
+    Args:
+        responses_dir: directorio con ``*.responses.jsonl``.
+        ground_truth_path: ruta a ``labels.jsonl``.
+        raw_decisions: si True evalúa ``decision_llm`` (salida cruda del modelo,
+            antes de la compuerta de consistencia). Si False (default) evalúa
+            ``decision``, que es la salida final del sistema.
+    """
     ground_truth = load_ground_truth(ground_truth_path)
     opaque_to_label: dict[str, str] = {}
     for window_id, label in ground_truth.items():
@@ -62,13 +76,27 @@ def build_matched(
     for resp_path in sorted(responses_dir.glob("*.responses.jsonl")):
         for resp in load_responses(resp_path):
             opaque_id = resp.get("window_id_opaque", "")
+            decision = resp.get("decision", "")
+            confidence = resp.get("confidence", 0) or 0
+            status = resp.get("status", "")
+            if raw_decisions and "decision_llm" in resp:
+                decision = resp.get("decision_llm") or ""
+                confidence = resp.get("confidence_llm", 0) or 0
+                # La compuerta reetiqueta el estado; para el modelo crudo se
+                # recupera el estado de validación previo.
+                if status == "gate_abstention":
+                    status = (
+                        "valid_abstention"
+                        if decision == "abstain"
+                        else "valid_response"
+                    )
             matched.append(
                 {
                     "subject": resp.get("subject", ""),
                     "true_label": opaque_to_label.get(opaque_id, "UNKNOWN"),
-                    "predicted": resp.get("decision", ""),
-                    "confidence": resp.get("confidence", 0) or 0,
-                    "status": resp.get("status", ""),
+                    "predicted": decision,
+                    "confidence": confidence,
+                    "status": status,
                     "representation": resp.get("representation", ""),
                     "condition_id": resp.get("condition_id", ""),
                 }
@@ -147,17 +175,106 @@ def compute_group_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def main() -> None:
+def parse_args(argv: list[str] | None = None):
+    """Argumentos de línea de comandos del evaluador."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Evaluación agregada de Fase 3 (todas las respuestas por defecto)."
+    )
+    parser.add_argument(
+        "--subjects",
+        default="",
+        help="Lista de sujetos separada por comas (p. ej. S3 o S2,S3). "
+        "Por defecto evalúa todos los que tengan respuestas.",
+    )
+    parser.add_argument(
+        "--output",
+        default="",
+        help="Ruta alternativa del reporte JSON. Por defecto "
+        "evaluation_report.json (o evaluation_report_<sujetos>.json si se filtra).",
+    )
+    parser.add_argument(
+        "--raw-decisions",
+        action="store_true",
+        help="Evaluar decision_llm (modelo crudo, sin compuerta de consistencia) "
+        "en lugar de la decisión final del sistema.",
+    )
+    return parser.parse_args(argv)
+
+
+def compute_binary_stress_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Métricas para el problema binario stress vs baseline (C0_clean).
+
+    El LLM nunca predice ``amusement`` ni ``meditation`` en el corpus actual;
+    esta vista mide la separabilidad real que el modelo usa. Las predicciones
+    de otra clase se excluyen del cálculo y se reportan aparte.
+    """
+    subset = [r for r in rows if r["true_label"] in ("stress", "baseline")]
+    valid = [r for r in subset if r["status"] != "invalid_output"]
+    abstain = [r for r in valid if r["predicted"] == "abstain"]
+    other = [r for r in valid if r["predicted"] in ("amusement", "meditation")]
+    decided = [r for r in valid if r["predicted"] in ("stress", "baseline")]
+
+    tp = sum(1 for r in decided if r["true_label"] == "stress" and r["predicted"] == "stress")
+    fn = sum(1 for r in decided if r["true_label"] == "stress" and r["predicted"] == "baseline")
+    tn = sum(1 for r in decided if r["true_label"] == "baseline" and r["predicted"] == "baseline")
+    fp = sum(1 for r in decided if r["true_label"] == "baseline" and r["predicted"] == "stress")
+
+    n = len(decided)
+    accuracy = (tp + tn) / n if n else 0.0
+    precision = tp / (tp + fp) if (tp + fp) else 0.0
+    recall = tp / (tp + fn) if (tp + fn) else 0.0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+    return {
+        "n_subset": len(subset),
+        "n_decided": n,
+        "n_abstain": len(abstain),
+        "n_other_class": len(other),
+        "coverage": n / len(subset) if subset else 0.0,
+        "abstention_rate": len(abstain) / len(valid) if valid else 0.0,
+        "accuracy": accuracy,
+        "precision_stress": precision,
+        "recall_stress": recall,
+        "f1_stress": f1,
+        "tp": tp,
+        "fp": fp,
+        "tn": tn,
+        "fn": fn,
+    }
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     if not RESPONSES_DIR.is_dir():
         raise SystemExit(f"No existe el directorio de respuestas: {RESPONSES_DIR}")
     if not GROUND_TRUTH_PATH.is_file():
         raise SystemExit(f"No existe ground truth: {GROUND_TRUTH_PATH}")
 
-    matched = build_matched(RESPONSES_DIR, GROUND_TRUTH_PATH)
+    wanted = [s.strip() for s in str(args.subjects).split(",") if s.strip()]
+
+    matched = build_matched(
+        RESPONSES_DIR, GROUND_TRUTH_PATH, raw_decisions=args.raw_decisions
+    )
+    if wanted:
+        unknown = sorted(set(wanted) - {r["subject"] for r in matched})
+        if unknown:
+            raise SystemExit(f"Sujetos sin respuestas: {unknown}")
+        matched = [r for r in matched if r["subject"] in set(wanted)]
+
     subjects = sorted({r["subject"] for r in matched})
     print(f"Respuestas totales: {len(matched)}")
     print(f"Sujetos: {subjects}")
     print()
+
+    if args.output:
+        report_path = Path(args.output)
+    elif wanted:
+        report_path = REPORT_PATH.with_name(
+            "evaluation_report_" + "-".join(subjects) + ".json"
+        )
+    else:
+        report_path = REPORT_PATH
 
     # Reporte por (representación × condición).
     report: dict[str, Any] = {"subjects": subjects, "groups": {}}
@@ -195,6 +312,29 @@ def main() -> None:
             print(
                 f"  ECE={m['ece']:.3f}  Brier={m['brier']:.3f}  conf_avg={m['confidence_avg']:.3f}"
             )
+
+    # Binario stress vs baseline en C0_clean (el modelo no predice
+    # amusement/meditation en este corpus).
+    print("\n" + "=" * 100)
+    print("BINARIO stress vs baseline — C0_clean (decididas stress/baseline)")
+    print("=" * 100)
+    report["binary_stress_vs_baseline"] = {}
+    for rep in REPRESENTATIONS:
+        rows = [
+            r
+            for r in matched
+            if r["representation"] == rep and r["condition_id"] == "C0_clean"
+        ]
+        if not rows:
+            continue
+        b = compute_binary_stress_metrics(rows)
+        report["binary_stress_vs_baseline"][rep] = b
+        print(
+            f"  {rep}: acc={b['accuracy']:.3f}  precision={b['precision_stress']:.3f}  "
+            f"recall={b['recall_stress']:.3f}  F1={b['f1_stress']:.3f}  "
+            f"coverage={b['coverage']:.3f}  abstention={b['abstention_rate']:.3f}  "
+            f"(n={b['n_decided']}, otras clases={b['n_other_class']})"
+        )
 
     # Matrices de confusión para C0_clean (lo relevante).
     print("\n" + "=" * 100)
@@ -242,10 +382,10 @@ def main() -> None:
             )
 
     # Guardar reporte JSON.
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with REPORT_PATH.open("w", encoding="utf-8") as fh:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    with report_path.open("w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2, ensure_ascii=False)
-    print(f"\nReporte JSON guardado en: {REPORT_PATH}")
+    print(f"\nReporte JSON guardado en: {report_path}")
 
 
 if __name__ == "__main__":

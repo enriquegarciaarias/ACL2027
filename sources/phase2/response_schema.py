@@ -33,11 +33,108 @@ ALLOWED_DECISIONS: frozenset[str] = frozenset(
     {"baseline", "stress", "amusement", "meditation", "abstain"}
 )
 
+# Modo binario (P2): el endpoint primario es ``stress`` vs ``no-stress``.
+BINARY_DECISIONS: frozenset[str] = frozenset({"stress", "non-stress", "abstain"})
+
+# Validación externa con K-EmoCon (P3): arousal y valencia alta vs baja.
+AROUSAL_DECISIONS: frozenset[str] = frozenset(
+    {"high-arousal", "low-arousal", "abstain"}
+)
+VALENCE_DECISIONS: frozenset[str] = frozenset(
+    {"high-valence", "low-valence", "abstain"}
+)
+
+# Control de generalidad (PhysioNet/CinC 2017): ritmo en ECG de una derivación.
+RHYTHM_DECISIONS: frozenset[str] = frozenset(
+    {"normal", "af", "other-rhythm", "noisy", "abstain"}
+)
+
+#: Modos de decisión soportados por el prompt y el validador.
+DECISION_MODE_AFFECTIVE = "affective"
+DECISION_MODE_STRESS_BINARY = "stress_binary"
+DECISION_MODE_AROUSAL_BINARY = "arousal_binary"
+DECISION_MODE_VALENCE_BINARY = "valence_binary"
+DECISION_MODE_RHYTHM4 = "rhythm4"
+DECISION_MODES: dict[str, frozenset[str]] = {
+    DECISION_MODE_AFFECTIVE: ALLOWED_DECISIONS,
+    DECISION_MODE_STRESS_BINARY: BINARY_DECISIONS,
+    DECISION_MODE_AROUSAL_BINARY: AROUSAL_DECISIONS,
+    DECISION_MODE_VALENCE_BINARY: VALENCE_DECISIONS,
+    DECISION_MODE_RHYTHM4: RHYTHM_DECISIONS,
+}
+
+#: Variantes de escritura de ``non-stress`` que produce el modelo.
+DECISION_ALIASES: dict[str, str] = {
+    "nonstress": "non-stress",
+    "non_stress": "non-stress",
+    "no-stress": "non-stress",
+    "no stress": "non-stress",
+    "not stress": "non-stress",
+    "notstress": "non-stress",
+    "non-stressful": "non-stress",
+    "high arousal": "high-arousal",
+    "high_arousal": "high-arousal",
+    "higharousal": "high-arousal",
+    "low arousal": "low-arousal",
+    "low_arousal": "low-arousal",
+    "lowarousal": "low-arousal",
+    "high valence": "high-valence",
+    "high_valence": "high-valence",
+    "low valence": "low-valence",
+    "low_valence": "low-valence",
+    "normal sinus rhythm": "normal",
+    "nsr": "normal",
+    "atrial fibrillation": "af",
+    "a-fib": "af",
+    "other rhythm": "other-rhythm",
+    "other_rhythm": "other-rhythm",
+    "other": "other-rhythm",
+    "too noisy": "noisy",
+    "noisy recording": "noisy",
+}
+
 # Direcciones permitidas para los claims.
 ALLOWED_DIRECTIONS: frozenset[str] = frozenset({"increase", "decrease", "stable"})
 
 # Magnitudes permitidas para los claims.
 ALLOWED_MAGNITUDES: frozenset[str] = frozenset({"low", "medium", "high"})
+
+# Alias de dirección/magnitud que el modelo produce con frecuencia. Se
+# normalizan al conjunto canónico para que ``invalid_output`` mida fallos
+# reales de formato y no variaciones de vocabulario.
+DIRECTION_ALIASES: dict[str, str] = {
+    "increased": "increase",
+    "increasing": "increase",
+    "rise": "increase",
+    "rising": "increase",
+    "up": "increase",
+    "decreased": "decrease",
+    "decreasing": "decrease",
+    "fall": "decrease",
+    "falling": "decrease",
+    "down": "decrease",
+    "unchanged": "stable",
+    "no change": "stable",
+    "same": "stable",
+    "flat": "stable",
+}
+MAGNITUDE_ALIASES: dict[str, str] = {
+    "very low": "low",
+    "very_low": "low",
+    "slightly low": "low",
+    "slight": "low",
+    "mild": "low",
+    "moderate": "medium",
+    "medium-low": "medium",
+    "medium low": "medium",
+    "medium-high": "medium",
+    "medium high": "medium",
+    "very high": "high",
+    "very_high": "high",
+    "slightly high": "high",
+    "strong": "high",
+    "severe": "high",
+}
 
 # Campos obligatorios del esquema JSON (en orden: decision antes de reasoning).
 REQUIRED_FIELDS: tuple[str, ...] = ("decision", "confidence", "claims", "reasoning")
@@ -50,7 +147,7 @@ EDA_HR_MODALITIES: frozenset[str] = frozenset({"ecg", "eda"})
 # adicionales resp/temp/bvp). Los claims solo pueden referenciar estos
 # canales; los de muñeca y de movimiento (acc/emg) quedan excluidos.
 ALLOWED_CLAIM_CHANNELS: frozenset[str] = frozenset(
-    {"ecg", "eda", "resp", "temp", "bvp"}
+    {"ecg", "eda", "resp", "temp"}
 )
 
 # Mapeo de títulos descriptivos de modalidad (usados en la representación
@@ -150,9 +247,11 @@ def _validate_claim(claim: Any, index: int) -> tuple[Claim | None, str | None]:
         return None, f"claim[{index}].magnitude debe ser string no vacío"
 
     # Normalizar a minúsculas para tolerar variaciones del modelo (ej. "EDA" vs "eda").
-    channel = channel.lower()
-    direction = direction.lower()
-    magnitude = magnitude.lower()
+    channel = channel.lower().strip()
+    direction = direction.lower().strip()
+    magnitude = magnitude.lower().strip()
+    direction = DIRECTION_ALIASES.get(direction, direction)
+    magnitude = MAGNITUDE_ALIASES.get(magnitude, magnitude)
 
     # Extraer el nombre base del canal eliminando prefijos de ubicación
     # (ej. "wrist_eda" -> "eda", "chest_ecg" -> "ecg").
@@ -282,18 +381,32 @@ def _coerce_str(value: Any) -> str | None:
     return str(value).strip()
 
 
-def validate_llm_output(raw_output: str) -> LlmResponse:
+def validate_llm_output(
+    raw_output: str,
+    decision_mode: str = DECISION_MODE_AFFECTIVE,
+) -> LlmResponse:
     """Valida una salida cruda del LLM contra el esquema JSON.
 
     Args:
         raw_output: string con la respuesta cruda del modelo (puede contener
             texto adicional, markdown, etc.).
+        decision_mode: ``"affective"`` (4 clases + abstain) o
+            ``"stress_binary"`` (stress / non-stress / abstain).
 
     Returns:
         LlmResponse con el estado de validación y, si es válido, los datos
         parseados. Nunca lanza excepción: los errores de validación se
         capturan y se reportan en el campo ``status``.
+
+    Raises:
+        ValueError: si ``decision_mode`` no es un modo conocido.
     """
+    if decision_mode not in DECISION_MODES:
+        raise ValueError(
+            f"decision_mode no válido: {decision_mode}. "
+            f"Valores permitidos: {sorted(DECISION_MODES)}"
+        )
+    allowed_decisions = DECISION_MODES[decision_mode]
     # 1. Intentar parsear el texto directamente; si falla, extraer JSON.
     data: dict | None = None
     parse_error: str | None = None
@@ -356,7 +469,8 @@ def validate_llm_output(raw_output: str) -> LlmResponse:
             error_message=f"decision no es string válida",
         )
     decision = decision_raw.strip().lower()
-    allowed_lower = {d.lower() for d in ALLOWED_DECISIONS}
+    decision = DECISION_ALIASES.get(decision, decision)
+    allowed_lower = {d.lower() for d in allowed_decisions}
     if decision not in allowed_lower:
         return LlmResponse(
             decision=decision_raw,
@@ -365,10 +479,10 @@ def validate_llm_output(raw_output: str) -> LlmResponse:
             reasoning=str(data.get("reasoning", "")),
             raw_output=raw_output,
             status="invalid_output",
-            error_message=f"decision '{decision_raw}' no permitido. Valores: {sorted(ALLOWED_DECISIONS)}",
+            error_message=f"decision '{decision_raw}' no permitido. Valores: {sorted(allowed_decisions)}",
         )
     # Restaurar forma canónica (primera letra mayúscula para abstain, etc.)
-    decision_map = {d.lower(): d for d in ALLOWED_DECISIONS}
+    decision_map = {d.lower(): d for d in allowed_decisions}
     decision = decision_map[decision]
 
     # 4. Validar confidence (entero 0-100, aceptar string o float entero).

@@ -1,40 +1,65 @@
 # ACL2027
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Skeleton-brightgreen)
+![Status](https://img.shields.io/badge/Status-Research%20prototype-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-Esqueleto base del proyecto **ACL2027**, construido sobre el patrón común
-heredado de los proyectos **PSRI** y **SLIP**.
+## Qué es este proyecto (en claro)
 
-Este esqueleto constituye la base reutilizable para iniciar cualquier nuevo
-proyecto del grupo. Incluye:
+El proyecto pregunta **si un LLM dice lo que la evidencia respalda**. Se le dan
+señales fisiológicas resumidas (frecuencia cardiaca, actividad electrodérmica,
+respiración, temperatura) y debe (a) clasificar el estado, (b) expresar su
+confianza, (c) justificar con afirmaciones concretas y (d) abstenerse cuando la
+evidencia no basta.
 
-- `main.py` — punto de entrada con despacho por `--proc`, soporte a `--step`
-  y `--serverGPU`.
-- `sources/common/paramsManager.py` — carga de configuración (`config.json`),
-  argumentos de CLI, detección de GPU, entorno y `processControl`.
-- `sources/common/common.py` — logging con colores, iconos en logs sin color y
-  el singleton `processControl`.
-- `sources/common/utils.py` — utilidades genéricas (JSON, hashing, rutas,
-  `configLoader`, `inicioModulo`).
-- `sources/common/llm_client.py` — cliente LLM con timeout, reintentos y
-  fallback en cascada (mejora propuesta).
-- `sources/common/paths.py` — resolución centralizada de rutas y escritura
-  atómica de artefactos.
-- `sources/common/provenance.py` — hashes, fingerprints, git y versiones.
-- `sources/common/validation.py` — validaciones de esquemas y rangos.
-- `sources/ingestion/` — pipeline `INGEST` de WESAD (ver
-  [`docs/ingestion.md`](docs/ingestion.md)).
-- `config.json` (gitignorado) — configuración global con rutas, tokens y
-  ajustes de LLM (crear a partir de `config_example.json`).
-- `results/input/{subject}/` — entrada por asunto de investigación.
-- `results/output/{subject}/INGEST/` — salidas del pipeline: `canonical/`,
-  `qc/`, `windows/`, `features/`, `representations/{numeric,text,embeddings}/`,
-  `groundtruth/`, `corpus_*.jsonl`, `corpus_manifest.json`,
-  `corpus_checksums.sha256`.
-- `docs/` — documentación del proyecto.
-- `tests/` — tests unitarios.
+Lo diferencial no es el acierto, sino **cómo cambia la respuesta cuando se
+degrada la señal**: se elimina la respiración, se degrada la actividad
+electrodérmica, etc., con parámetros conocidos. Así se comprueba si el modelo
+modula su corrección, su confianza, su lenguaje y sus afirmaciones en función de
+la calidad de la evidencia.
+
+WESAD (15 sujetos, estados inducidos) es el banco de pruebas principal. Se
+incluyen dos validaciones externas (K-EmoCon y PhysioNet/CinC 2017) que acotan
+la generalidad de los hallazgos.
+
+## Resultados en una página
+
+- **La corrección se hunde más que la información disponible.** Con la EDA
+  anulada, el LLM baja de 0,61 a 0,29 de accuracy mientras una referencia
+  features-only baja de 0,83 a 0,70 (exceso de coste 0,15–0,20).
+- **La abstención no sigue a la resolubilidad.** Hay infra-abstención en las
+  condiciones degradadas (falla el 74 % y se abstiene el 16 %) y sobre-abstención
+  en limpio (12,5 % con una tarea resoluble).
+- **Las afirmaciones son localmente ciertas pero la inferencia es errónea.**
+  El respaldo de claims *sube* a 0,83 en la condición degradada mientras la
+  accuracy cae a 0,29; el modelo cita bien los valores y falla al combinarlos.
+- **Confianza, lenguaje y evidencia se desacoplan.** La confianza apenas
+  distingue aciertos en limpio (AUROC 0,51) y la sobreconfianza crece hasta
+  +0,47; el lenguaje sí añade cautela (índice de certeza +0,13 → −1,12).
+- **La representación importa.** El resumen textual acierta menos que el JSON
+  numérico (−0,09), pero se degrada menos (+0,065 de interacción) y en
+  degradación severa se vuelve **más asertivo** (+1,36) mientras el numérico se
+  vuelve más cauto.
+
+Detalle y tablas: [`docs/estado_wesad.md`](docs/estado_wesad.md) y
+[`docs/resultados_degradacion.md`](docs/resultados_degradacion.md).
+
+## 📚 Documentación
+
+Toda la documentación está en **`docs/`**, con un índice pensado para dos
+lectores en [`docs/README.md`](docs/README.md):
+
+| Si quieres… | Empieza por |
+|---|---|
+| Entender la pregunta y las hipótesis | [`docs/hipotesis.md`](docs/hipotesis.md) |
+| Ver qué se hizo y qué se encontró | [`docs/estado_wesad.md`](docs/estado_wesad.md) |
+| Revisar los resultados completos | [`docs/resultados_degradacion.md`](docs/resultados_degradacion.md) |
+| Saber qué es firme y qué exploratorio | [`docs/split_dev_test.md`](docs/split_dev_test.md) |
+| Conocer el pipeline de datos | [`docs/ingestion.md`](docs/ingestion.md) |
+| Ver el mapa completo de documentos | [`docs/README.md`](docs/README.md) |
+
+La memoria operativa (para retomar el trabajo) está en
+[`AGENTS.md`](AGENTS.md) y [`SESSION_STATE.md`](SESSION_STATE.md).
 
 ---
 
@@ -50,131 +75,114 @@ pip install -r requirements.txt
 
 ### 2. Configuración
 
-Copia `config_example.json` en `config.json` (gitignorado) y edítalo con tus
-rutas, tokens y ajustes:
-
 ```sh
-cp config_example.json config.json
+cp config_example.json config.json   # editar rutas, tokens y ajustes de LLM
 ```
 
-### 3. Ejecución
+`config.json` está gitignorado. Admite merge profundo por subject
+(`results/input/{subject}/config.json`).
 
-```sh
-source .venv/bin/activate
-python main.py --proc INGEST --subject WESAD
-```
-
-Flags disponibles:
-
-| Flag | Descripción |
-|------|-------------|
-| `--subject` | Carpeta en `results/input/` (default: `default`). |
-| `--proc` | Tipo de proceso; dispara el pipeline registrado. |
-| `--step` | Inicia el pipeline desde un paso con nombre (case-insensitive). |
-| `--serverGPU` | `start` = parte interactiva local; `server` = parte GPU. |
-| `--subjects` | Subconjunto de sujetos del dataset (p. ej. `S2,S3`). |
-| `--force` | Recalcula artefactos aunque el fingerprint coincida. |
-| `--dry-run` | Resuelve configuración y rutas sin ejecutar. |
-
-Pipeline de ingesta (Fase 1 completa: `discover → ingest → qc → window →
-features → represent → package`):
+### 3. Fase 1 — ingesta del corpus (`INGEST`)
 
 ```sh
 python main.py --proc INGEST --subject WESAD --dry-run
-python main.py --proc INGEST --subject WESAD --step discover
 python main.py --proc INGEST --subject WESAD --subjects S2 --step package
+python main.py --proc INGEST --subject WESAD          # 15 sujetos
 ```
 
-`--step X` ejecuta el pipeline hasta X inclusive. Ver
-[`docs/ingestion.md`](docs/ingestion.md) para el contrato de artefactos y las
-decisiones metodológicas.
+Pasos: `discover → ingest → qc → window → degrade → features → represent → package`.
+`--step X` ejecuta hasta X inclusive.
 
-Los resultados se escriben en `results/output/{SUBJECT}/{PROC}/` y los logs en
-`ProcessLog.txt` / `Process.txt`.
+### 4. Fase 2 — llamadas al LLM (`PHASE2`)
+
+```sh
+python main.py --proc PHASE2 --subject WESAD --subjects S5,S6
+python main.py --proc PHASE2 --subject WESAD --subjects S5 --noGate   # ablación
+```
+
+Requiere Ollama con `qwen2.5:7b`. Cada respuesta guarda la decisión, la confianza,
+los claims, el razonamiento, el prompt completo y el veredicto de la compuerta de
+consistencia.
+
+### 5. Experimento principal — degradación controlada
+
+```sh
+# Representación numérica (2.835 llamadas) y textual (2.835)
+python scripts/run_degradation_sweep.py
+python scripts/run_degradation_sweep.py --representation text
+
+# Análisis (incluye H1–H6 y el contraste de representaciones)
+python scripts/analyze_degradation.py \
+  --compare-with results/output/WESAD/PHASE2/degradation_text
+```
+
+### 6. Validación externa
+
+```sh
+python scripts/run_p3_kemocon.py --reference --reference-only   # K-EmoCon
+python scripts/run_p3_physionet.py --per-class 150             # PhysioNet 2017
+```
+
+### Flags de CLI
+
+| Flag | Descripción |
+|---|---|
+| `--subject` | Carpeta en `results/input/` (default: `default`). |
+| `--proc` | Proceso: `INGEST` o `PHASE2`. |
+| `--step` | Inicia el pipeline desde un paso con nombre. |
+| `--subjects` | Subconjunto de sujetos (`S5,S6`). |
+| `--force` | Recalcula artefactos aunque el fingerprint coincida. |
+| `--dry-run` | Resuelve configuración y rutas sin ejecutar. |
+| `--noGate` | Desactiva la compuerta de consistencia (ablación). |
+| `--allowDev` | Permite sujetos de desarrollo (S2–S4) en `PHASE2`. |
 
 ---
 
-## 📁 Estructura de directorios
+## 📁 Estructura
 
 ```
 ACL2027/
-├── config.json                  # Config global (gitignorado; crear desde config_example.json)
-├── config_example.json          # Ejemplo de configuración
-├── main.py                      # Orquestador / punto de entrada
-├── requirements.txt             # Dependencias Python
-├── README.md                    # Este archivo
-├── AGENTS.md                    # Contexto para agentes (memoria del proyecto)
-├── SESSION_STATE.md             # Bitácora operativa de la última sesión
-├── CHANGELOG.md                 # Historial de cambios
-├── .gitignore
-├── docs/                        # Documentación
-│   └── README.md
-├── sources/                     # Todos los módulos del proyecto
-│   ├── __init__.py
-│   ├── common/
-│   │   ├── __init__.py
-│   │   ├── common.py            # logging + processControl (singleton)
-│   │   ├── paramsManager.py     # configuración, args, GPU, entorno
-│   │   ├── utils.py             # utilidades genéricas + configLoader
-│   │   ├── llm_client.py        # cliente LLM con timeout/fallback
-│   │   ├── paths.py             # rutas centralizadas + escritura atómica
-│   │   ├── provenance.py        # hashes, fingerprints, git, versiones
-│   │   └── validation.py        # validaciones de esquemas/rangos
-│   └── ingestion/               # pipeline INGEST (WESAD)
-│       ├── pipeline.py          # orquestador y registro de pasos
-│       ├── config.py            # configuración resuelta
-│       ├── schemas.py           # contratos de artefactos
-│       ├── discover.py          # manifiesto + hashes
-│       ├── loader.py            # carga/validación/canonicalización
-│       ├── qc.py                # control de calidad por canal
-│       ├── window.py            # segmentación temporal
-│       ├── units.py             # conversión y verificación de unidades
-│       ├── represent.py         # representaciones numérica, textual y embebidos
-│       ├── package.py           # índice, manifiesto y checksums
-│       └── features/            # extracción de features + SQI
-│           ├── registry.py      # registro de modalidades
-│           ├── ecg.py  eda.py  resp.py  temp.py
-│           ├── acc.py  emg.py  bvp.py
-│           ├── sqi.py           # indicadores de calidad
-│           └── common.py        # utilidades y FeatureBuilder
-├── results/
-│   ├── input/{subject}/         # Entrada por investigación
-│   │   ├── config.json          # Config específica del subject (merge profundo)
-│   │   └── ...
-│   └── output/{subject}/INGEST/
-│       ├── canonical/           # arrays .npz + .meta.json
-│       ├── qc/                # control de calidad por canal
-│       ├── windows/           # segmentación temporal (JSONL)
-│       ├── features/          # features por ventana (JSONL)
-│       ├── representations/
-│       │   ├── numeric/       # JSON autodescriptivo por ventana
-│       │   ├── text/          # texto estructurado por ventana
-│       │   └── embeddings/    # vectores densos vía Ollama
-│       ├── groundtruth/       # etiquetas separadas (anti-leakage)
-│       ├── corpus_index.jsonl
-│       ├── corpus_manifest.json
-│       └── corpus_checksums.sha256
-└── tests/                       # Tests unitarios
-    ├── __init__.py
-    └── test_*.py
-└── tests/                       # Tests unitarios
-    ├── __init__.py
-    └── test_*.py
+├── main.py                      # Punto de entrada (PROCESS_REGISTRY)
+├── config.json / config_example.json
+├── docs/                        # Documentación (empezar por docs/README.md)
+├── scripts/                     # Experimentos y análisis
+│   ├── run_degradation_sweep.py     # barrido C0–C5 (numérico/textual)
+│   ├── analyze_degradation.py       # H1–H6 + contraste de representaciones
+│   ├── run_p3_kemocon.py            # validación externa K-EmoCon
+│   ├── run_p3_physionet.py          # validación externa PhysioNet 2017
+│   ├── analyze_consistency.py       # compuerta de consistencia
+│   ├── analyze_calibration.py       # calibración y conformal
+│   ├── run_e12_pilot.py             # representación centrada (exploratorio)
+│   ├── resolvability_analysis.py    # separabilidad y confusor temporal
+│   └── evaluate_phase3.py           # evaluación agregada del corpus
+├── sources/
+│   ├── common/                  # logging, config, rutas, procedencia, validación
+│   ├── ingestion/               # pipeline INGEST (WESAD)
+│   ├── phase2/                  # prompts, LLM, esquema, controles, gate
+│   ├── phase3/                  # evaluación, claims, certeza, calibración
+│   └── external/                # adaptadores K-EmoCon y PhysioNet 2017
+├── tests/                       # 227 tests (sin dependencia de los dataset)
+└── results/                     # NO versionado: input/ y output/ por subject
 ```
-
-> Regla clave: todos los módulos deben resolver rutas a través de
-> `processControl.env` (poblado por `paramsManager.manageEnv()`). Está
-> prohibido hardcodear `"results"` o `"results/input"` en las rutas de archivo.
 
 ---
 
-## 📖 Citar
+## 🧪 Tests
 
+```sh
+python -m pytest -q
 ```
-@misc{acl2027,
-  title  = {ACL2027 Project Skeleton},
-  author = {},
-  year   = {2027},
-  note   = {Esqueleto base reutilizable (patrón PSRI/SLIP)}
-}
-```
+
+227 tests: infraestructura, ingesta, features, representaciones, prompts,
+esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y
+adaptadores externos. No requieren descargar WESAD ni Ollama.
+
+---
+
+## Notas
+
+- `results/` y `config.json` están gitignorados: contienen datos y credenciales.
+- Las etiquetas viven solo en `results/output/{subject}/INGEST/groundtruth/`; no
+  se mezclan con features, representaciones ni prompts.
+- El detalle de decisiones, desviaciones declaradas y estado de cada
+  experimento está en [`docs/README.md`](docs/README.md).

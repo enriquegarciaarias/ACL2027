@@ -58,8 +58,8 @@ def test_package_creates_manifest_index_labels_and_checksums(synthetic_dataset, 
     index_rows = read_jsonl(package.index_path())
     assert len(index_rows) == 4
     assert all(not _contains_key(row, "label") for row in index_rows)
-    assert all(row["representations"]["numeric"]["version"] == "1.0" for row in index_rows)
-    assert all(row["representations"]["text"]["version"] == "1.0" for row in index_rows)
+    assert all(row["representations"]["numeric"]["version"] == represent.REPRESENTATION_VERSION for row in index_rows)
+    assert all(row["representations"]["text"]["version"] == represent.REPRESENTATION_VERSION for row in index_rows)
 
     label_rows = read_jsonl(package.labels_path())
     assert len(label_rows) == 4

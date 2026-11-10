@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -10,6 +11,7 @@ import pytest
 from sources.common.common import processControl
 from sources.common.paths import atomic_write_jsonl
 from sources.ingestion import represent, window
+from sources.phase2.consistency import should_abstain
 from sources.phase2.llm_config import LlmExperimentConfig
 from sources.phase2.negative_controls import (
     ALL_NEGATIVE_CONTROLS,
@@ -32,6 +34,7 @@ from sources.phase2.orchestrator import (
     _call_ollama_chat,
     _config_for_hash,
     _prompt_hash,
+    build_consistency_reports,
     build_execution_manifest,
     run_orchestrator,
 )
@@ -779,3 +782,257 @@ def test_call_ollama_chat_raises_after_retries_exhausted():
     with patch("requests.post", side_effect=fake_post), patch("time.sleep"):
         with pytest.raises(Exception, match="Ollama no respondió"):
             _call_ollama_chat(client, "prompt", config)
+
+
+# ---------------------------------------------------------------------------
+# Compuerta de consistencia fisiológica (P1) integrada en el orquestador
+# ---------------------------------------------------------------------------
+
+
+def _make_full_numeric_rep_row(window_id):
+    """Fila ``numeric_llm`` con las 23 features y valores coherentes."""
+    coherent = {
+        "ecg": {
+            "ecg_hr_bpm": 60.0,
+            "ecg_rr_mean_ms": 1000.0,
+            "ecg_n_beats": 60.0,
+            "ecg_sdnn_ms": 50.0,
+            "ecg_rmssd_ms": 40.0,
+        },
+        "eda": {
+            "eda_mean_us": 5.0,
+            "eda_std_us": 0.5,
+            "eda_slope_us_per_s": 0.01,
+            "eda_tonic_mean_us": 4.99,
+            "eda_phasic_std_us": 0.1,
+            "eda_scr_count": 3.0,
+            "eda_scr_rate_per_min": 3.0,
+            "eda_scr_amplitude_mean_us": 0.2,
+            "eda_scr_amplitude_max_us": 0.4,
+        },
+        "resp": {
+            "resp_rate_bpm": 15.0,
+            "resp_interval_cv": 0.3,
+            "resp_amplitude_pct": 10.0,
+            "resp_std_pct": 4.0,
+            "resp_n_cycles": 15.0,
+        },
+        "temp": {
+            "temp_mean_degc": 33.0,
+            "temp_std_degc": 0.25,
+            "temp_slope_degc_per_s": 0.0,
+            "temp_range_degc": 1.0,
+        },
+    }
+    return _make_numeric_rep_row(
+        window_id,
+        features={
+            modality: {name: {"value": value} for name, value in block.items()}
+            for modality, block in coherent.items()
+        },
+    )
+
+
+def _stress_ollama_response() -> dict:
+    return {
+        "model": "qwen2.5:7b",
+        "message": {
+            "content": (
+                '{"decision": "stress", "confidence": 85, '
+                '"claims": [], "reasoning": "EDA elevated."}'
+            )
+        },
+        "done": True,
+    }
+
+
+def _read_responses(output_dir, subject="S2"):
+    path = (
+        output_dir / "WESAD" / "INGEST" / "llm_responses" / f"{subject}.responses.jsonl"
+    )
+    return [json.loads(line) for line in path.open(encoding="utf-8")]
+
+
+def test_consistency_gate_overrides_incoherent_window(tmp_path, monkeypatch):
+    """La compuerta convierte en abstención una decisión sobre datos barajados."""
+    dataset_dir, output_dir = _setup_env(monkeypatch, tmp_path)
+
+    subject_dir = dataset_dir / "S2"
+    _write_windows(subject_dir, "S2", [_make_window_row("w001")])
+    _write_llm_representation(
+        subject_dir, "S2", "numeric", [_make_full_numeric_rep_row("w001")]
+    )
+
+    with patch(
+        "requests.post",
+        side_effect=lambda *a, **k: _MockResponse(_stress_ollama_response()),
+    ):
+        summary = run_orchestrator(
+            subjects=["S2"],
+            config=_make_chat_config(),
+            representations=["numeric"],
+            prompt_variants=["base"],
+            repetitions=1,
+            seeds=[42],
+            condition_ids=["C0_clean"],
+            negative_controls=[NC_SHUFFLED],
+        )
+
+    records = _read_responses(output_dir)
+    clean = next(r for r in records if r["condition_id"] == "C0_clean")
+    shuffled = next(r for r in records if r["condition_id"] == NC_SHUFFLED)
+
+    # Ventana limpia: la compuerta se evalúa y no cambia la decisión.
+    assert clean["consistency"]["evaluated"] is True
+    assert clean["consistency"]["gate_abstained"] is False
+    assert clean["decision"] == "stress"
+    assert clean["decision_llm"] == "stress"
+
+    # Ventana barajada: abstención forzada conservando la decisión del LLM.
+    assert shuffled["consistency"]["evaluated"] is True
+    assert shuffled["consistency"]["gate_abstained"] is True
+    assert shuffled["consistency"]["n_hard_failures"] >= 1
+    assert shuffled["status"] == "gate_abstention"
+    assert shuffled["decision"] == "abstain"
+    assert shuffled["confidence"] == 0
+    assert shuffled["decision_llm"] == "stress"
+    assert shuffled["confidence_llm"] == 85
+
+    assert summary["subjects"]["S2"]["n_gate_abstentions"] == 1
+    assert summary["total_gate_abstentions"] == 1
+    assert summary["consistency_gate"]["enabled"] is True
+
+
+def test_consistency_gate_can_be_disabled(tmp_path, monkeypatch):
+    """Con consistency_gate=False la decisión del LLM no se modifica."""
+    dataset_dir, output_dir = _setup_env(monkeypatch, tmp_path)
+
+    subject_dir = dataset_dir / "S2"
+    _write_windows(subject_dir, "S2", [_make_window_row("w001")])
+    _write_llm_representation(
+        subject_dir, "S2", "numeric", [_make_full_numeric_rep_row("w001")]
+    )
+
+    with patch(
+        "requests.post",
+        side_effect=lambda *a, **k: _MockResponse(_stress_ollama_response()),
+    ):
+        summary = run_orchestrator(
+            subjects=["S2"],
+            config=_make_chat_config(),
+            representations=["numeric"],
+            prompt_variants=["base"],
+            repetitions=1,
+            seeds=[42],
+            condition_ids=["C0_clean"],
+            negative_controls=[NC_SHUFFLED],
+            consistency_gate=False,
+        )
+
+    records = _read_responses(output_dir)
+    shuffled = next(r for r in records if r["condition_id"] == NC_SHUFFLED)
+    assert shuffled["consistency"] == {"evaluated": False}
+    assert shuffled["decision"] == "stress"
+    assert shuffled["status"] == "valid_response"
+    assert summary["total_gate_abstentions"] == 0
+    assert summary["consistency_gate"]["enabled"] is False
+
+
+def test_consistency_gate_applies_to_cached_responses(tmp_path, monkeypatch):
+    """La compuerta se reaplica al reutilizar una respuesta de caché."""
+    dataset_dir, output_dir = _setup_env(monkeypatch, tmp_path)
+
+    subject_dir = dataset_dir / "S2"
+    _write_windows(subject_dir, "S2", [_make_window_row("w001")])
+    _write_llm_representation(
+        subject_dir, "S2", "numeric", [_make_full_numeric_rep_row("w001")]
+    )
+
+    call_count = 0
+
+    def fake_post(url, json=None, timeout=None):
+        nonlocal call_count
+        call_count += 1
+        return _MockResponse(_stress_ollama_response())
+
+    with patch("requests.post", side_effect=fake_post):
+        # Primera pasada sin compuerta: la caché guarda la respuesta cruda.
+        run_orchestrator(
+            subjects=["S2"],
+            config=_make_chat_config(),
+            representations=["numeric"],
+            prompt_variants=["base"],
+            repetitions=1,
+            seeds=[42],
+            condition_ids=["C0_clean"],
+            negative_controls=[NC_SHUFFLED],
+            consistency_gate=False,
+        )
+        # Segunda pasada con compuerta: 0 llamadas nuevas y veto aplicado.
+        summary = run_orchestrator(
+            subjects=["S2"],
+            config=_make_chat_config(),
+            representations=["numeric"],
+            prompt_variants=["base"],
+            repetitions=1,
+            seeds=[42],
+            condition_ids=["C0_clean"],
+            negative_controls=[NC_SHUFFLED],
+            consistency_gate=True,
+        )
+
+    assert call_count == 2  # 1 ventana limpia + 1 barajada
+    assert summary["subjects"]["S2"]["n_calls"] == 0
+    assert summary["subjects"]["S2"]["n_cached"] == 2
+
+    records = _read_responses(output_dir)
+    shuffled = next(r for r in records if r["condition_id"] == NC_SHUFFLED)
+    assert shuffled["status"] == "gate_abstention"
+    assert shuffled["decision"] == "abstain"
+    assert shuffled["decision_llm"] == "stress"
+
+
+def test_consistency_gate_without_numeric_view(tmp_path, monkeypatch):
+    """Sin vista numérica la compuerta no se evalúa (no rompe la ejecución)."""
+    dataset_dir, output_dir = _setup_env(monkeypatch, tmp_path)
+
+    subject_dir = dataset_dir / "S2"
+    _write_windows(subject_dir, "S2", [_make_window_row("w001")])
+    _write_llm_representation(subject_dir, "S2", "text", [_make_text_rep_row("w001")])
+
+    with patch(
+        "requests.post",
+        side_effect=lambda *a, **k: _MockResponse(_stress_ollama_response()),
+    ):
+        summary = run_orchestrator(
+            subjects=["S2"],
+            config=_make_chat_config(),
+            representations=["text"],
+            prompt_variants=["base"],
+            repetitions=1,
+            seeds=[42],
+            condition_ids=["C0_clean"],
+        )
+
+    records = _read_responses(output_dir)
+    assert records[0]["consistency"] == {"evaluated": False}
+    assert records[0]["decision"] == "stress"
+    assert summary["total_gate_abstentions"] == 0
+
+
+def test_build_consistency_reports_covers_conditions():
+    """Los informes se calculan por ventana y condición, incluidos los NC."""
+    rows = {"w001": _make_full_numeric_rep_row("w001")}
+    reports = build_consistency_reports(
+        numeric_rows=rows,
+        duration_by_window={"w001": 60.0},
+        conditions=["C0_clean", NC_SHUFFLED, NC_NAN],
+    )
+    assert set(reports) == {
+        ("w001", "C0_clean"),
+        ("w001", NC_SHUFFLED),
+        ("w001", NC_NAN),
+    }
+    assert should_abstain(reports[("w001", "C0_clean")]) is False
+    assert should_abstain(reports[("w001", NC_SHUFFLED)]) is True
+    assert should_abstain(reports[("w001", NC_NAN)]) is True

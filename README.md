@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Status](https://img.shields.io/badge/Status-Research%20prototype-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Tests](https://img.shields.io/badge/Tests-227-passing-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-229-passing-brightgreen)
 
 ---
 
@@ -38,7 +38,7 @@ ACL2027 no se conforma con medir el acierto. Mide **cómo cambia todo lo anterio
 | **H5** Respaldo de afirmaciones | ✅ Hallazgo principal | El respaldo de claims *sube* a 0,83 mientras la accuracy cae a 0,29: el modelo cita bien los valores pero falla al combinarlos. |
 | **H6** Indicador externo de calidad | ⚠️ Apoyado (SQI) | El SQI añade AUROC incremental (+0,05 a +0,09); el gate de consistencia no añade (Δ≈0). |
 
-Detalle y tablas completas: [`docs/estado_wesad.md`](docs/estado_wesad.md) y [`docs/resultados_degradacion.md`](docs/resultados_degradacion.md).
+Detalle y tablas completas: [`docs/experimentos.md`](docs/experimentos.md) (resumen, inventario y detalle de todos los experimentos) y [`docs/resultados_degradacion.md`](docs/resultados_degradacion.md) (experimento principal).
 
 ---
 
@@ -49,7 +49,7 @@ Toda la documentación vive en **`docs/`**, con un índice pensado para dos lect
 | Si quieres… | Empieza por |
 |---|---|
 | **Entender la pregunta y las hipótesis de la tesis** | [`docs/hipotesis.md`](docs/hipotesis.md) |
-| **Ver qué se construyó, qué se midió y qué es firme** | [`docs/estado_wesad.md`](docs/estado_wesad.md) |
+| **Ver qué se construyó, qué se midió y qué es firme** | [`docs/experimentos.md`](docs/experimentos.md) |
 | **Revisar los resultados completos del experimento principal** | [`docs/resultados_degradacion.md`](docs/resultados_degradacion.md) |
 | **Saber qué es firme y qué es exploratorio** | [`docs/split_dev_test.md`](docs/split_dev_test.md) |
 | **Conocer el pipeline de datos (Fase 1)** | [`docs/ingestion.md`](docs/ingestion.md) |
@@ -119,6 +119,7 @@ python scripts/run_p3_kemocon.py --reference --reference-only
 
 # PhysioNet/CinC 2017 (clase `noisy` real como control de generalidad)
 python scripts/run_p3_physionet.py --per-class 150
+python scripts/analyze_p3_physionet.py   # análisis sin llamadas al LLM
 ```
 
 ### Flags de CLI
@@ -144,7 +145,7 @@ ACL2027/
 ├── config.json / config_example.json
 ├── docs/                        # Documentación (empezar por docs/README.md)
 │   ├── hipotesis.md             # Pregunta de tesis, hipótesis H1–H6, objetivos
-│   ├── estado_wesad.md          # Resumen ejecutivo de resultados
+│   ├── experimentos.md          # Resumen ejecutivo + inventario de experimentos
 │   ├── resultados_degradacion.md# Resultados completos del experimento principal
 │   ├── ingestion.md             # Pipeline INGEST de WESAD
 │   ├── fase2_diseno.md          # Diseño de prompts, esquema JSON, modelo, controles, gate
@@ -165,6 +166,7 @@ ACL2027/
 │   ├── analyze_degradation.py       # H1–H6 + contraste de representaciones
 │   ├── run_p3_kemocon.py            # validación externa K-EmoCon
 │   ├── run_p3_physionet.py          # validación externa PhysioNet 2017
+│   ├── analyze_p3_physionet.py      # análisis de PhysioNet 2017 (claims, calidad, ablación)
 │   ├── run_e12_pilot.py             # representación centrada (exploratorio)
 │   ├── resolvability_analysis.py    # separabilidad y confusor temporal
 │   ├── analyze_consistency.py       # compuerta de consistencia
@@ -176,7 +178,7 @@ ACL2027/
 │   ├── phase2/                  # prompts, LLM, esquema de respuesta, controles negativos, gate de consistencia
 │   ├── phase3/                  # evaluación, claims, certeza, calibración, degradación
 │   └── external/                # adaptadores K-EmoCon y PhysioNet 2017
-├── tests/                       # 227 tests (sin dependencia de los datasets reales)
+├── tests/                       # 229 tests (sin dependencia de los datasets reales)
 └── results/                     # NO versionado: input/ y output/ por subject
 ```
 
@@ -188,7 +190,7 @@ ACL2027/
 python -m pytest -q
 ```
 
-**227 tests**: infraestructura, ingesta, features, representaciones, prompts, esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y adaptadores externos. No requieren descargar WESAD ni Ollama.
+**229 tests**: infraestructura, ingesta, features, representaciones, prompts, esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y adaptadores externos. No requieren descargar WESAD ni Ollama.
 
 ---
 

@@ -20,11 +20,12 @@ from typing import Any, Mapping
 from sources.phase3.claims import CANONICAL_METRICS, normalize_metric
 from sources.phase2.response_schema import (
     ALLOWED_CLAIM_CHANNELS,
-    ALLOWED_DECISIONS,
     ALLOWED_DIRECTIONS,
     ALLOWED_MAGNITUDES,
     CHANNEL_ALIASES,
     DECISION_ALIASES,
+    DECISION_MODE_AFFECTIVE,
+    DECISION_MODES,
     DIRECTION_ALIASES,
     MAGNITUDE_ALIASES,
     _coerce_int,
@@ -103,8 +104,17 @@ def _parse_json(raw_output: str) -> dict[str, Any] | None:
         return None
 
 
-def recover_llm_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
+def recover_llm_record(
+    record: Mapping[str, Any],
+    decision_mode: str = DECISION_MODE_AFFECTIVE,
+) -> dict[str, Any] | None:
     """Recupera decisión, confianza y claims válidos de una respuesta inválida.
+
+    Args:
+        record: respuesta original (con ``status`` y ``raw_output``).
+        decision_mode: vocabulario de decisiones del prompt que originó la
+            respuesta (``affective``, ``stress_binary``, ``rhythm4``, ...).
+            Determina qué decisiones de la salida cruda son recuperables.
 
     Returns:
         dict con ``decision``, ``confidence``, ``claims``, ``reasoning``,
@@ -113,6 +123,12 @@ def recover_llm_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
     """
     if record.get("status") not in ("invalid_output", "timeout"):
         return None
+    allowed_decisions = DECISION_MODES.get(decision_mode)
+    if allowed_decisions is None:
+        raise ValueError(
+            f"decision_mode desconocido: {decision_mode!r}. "
+            f"Valores permitidos: {sorted(DECISION_MODES)}"
+        )
     data = _parse_json(record.get("raw_output") or "")
     if data is None:
         return None
@@ -121,7 +137,7 @@ def recover_llm_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
     if decision_raw is None:
         return None
     decision_key = DECISION_ALIASES.get(decision_raw.strip().lower(), decision_raw.strip().lower())
-    decision_map = {d.lower(): d for d in ALLOWED_DECISIONS}
+    decision_map = {d.lower(): d for d in allowed_decisions}
     decision = decision_map.get(decision_key)
     confidence = _coerce_int(data.get("confidence"))
     if decision is None or confidence is None or not 0 <= confidence <= 100:
@@ -163,7 +179,10 @@ def recover_llm_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def apply_recovery(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+def apply_recovery(
+    records: list[dict[str, Any]],
+    decision_mode: str = DECISION_MODE_AFFECTIVE,
+) -> tuple[list[dict[str, Any]], int]:
     """Aplica la recuperación a una lista de respuestas (in situ, copiadas).
 
     Returns:
@@ -173,7 +192,7 @@ def apply_recovery(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],
     output: list[dict[str, Any]] = []
     recovered_count = 0
     for record in records:
-        recovered = recover_llm_record(record)
+        recovered = recover_llm_record(record, decision_mode=decision_mode)
         if recovered is None:
             output.append(record)
             continue

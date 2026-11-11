@@ -15,10 +15,10 @@ pensado para dos lectores:
 | Orden | Documento | Qué responde |
 |---:|---|---|
 | 1 | [`hipotesis.md`](hipotesis.md) | Qué pregunta la tesis, con qué hipótesis y criterios de refutación |
-| 2 | [`estado_wesad.md`](estado_wesad.md) | **Resumen ejecutivo**: qué se construyó, qué se midió, resultados y qué es firme |
+| 2 | [`experimentos.md`](experimentos.md) | **Resumen ejecutivo + inventario de experimentos**: qué se construyó, qué se midió, resultados y qué es firme |
 | 3 | [`resultados_degradacion.md`](resultados_degradacion.md) | Resultados completos del experimento principal (tablas y lecturas) |
 
-Si solo se lee un documento, que sea [`estado_wesad.md`](estado_wesad.md).
+Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 
 ---
 
@@ -46,7 +46,7 @@ Si solo se lee un documento, que sea [`estado_wesad.md`](estado_wesad.md).
 
 | Documento | Contenido | Estado |
 |---|---|---|
-| [`estado_wesad.md`](estado_wesad.md) | **Resumen ejecutivo de todo el trabajo con WESAD** | Firme |
+| [`experimentos.md`](experimentos.md) | **Resumen ejecutivo, inventario (E0–E8) y detalle de todos los experimentos** (WESAD, K-EmoCon, PhysioNet); punto de entrada único | Firme |
 | [`resultados_degradacion.md`](resultados_degradacion.md) | H1–H6 y H3: corrección, abstención, claims, certeza, indicadores de calidad | **Final** |
 | [`consistencia.md`](consistencia.md) | Compuerta de consistencia fisiológica: 0 % de falsos vetos en limpio, 100 % en datos incoherentes, robustez | Firme |
 | [`claims_h5.md`](claims_h5.md) | Verificador de claims y certeza lingüística: definiciones y resultados | Firme (método) |
@@ -60,7 +60,7 @@ Si solo se lee un documento, que sea [`estado_wesad.md`](estado_wesad.md).
 | Documento | Contenido | Resultado |
 |---|---|---|
 | [`p3_kemocon.md`](p3_kemocon.md) | K-EmoCon: por qué no sirve para estrés; arousal/valencia no predecibles | Negativo documentado |
-| [`p3_physionet.md`](p3_physionet.md) | PhysioNet/CinC 2017: colapso a `normal`, 0 % de abstención, clase `noisy` no detectada | Negativo documentado |
+| [`p3_physionet.md`](p3_physionet.md) | PhysioNet/CinC 2017: colapso a `normal` (balanced 0,25 vs 0,55 de la referencia), 0 % de abstención con 103 registros `noisy`, claims 47,6 % contradichos, certeza *mayor* en ruido; la calidad sí es detectable (AUROC 0,873) | Negativo documentado (con matices de H6) |
 
 ### Literatura y material de apoyo
 

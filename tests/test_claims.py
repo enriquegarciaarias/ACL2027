@@ -240,3 +240,44 @@ def test_apply_recovery_sets_status():
     assert n == 1
     assert records[0]["status"] == "valid_abstention"
     assert records[0]["recovered"] is True
+
+
+def test_recovery_respects_decision_mode():
+    """``noisy`` es recuperable en ``rhythm4`` pero no en el modo afectivo."""
+    import json
+
+    from sources.phase3.recovery import recover_llm_record
+
+    raw = json.dumps(
+        {
+            "decision": "noisy",
+            "confidence": 85,
+            "claims": [
+                {"metric": "ecg_sdnn_ms", "channel": "ecg", "direction": "increase", "magnitude": "high"},
+                {"metric": "ecg_hr_bpm", "channel": "ecg", "direction": "high", "magnitude": "low"},
+            ],
+            "reasoning": "The tracing is dominated by artifact.",
+        }
+    )
+    record = {"status": "invalid_output", "raw_output": raw}
+    assert recover_llm_record(record) is None  # modo afectivo por defecto
+    recovered = recover_llm_record(record, decision_mode="rhythm4")
+    assert recovered is not None
+    assert recovered["decision"] == "noisy"
+    assert recovered["dropped_claims"] == 1
+    assert len(recovered["claims"]) == 1
+
+
+def test_recovery_rejects_unknown_decision_mode():
+    import json
+
+    import pytest
+
+    from sources.phase3.recovery import recover_llm_record
+
+    raw = json.dumps({"decision": "normal", "confidence": 85, "claims": []})
+    with pytest.raises(ValueError):
+        recover_llm_record(
+            {"status": "invalid_output", "raw_output": raw},
+            decision_mode="no-existe",
+        )

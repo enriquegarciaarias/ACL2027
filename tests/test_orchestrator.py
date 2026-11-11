@@ -364,12 +364,20 @@ def test_run_orchestrator_mocked_ollama(tmp_path, monkeypatch):
     assert summary["total_calls"] == 1
     assert summary["total_errors"] == 0
 
-    # Verificar que se escribió el archivo de respuestas.
-    responses_path = output_dir / "WESAD" / "INGEST" / "llm_responses" / "S2.responses.jsonl"
+    # Verificar que se escribió el archivo de respuestas (aislado por modelo).
+    responses_path = (
+        output_dir / "WESAD" / "INGEST" / "llm_responses"
+        / "qwen3_8b" / "S2.responses.jsonl"
+    )
     assert responses_path.is_file()
+    record = json.loads(responses_path.read_text().splitlines()[0])
+    assert record["model"] == "qwen3:8b"
 
     # Verificar que se escribió el manifiesto.
-    manifest_path = output_dir / "WESAD" / "INGEST" / "llm_responses" / "S2.manifest.json"
+    manifest_path = (
+        output_dir / "WESAD" / "INGEST" / "llm_responses"
+        / "qwen3_8b" / "S2.manifest.json"
+    )
     assert manifest_path.is_file()
 
 
@@ -846,9 +854,11 @@ def _stress_ollama_response() -> dict:
     }
 
 
-def _read_responses(output_dir, subject="S2"):
+def _read_responses(output_dir, subject="S2", model="qwen2.5:7b"):
+    slug = model.replace(":", "_").replace(".", "_")
     path = (
-        output_dir / "WESAD" / "INGEST" / "llm_responses" / f"{subject}.responses.jsonl"
+        output_dir / "WESAD" / "INGEST" / "llm_responses"
+        / slug / f"{subject}.responses.jsonl"
     )
     return [json.loads(line) for line in path.open(encoding="utf-8")]
 
@@ -1036,3 +1046,122 @@ def test_build_consistency_reports_covers_conditions():
     assert should_abstain(reports[("w001", "C0_clean")]) is False
     assert should_abstain(reports[("w001", NC_SHUFFLED)]) is True
     assert should_abstain(reports[("w001", NC_NAN)]) is True
+
+
+def test_call_ollama_chat_sends_think_only_for_qwen3(monkeypatch):
+    """``think`` viaja solo a familias que lo soportan (qwen3)."""
+    from sources.phase2.orchestrator import _call_ollama_chat
+
+    captured: list[dict] = []
+    fake = {
+        "model": "x",
+        "message": {"content": '{"decision": "baseline", "confidence": 80, "claims": [], "reasoning": "ok"}'},
+        "done": True,
+    }
+
+    class _Mock:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return fake
+
+    def fake_post(url, json=None, timeout=None):
+        captured.append(json)
+        return _Mock()
+
+    monkeypatch.setattr("requests.post", fake_post)
+
+    qwen3 = LlmExperimentConfig(
+        model="qwen3:14b", temperature=0.3, num_ctx=32768, seed=42, top_p=0.9,
+        max_tokens=800, timeout=120.0, keep_alive="5m", max_retries=1,
+        cascade_enabled=False, think=False,
+    )
+    qwen25 = LlmExperimentConfig(
+        model="qwen2.5:7b", temperature=0.3, num_ctx=32768, seed=42, top_p=0.9,
+        max_tokens=800, timeout=120.0, keep_alive="5m", max_retries=1,
+        cascade_enabled=False, think=False,
+    )
+    _, meta3 = _call_ollama_chat(
+        {"model": "qwen3:14b", "host": "http://localhost:11434", "keep_alive": "5m"},
+        "prompt", qwen3, seed=42,
+    )
+    _, meta25 = _call_ollama_chat(
+        {"model": "qwen2.5:7b", "host": "http://localhost:11434", "keep_alive": "5m"},
+        "prompt", qwen25, seed=42,
+    )
+
+    assert captured[0]["think"] is False
+    assert meta3["think_requested"] is False
+    assert "think" not in captured[1]
+    assert meta25["think_requested"] is None
+
+
+def test_responses_isolated_by_model(tmp_path, monkeypatch):
+    """Dos modelos escriben en carpetas distintas y no se pisan."""
+    dataset_dir, output_dir = _setup_env(monkeypatch, tmp_path)
+
+    subject_dir = dataset_dir / "S2"
+    _write_windows(subject_dir, "S2", [_make_window_row("w001")])
+    _write_llm_representation(
+        subject_dir, "S2", "numeric", [_make_numeric_rep_row("w001")]
+    )
+
+    fake = {
+        "model": "x",
+        "message": {
+            "content": (
+                '{"decision": "baseline", "confidence": 85, '
+                '"claims": [], "reasoning": "Stable."}'
+            )
+        },
+        "done": True,
+    }
+
+    def run(model: str):
+        config = LlmExperimentConfig(
+            model=model, temperature=0.3, num_ctx=32768, seed=42, top_p=0.9,
+            max_tokens=800, timeout=120.0, keep_alive="5m", max_retries=1,
+            cascade_enabled=False,
+        )
+        with patch("requests.post") as mock_post:
+            mock_post.return_value = _MockResponse(fake)
+            return run_orchestrator(
+                subjects=["S2"],
+                config=config,
+                representations=["numeric"],
+                prompt_variants=["base"],
+                repetitions=1,
+                seeds=[42],
+                condition_ids=["C0_clean"],
+            )
+
+    summary_a = run("qwen2.5:7b")
+    summary_b = run("qwen3:14b")
+
+    assert summary_a["total_calls"] == 1
+    assert summary_b["total_calls"] == 1  # no reutiliza la caché del otro modelo
+
+    base = output_dir / "WESAD" / "INGEST" / "llm_responses"
+    path_a = base / "qwen2_5_7b" / "S2.responses.jsonl"
+    path_b = base / "qwen3_14b" / "S2.responses.jsonl"
+    assert path_a.is_file() and path_b.is_file()
+    assert json.loads(path_a.read_text().splitlines()[0])["model"] == "qwen2.5:7b"
+    assert json.loads(path_b.read_text().splitlines()[0])["model"] == "qwen3:14b"
+
+
+def test_prompt_hash_includes_think():
+    """El modo thinking forma parte de la clave de caché."""
+    from sources.phase2.orchestrator import _prompt_hash
+
+    base = dict(
+        model="qwen3:14b", temperature=0.3, num_ctx=32768, seed=42, top_p=0.9,
+        max_tokens=800, timeout=120.0, keep_alive="5m", max_retries=3,
+        cascade_enabled=False,
+    )
+    with_think = LlmExperimentConfig(think=True, **base)
+    without_think = LlmExperimentConfig(think=False, **base)
+
+    assert _prompt_hash("prompt", with_think) != _prompt_hash("prompt", without_think)

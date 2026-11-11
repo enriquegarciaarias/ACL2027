@@ -131,6 +131,30 @@ de desarrollo).
 | E7 | Validación externa: K-EmoCon | ¿Se replica en afecto con muñeca? | 23 participantes, ventanas 60 s | ~5,5k ventanas | AUROC | Mejor 0,609; LLM 0,642 | Negativo documentado | [`p3_kemocon.md`](p3_kemocon.md) |
 | E8 | Validación externa: PhysioNet 2017 | ¿Se replica con otra tarea, sensor y clase `noisy`? | 600 registros (197 dev / 403 test), 5 features ECG | 403 respuestas | balanced accuracy, abstención | 0,250 vs 0,552; 0/103 abstenciones | Firme (análisis) | [`p3_physionet.md`](p3_physionet.md) |
 
+### Ejecución y comparación por modelo
+
+Tres fases (verbos) y el experimento como parámetro:
+`INGEST` (corpus) → `GENERATE` (respuestas) → `EVALUATE` (métricas), con
+`--experiment controls|degradation|centering|physionet|kemocon`.
+
+Los experimentos se ejecutan **un modelo por vez** (sin cascada) y cada modelo
+escribe en su propio subdirectorio (`qwen3:14b` → `qwen3_14b`), de modo que
+comparar modelos nunca sobrescribe resultados:
+
+```bash
+python main.py --proc GENERATE --experiment controls    --subject WESAD --model qwen3:14b
+python main.py --proc GENERATE --experiment degradation --subject WESAD --model qwen3:14b
+python main.py --proc EVALUATE --experiment degradation --compare-models qwen2.5:7b,qwen3:14b
+python main.py --proc GENERATE --experiment degradation --dry-run   # plan + llamadas estimadas
+```
+
+`compare_models.py` emite, por condición, abstención, accuracy, balanced, ECE,
+respaldo de claims y certeza de cada modelo, más la diferencia de accuracy con
+**bootstrap agrupado por sujeto** (IC 95 %). El modelo de referencia del corpus
+publicado es `qwen2.5:7b`; el modo *thinking* de `qwen3` está desactivado por
+defecto (`--think` lo activa) para mantener comparable el presupuesto de tokens.
+Detalle técnico: [`fase2_diseno.md`](fase2_diseno.md) §8.
+
 ---
 
 # 3. Detalle por experimento

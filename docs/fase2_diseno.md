@@ -173,3 +173,39 @@ fisiológica** antes de aceptar la decisión del LLM:
 - Ablación: `--noGate` o `defaults.llm.consistency_gate=false`.
 - Resultados: ver `docs/consistencia.md` (0 % de falsos positivos en limpio,
   100 % de detección en `NC_shuffled`, 128 vetos en el corpus).
+
+---
+
+## 8. Selección de modelo y aislamiento por modelo
+
+Comparar modelos es una **decisión experimental explícita**, no una cascada de
+fallback: el modo experimento sigue usando un solo modelo por ejecución y sin
+cascada (`cascade_enabled=False`).
+
+- **Selección**: `--model` en CLI (`python main.py --proc GENERATE
+  --experiment controls ... --model qwen3:14b`; `PHASE2` sigue como alias). Sin flag se usa `defaults.llm.primary_model`
+  (`qwen2.5:7b`, el modelo que generó el corpus publicado). Los scripts de
+  experimento (`run_degradation_sweep.py`, `run_e12_pilot.py`,
+  `run_p3_physionet.py`, `run_p3_kemocon.py`) aceptan el mismo flag.
+- **Aislamiento**: cada modelo escribe en su propio subdirectorio con un slug
+  (`qwen3:14b` → `qwen3_14b`):
+  - `llm_responses/{modelo}/{sujeto}.responses.jsonl`
+  - `degradation/{modelo}/` y `degradation_text/{modelo}/`
+  - la caché de prompts también es por modelo.
+  Una segunda ejecución no sobrescribe ni reutiliza por error los artefactos de
+  otro modelo; las ejecuciones antiguas quedan en las carpetas históricas y los
+  analizadores las leen con un aviso.
+- **Procedencia**: cada registro incluye `model` a nivel superior (además de
+  `ollama_meta.model`, que es el modelo que responde realmente), y los resúmenes
+  incorporan `model`, `model_slug` y `config`.
+- **Modo *thinking***: `defaults.llm.think` (por defecto `false`) y `--think`
+  para activarlo. El parámetro `think` **solo** se envía a la familia `qwen3`
+  (`supports_thinking`), porque es la que lo documenta; en otros modelos se
+  omite para no romper la llamada. Desactivarlo mantiene comparable el
+  presupuesto de tokens (`max_tokens`) entre modelos de razonamiento y modelos
+  clásicos. El valor enviado se registra en `ollama_meta.think_requested`.
+- **Comparación**: `python main.py --proc EVALUATE --experiment
+  degradation --compare-models qwen2.5:7b,qwen3:14b` (o el script
+  `scripts/compare_models.py` directamente) produce una tabla por condición (abstención, accuracy,
+  balanced, ECE, respaldo de claims, certeza) y la **diferencia de accuracy con
+  bootstrap agrupado por sujeto** (IC 95 %). El primer modelo es la referencia.

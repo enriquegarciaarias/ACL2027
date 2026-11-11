@@ -30,6 +30,7 @@ from typing import Any
 # sin depender de PYTHONPATH.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from sources.phase2.llm_config import model_slug
 from sources.phase3.evaluator import (
     LABEL_ORDER,
     _compute_auroc_one_vs_rest,
@@ -200,6 +201,12 @@ def parse_args(argv: list[str] | None = None):
         help="Evaluar decision_llm (modelo crudo, sin compuerta de consistencia) "
         "en lugar de la decisión final del sistema.",
     )
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Modelo cuyas respuestas se evalúan (p. ej. 'qwen3:14b'). "
+        "Busca en llm_responses/{modelo}/; si no existe, usa la carpeta histórica.",
+    )
     return parser.parse_args(argv)
 
 
@@ -244,17 +251,34 @@ def compute_binary_stress_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _resolve_responses_dir(model: str) -> Path:
+    """Directorio de respuestas del modelo (con caída a la ubicación histórica)."""
+    if not model:
+        return RESPONSES_DIR
+    candidate = RESPONSES_DIR / model_slug(model)
+    if candidate.is_dir():
+        return candidate
+    if RESPONSES_DIR.is_dir():
+        print(
+            f"[AVISO] No existe {candidate}; se usa la carpeta histórica "
+            f"{RESPONSES_DIR} (puede pertenecer a otro modelo)."
+        )
+        return RESPONSES_DIR
+    return candidate
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    if not RESPONSES_DIR.is_dir():
-        raise SystemExit(f"No existe el directorio de respuestas: {RESPONSES_DIR}")
+    responses_dir = _resolve_responses_dir(args.model)
+    if not responses_dir.is_dir():
+        raise SystemExit(f"No existe el directorio de respuestas: {responses_dir}")
     if not GROUND_TRUTH_PATH.is_file():
         raise SystemExit(f"No existe ground truth: {GROUND_TRUTH_PATH}")
 
     wanted = [s.strip() for s in str(args.subjects).split(",") if s.strip()]
 
     matched = build_matched(
-        RESPONSES_DIR, GROUND_TRUTH_PATH, raw_decisions=args.raw_decisions
+        responses_dir, GROUND_TRUTH_PATH, raw_decisions=args.raw_decisions
     )
     if wanted:
         unknown = sorted(set(wanted) - {r["subject"] for r in matched})
@@ -277,7 +301,12 @@ def main(argv: list[str] | None = None) -> None:
         report_path = REPORT_PATH
 
     # Reporte por (representación × condición).
-    report: dict[str, Any] = {"subjects": subjects, "groups": {}}
+    report: dict[str, Any] = {
+        "model": args.model or "legacy",
+        "responses_dir": str(responses_dir),
+        "subjects": subjects,
+        "groups": {},
+    }
 
     print("=" * 100)
     print("MÉTRICAS POR GRUPO (representación × condición)")

@@ -38,6 +38,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from sources.common.llm_client import check_model_available
 from sources.common.provenance import utc_now
 from sources.ingestion.represent import LLM_ALLOWED_FEATURES, _opaque_window_id
 from sources.phase2.development_split import (
@@ -45,7 +46,11 @@ from sources.phase2.development_split import (
     TEST_SUBJECTS,
     split_warning,
 )
-from sources.phase2.llm_config import build_experiment_config, create_ollama_chat_client
+from sources.phase2.llm_config import (
+    build_experiment_config,
+    create_ollama_chat_client,
+    model_slug,
+)
 from sources.phase2.orchestrator import _call_ollama_chat
 from sources.phase2.prompt_builder import (
     assert_no_leakage,
@@ -163,6 +168,7 @@ def run_subject(
             record = {
                 "subject": subject,
                 "split": "development" if subject in DEV_SUBJECTS else "evaluation",
+                "model": config.model,
                 "condition_id": condition,
                 "representation": representation,
                 "window_id": window_id,
@@ -207,9 +213,18 @@ def main(argv: list[str] | None = None) -> None:
         help="Condiciones a ejecutar (C3 es idéntica a C1 y se omite por defecto).",
     )
     parser.add_argument("--allow-dev", action="store_true")
-    parser.add_argument("--model", default="qwen2.5:7b")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Modelo LLM (default: defaults.llm.primary_model de config.json).",
+    )
     parser.add_argument("--temperature", type=float, default=0.3)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--think",
+        action="store_true",
+        help="Activar el modo *thinking* (solo qwen3). Por defecto, desactivado.",
+    )
     parser.add_argument("--max-windows", type=int, default=None)
     parser.add_argument("--no-few-shot", action="store_true")
     parser.add_argument(
@@ -242,23 +257,40 @@ def main(argv: list[str] | None = None) -> None:
         temperature=args.temperature,
         seed=args.seed,
         max_retries=3,
+        think=True if args.think else None,
         cascade_enabled=False,
     )
     client = create_ollama_chat_client(config)
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:
+        # Un subdirectorio por modelo: comparar modelos no sobrescribe
+        # ni reutiliza (por error) las respuestas de otro modelo.
         output_dir = OUTPUT_DIR.parent / (
             "degradation" if args.representation == "numeric" else "degradation_text"
-        )
+        ) / model_slug(config.model)
 
+    if check_model_available(config.model) is False:
+        print(
+            f"[DEG] AVISO: {config.model} no está instalado en Ollama "
+            f"(ollama pull {config.model})."
+        )
     print(
         f"Barrido de degradación | sujetos={subjects} | condiciones={conditions} | "
-        f"representación={args.representation} | modelo={args.model} | "
-        f"few_shot={not args.no_few_shot}"
+        f"representación={args.representation} | modelo={config.model} | "
+        f"think={config.think} | few_shot={not args.no_few_shot} | "
+        f"salida={output_dir}"
     )
     total = {"n_calls": 0, "n_cached": 0, "n_errors": 0}
-    summary = {"subjects": {}, "generated_at": utc_now(), "conditions": conditions}
+    summary = {
+        "subjects": {},
+        "generated_at": utc_now(),
+        "conditions": conditions,
+        "model": config.model,
+        "model_slug": config.model_slug,
+        "representation": args.representation,
+        "config": config.to_dict(),
+    }
     for subject in subjects:
         result = run_subject(
             subject=subject,

@@ -1,0 +1,203 @@
+"""Tests del despacho de fases (`sources/pipelines.py`)."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from sources.common.common import processControl
+from sources import pipelines
+
+
+def _args(**overrides) -> SimpleNamespace:
+    """Argumentos de CLI mínimos con los valores por defecto del proyecto."""
+    base = dict(
+        proc="GENERATE",
+        experiment=None,
+        subject="WESAD",
+        subjects=None,
+        model="qwen3:14b",
+        think=False,
+        force=False,
+        dry_run=False,
+        allowDev=False,
+        representation=None,
+        conditions="",
+        split=None,
+        max_windows=None,
+        max_records=None,
+        per_class=None,
+        task=None,
+        tag=None,
+        raw_decisions=False,
+        few_shot=False,
+        output=None,
+        compare_models="",
+        noGate=False,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_control(monkeypatch):
+    """Aísla ``processControl`` entre tests."""
+    monkeypatch.setattr(processControl, "args", None, raising=False)
+    monkeypatch.setattr(processControl, "defaults", {"llm": {}}, raising=False)
+
+
+def test_experiment_defaults_to_controls():
+    assert pipelines.experiment_of(_args()) == "controls"
+    assert pipelines.experiment_of(_args(experiment="degradation")) == "degradation"
+
+
+def test_generate_controls_runs_in_process():
+    """``controls`` no delega en un script."""
+    assert pipelines.build_generate_argv("controls", _args()) is None
+
+
+def test_generate_degradation_argv():
+    argv = pipelines.build_generate_argv(
+        "degradation",
+        _args(
+            representation="text",
+            conditions="C0_clean,C4_total_eda",
+            subjects="S5,S6",
+            allowDev=True,
+        ),
+    )
+    assert argv[:2] == ["--model", "qwen3:14b"]
+    assert "--representation" in argv and "text" in argv
+    assert "--conditions" in argv and "C0_clean,C4_total_eda" in argv
+    assert "--subjects" in argv and "S5,S6" in argv
+    assert "--allow-dev" in argv
+
+
+def test_generate_physionet_argv():
+    argv = pipelines.build_generate_argv(
+        "physionet", _args(per_class=20, max_records=10, few_shot=True)
+    )
+    assert "--per-class" in argv and "20" in argv
+    assert "--max-records" in argv and "10" in argv
+    assert "--few-shot" in argv
+    assert "--subjects" not in argv  # el muestreo es interno
+
+
+def test_generate_kemocon_argv():
+    argv = pipelines.build_generate_argv(
+        "kemocon", _args(task="arousal", max_windows=5)
+    )
+    assert "--task" in argv and "arousal" in argv
+    assert "--max-windows" in argv and "5" in argv
+
+
+def test_unknown_experiment_raises():
+    with pytest.raises(ValueError):
+        pipelines.build_generate_argv("no-existe", _args())
+    with pytest.raises(ValueError):
+        pipelines.build_evaluate_argv("no-existe", _args())
+
+
+def test_evaluate_controls_argv():
+    argv = pipelines.build_evaluate_argv(
+        "controls", _args(raw_decisions=True, subjects="S5,S6", output="r.json")
+    )
+    assert argv[:2] == ["--model", "qwen3:14b"]
+    assert "--raw-decisions" in argv
+    assert "--subjects" in argv and "S5,S6" in argv
+    assert "--output" in argv and "r.json" in argv
+
+
+def test_evaluate_degradation_argv():
+    argv = pipelines.build_evaluate_argv(
+        "degradation",
+        _args(
+            representation="numeric",
+            conditions="C0_clean",
+            split="evaluation",
+        ),
+    )
+    assert "--representation" in argv and "numeric" in argv
+    assert "--conditions" in argv and "C0_clean" in argv
+    assert "--split" in argv and "evaluation" in argv
+
+
+def test_evaluate_kemocon_is_reference_only():
+    """K-EmoCon no tiene LLM propio: se evalúa la referencia features-only."""
+    argv = pipelines.build_evaluate_argv("kemocon", _args(task="valence"))
+    assert "--reference" in argv
+    assert "--reference-only" in argv
+    assert "--task" in argv and "valence" in argv
+
+
+def test_compare_argv_requires_two_models():
+    assert pipelines.build_compare_argv(_args(compare_models="")) is None
+    processControl.args = _args(compare_models="qwen2.5:7b")
+    with pytest.raises(ValueError):
+        pipelines.build_compare_argv(processControl.args)
+
+
+def test_compare_argv_modes(monkeypatch):
+    monkeypatch.setattr(
+        processControl, "args", _args(compare_models="a:1,b:1"), raising=False
+    )
+    argv = pipelines.build_compare_argv(processControl.args)
+    assert argv[:2] == ["--models", "a:1,b:1"]
+    assert "--mode" in argv and "phase2" in argv  # controls -> phase2
+
+    monkeypatch.setattr(
+        processControl,
+        "args",
+        _args(experiment="degradation", compare_models="a:1,b:1"),
+        raising=False,
+    )
+    argv = pipelines.build_compare_argv(processControl.args)
+    assert "degradation" in argv
+
+
+def test_compare_argv_rejects_other_experiments(monkeypatch):
+    monkeypatch.setattr(
+        processControl,
+        "args",
+        _args(experiment="physionet", compare_models="a:1,b:1"),
+        raising=False,
+    )
+    with pytest.raises(ValueError):
+        pipelines.build_compare_argv(processControl.args)
+
+
+def test_dry_run_plan_estimates_calls(monkeypatch):
+    """El plan de GENERATE calcula el número de llamadas."""
+    monkeypatch.setattr(pipelines, "_n_windows", lambda subject: 10)
+    monkeypatch.setattr(processControl, "args", _args(subjects="S5"), raising=False)
+    plan = pipelines._plan("generate")
+    assert plan["experiment"] == "controls"
+    assert plan["estimated_llm_calls"] == 10 * 5 * 2  # ventanas × condiciones × reps
+    assert plan["runner"].endswith("run_phase2")
+
+
+def test_dry_run_plan_evaluate_uses_compare_runner(monkeypatch):
+    monkeypatch.setattr(
+        processControl,
+        "args",
+        _args(
+            proc="EVALUATE",
+            experiment="degradation",
+            compare_models="a:1,b:1",
+        ),
+        raising=False,
+    )
+    plan = pipelines._plan("evaluate")
+    assert plan["runner"] == "scripts/compare_models.py"
+
+
+def test_process_registry_has_three_phases():
+    from main import PROCESS_REGISTRY
+
+    assert PROCESS_REGISTRY["GENERATE"] == "sources.pipelines.run_generate"
+    assert PROCESS_REGISTRY["EVALUATE"] == "sources.pipelines.run_evaluate"
+    assert PROCESS_REGISTRY["INGEST"] == "sources.ingestion.pipeline.process_ingest"
+    # alias deprecados
+    assert PROCESS_REGISTRY["PHASE2"] == "sources.pipelines.run_generate"
+    assert PROCESS_REGISTRY["PHASE3"] == "sources.pipelines.run_evaluate"

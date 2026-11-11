@@ -33,6 +33,7 @@ from sources.common.paths import (
     read_json,
     read_jsonl,
 )
+from sources.common.llm_client import check_model_available
 from sources.common.provenance import utc_now
 from sources.common.validation import ValidationError
 from sources.ingestion import discover, features, loader, qc, represent, window
@@ -55,6 +56,8 @@ from sources.phase2.llm_config import (
     LlmExperimentConfig,
     build_experiment_config,
     create_ollama_chat_client,
+    model_slug,
+    supports_thinking,
 )
 from sources.phase2.negative_controls import (
     ALL_NEGATIVE_CONTROLS,
@@ -225,6 +228,7 @@ def _prompt_hash(prompt: str, config: LlmExperimentConfig) -> str:
         "seed": config.seed,
         "top_p": config.top_p,
         "max_tokens": config.max_tokens,
+        "think": config.think,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -246,22 +250,32 @@ def _config_for_hash(config: LlmExperimentConfig, seed: int) -> LlmExperimentCon
         keep_alive=config.keep_alive,
         max_retries=config.max_retries,
         cascade_enabled=config.cascade_enabled,
+        think=config.think,
     )
 
 
-def responses_dir() -> Path:
-    """Directorio de respuestas LLM: ``output/{subject}/{proc}/llm_responses/``."""
-    return corpus_dir() / RESPONSES_DIR_NAME
+def responses_dir(model: str | None = None) -> Path:
+    """Directorio de respuestas LLM, aislado por modelo.
+
+    - Con ``model``: ``.../llm_responses/{model_slug}/`` (una carpeta por
+      modelo, de modo que comparar modelos nunca sobrescribe resultados).
+    - Sin ``model``: ``.../llm_responses/`` (ubicación histórica, se mantiene
+      para leer ejecuciones anteriores).
+    """
+    base = corpus_dir() / RESPONSES_DIR_NAME
+    if model is None:
+        return base
+    return base / model_slug(model)
 
 
-def response_path(subject: str) -> Path:
-    """Ruta del JSONL de respuestas de un sujeto."""
-    return responses_dir() / f"{subject}.responses.jsonl"
+def response_path(subject: str, model: str | None = None) -> Path:
+    """Ruta del JSONL de respuestas de un sujeto (por modelo)."""
+    return responses_dir(model) / f"{subject}.responses.jsonl"
 
 
-def manifest_path(subject: str) -> Path:
-    """Ruta del manifiesto de ejecución de un sujeto."""
-    return responses_dir() / f"{subject}.manifest.json"
+def manifest_path(subject: str, model: str | None = None) -> Path:
+    """Ruta del manifiesto de ejecución de un sujeto (por modelo)."""
+    return responses_dir(model) / f"{subject}.manifest.json"
 
 
 def subject_split(subject: str) -> str:
@@ -334,6 +348,12 @@ def _call_ollama_chat(
     host = str(client.get("host", "http://localhost:11434")).rstrip("/")
     url = f"{host}/api/chat"
 
+    # ``think`` solo se envía a familias que lo documentan (qwen3); en otros
+    # modelos el campo sobra y versiones antiguas de Ollama podrían rechazarlo.
+    think_requested = bool(client.get("think", config.think)) if supports_thinking(
+        str(client.get("model", config.model))
+    ) else None
+
     payload = {
         "model": client["model"],
         "messages": [{"role": "user", "content": prompt}],
@@ -347,6 +367,8 @@ def _call_ollama_chat(
         },
         "keep_alive": client["keep_alive"],
     }
+    if think_requested is not None:
+        payload["think"] = think_requested
 
     max_retries = int(client.get("max_retries", config.max_retries))
     start = time.perf_counter()
@@ -400,6 +422,7 @@ def _call_ollama_chat(
         "latency_ms": elapsed_ms,
         "has_thinking": bool(thinking.strip()),
         "content_empty": not bool(content.strip()),
+        "think_requested": think_requested,
     }
     return combined, ollama_meta
 
@@ -727,7 +750,9 @@ def run_orchestrator(
         negative_controls = []
 
     client = create_ollama_chat_client(config)
-    cache_dir = responses_dir() / "cache"
+    # Caché y respuestas aisladas por modelo: comparar modelos no comparte
+    # entradas ni sobrescribe artefactos.
+    cache_dir = responses_dir(config.model) / "cache"
     ensure_dir(cache_dir)
 
     summary: dict[str, Any] = {
@@ -846,6 +871,7 @@ def run_orchestrator(
             if prompt_hash == "EXCLUDED_TOO_LONG":
                 result = {
                     "subject": subject,
+                    "model": config.model,
                     "window_id_opaque": window_id_opaque,
                     "condition_id": condition_id,
                     "representation": representation,
@@ -887,6 +913,7 @@ def run_orchestrator(
             except ValidationError as exc:
                 result = {
                     "subject": subject,
+                    "model": config.model,
                     "window_id_opaque": window_id_opaque,
                     "condition_id": condition_id,
                     "representation": representation,
@@ -909,6 +936,7 @@ def run_orchestrator(
             except ValueError as exc:
                 result = {
                     "subject": subject,
+                    "model": config.model,
                     "window_id_opaque": window_id_opaque,
                     "condition_id": condition_id,
                     "representation": representation,
@@ -931,6 +959,7 @@ def run_orchestrator(
             except ValidationError as exc:
                 result = {
                     "subject": subject,
+                    "model": config.model,
                     "window_id_opaque": window_id_opaque,
                     "condition_id": condition_id,
                     "representation": representation,
@@ -954,6 +983,7 @@ def run_orchestrator(
             result = {
                 "subject": subject,
                 "split": subject_split(subject),
+                "model": config.model,
                 "window_id_opaque": window_id_opaque,
                 "condition_id": condition_id,
                 "representation": representation,
@@ -997,10 +1027,10 @@ def run_orchestrator(
         for record in subject_results:
             record.setdefault("split", subject_split(subject))
 
-        responses_path = response_path(subject)
+        responses_path = response_path(subject, config.model)
         atomic_write_jsonl(responses_path, subject_results)
 
-        manifest_path_subject = manifest_path(subject)
+        manifest_path_subject = manifest_path(subject, config.model)
         atomic_write_json(
             manifest_path_subject,
             {
@@ -1093,18 +1123,41 @@ def run_phase2() -> None:
             f"{[k for k in requested_kinds if k not in ('numeric', 'text')]}",
         )
 
+    llm_defaults = (processControl.defaults or {}).get("llm", {}) or {}
+
+    # Selección de modelo: ``--model`` en CLI > config.json > referencia.
+    # Comparar modelos es una decisión experimental explícita; cada modelo
+    # escribe en su propio subdirectorio (``llm_responses/{modelo}/``).
+    requested_model = getattr(args, "model", None) or llm_defaults.get(
+        "primary_model"
+    )
+    think_override = getattr(args, "think", False) or None
     config = build_experiment_config(
-        model="qwen2.5:7b",
-        temperature=0.3,
+        model=str(requested_model) if requested_model else None,
+        temperature=float(llm_defaults.get("temperature", 0.3)),
         seed=42,
-        max_retries=3,
+        max_retries=int(llm_defaults.get("max_retries", 3)),
+        think=think_override,
         cascade_enabled=False,
     )
+    writeLog(
+        "info",
+        logger,
+        f"[PHASE2] modelo={config.model} (slug={config.model_slug}) "
+        f"think={config.think} max_tokens={config.max_tokens} "
+        f"num_ctx={config.num_ctx}",
+    )
+    if check_model_available(config.model) is False:
+        writeLog(
+            "warning",
+            logger,
+            f"[PHASE2] el modelo {config.model} no está instalado en Ollama; "
+            f"descárgalo con 'ollama pull {config.model}' antes de continuar.",
+        )
 
     # Repeticiones y semillas (configurables en config.json > defaults.llm).
     # Con más de una repetición se usan semillas distintas para no colapsar
     # en la misma respuesta (temperatura > 0 pero semilla fija por repetición).
-    llm_defaults = (processControl.defaults or {}).get("llm", {}) or {}
     repetitions = int(llm_defaults.get("repetitions", 1))
     seeds = [int(s) for s in llm_defaults.get("seeds", [])]
     if not seeds:
@@ -1204,4 +1257,5 @@ def run_phase2() -> None:
     print(f"  Llamadas LLM totales: {total_calls}")
     print(f"  Errores totales: {total_errors}")
     print(f"  Abstenciones forzadas por la compuerta de consistencia: {total_gate_abstentions}")
-    print(f"  Respuestas en: {responses_dir()}/")
+    print(f"  Modelo: {config.model}")
+    print(f"  Respuestas en: {responses_dir(config.model)}/")

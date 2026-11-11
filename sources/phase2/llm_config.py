@@ -2,17 +2,19 @@
 
 Define dos modos de ejecución:
 
-- **Modo experimento**: un solo modelo (qwen3:8b), misma semilla fija,
-  N reintentos fijos con la misma semilla, SIN cascada de modelos.
-  Esto garantiza que cada condición experimental sea reproducible y que no
-  haya contaminación entre modelos dentro de una misma condición.
+- **Modo experimento**: un solo modelo, misma semilla fija, N reintentos fijos
+  con la misma semilla, SIN cascada de modelos. Esto garantiza que cada
+  condición experimental sea reproducible y que no haya contaminación entre
+  modelos dentro de una misma condición. Comparar modelos es una decisión
+  explícita del experimento (`--model` + directorios aislados por modelo), no
+  una cascada.
 
 - **Modo desarrollo**: cascada de modelos permitida (primary → fallbacks),
   solo para debugging y pruebas rápidas.
 
 Todos los parámetros se leen de `config.json > defaults.llm` y se registran
 para procedencia completa (modelo, temperatura, num_ctx, seed, top_p,
-keep_alive, versión de Ollama).
+keep_alive, modo *thinking*, versión de Ollama).
 
 No se implementa aquí la llamada HTTP real a Ollama; se define la
 configuración del cliente y se delega la ejecución al orquestador
@@ -21,6 +23,7 @@ configuración del cliente y se delega la ejecución al orquestador
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,9 +38,36 @@ _DEFAULT_NUM_CTX = 32768
 _DEFAULT_SEED = 42
 _DEFAULT_TOP_P = 0.9
 _DEFAULT_MAX_RETRIES = 3
+#: Modo *thinking* desactivado por defecto: el experimento mide la respuesta
+#: final y necesita un presupuesto de tokens comparable entre modelos. Los
+#: modelos de razonamiento (qwen3) lo respetan con ``think: false``.
+_DEFAULT_THINK = False
 
-# Modelo por defecto para experimento (según decisión del Paso 0).
-_DEFAULT_PRIMARY_MODEL = "qwen3:8b"
+#: Modelo de referencia del experimento (el que generó el corpus actual).
+#: ``qwen3:8b`` se descartó en su momento porque su modo *thinking* vaciaba el
+#: campo ``content``; con ``think: false`` vuelve a ser usable, pero el corpus
+#: publicado se produjo con ``qwen2.5:7b``.
+_DEFAULT_PRIMARY_MODEL = "qwen2.5:7b"
+
+
+def model_slug(model: str) -> str:
+    """Nombre apto para rutas: ``qwen3:14b`` → ``qwen3_14b``.
+
+    Se usa para aislar los artefactos de cada modelo (respuestas, resúmenes y
+    comparaciones) sin depender de caracteres especiales.
+    """
+    slug = re.sub(r"[^0-9A-Za-z]+", "_", str(model).strip().lower())
+    return slug.strip("_") or "model"
+
+
+def supports_thinking(model: str) -> bool:
+    """¿El modelo admite el parámetro ``think`` de Ollama?
+
+    Solo se envía a las familias que lo documentan (qwen3). Enviarlo a otros
+    modelos es innecesario y en versiones antiguas de Ollama podría rechazarse.
+    """
+    family = str(model).split(":")[0].strip().lower()
+    return family.startswith("qwen3")
 
 
 @dataclass
@@ -57,11 +87,18 @@ class LlmExperimentConfig:
     keep_alive: str
     max_retries: int
     cascade_enabled: bool
+    think: bool = _DEFAULT_THINK
     fallback_models: list[str] = field(default_factory=list)
+
+    @property
+    def model_slug(self) -> str:
+        """Slug del modelo para aislar artefactos por modelo."""
+        return model_slug(self.model)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "model": self.model,
+            "model_slug": self.model_slug,
             "temperature": self.temperature,
             "num_ctx": self.num_ctx,
             "seed": self.seed,
@@ -71,6 +108,7 @@ class LlmExperimentConfig:
             "keep_alive": self.keep_alive,
             "max_retries": self.max_retries,
             "cascade_enabled": self.cascade_enabled,
+            "think": self.think,
             "fallback_models": self.fallback_models,
         }
 
@@ -92,6 +130,7 @@ def build_experiment_config(
     timeout: float | None = None,
     keep_alive: str | None = None,
     max_retries: int | None = None,
+    think: bool | None = None,
     cascade_enabled: bool = False,
 ) -> LlmExperimentConfig:
     """Construye la configuración experimental de LLM.
@@ -107,6 +146,9 @@ def build_experiment_config(
         timeout: timeout por llamada en segundos (default: 120.0).
         keep_alive: tiempo de permanencia del modelo en Ollama (default: "5m").
         max_retries: reintentos fijos con la misma semilla (default: 3).
+        think: modo *thinking* del modelo. ``None`` resuelve desde
+            ``defaults.llm.think`` (default False). Desactivarlo mantiene
+            comparable el presupuesto de tokens entre modelos.
         cascade_enabled: si True, permite fallback en cascada (solo desarrollo).
             En experimento debe ser False.
 
@@ -151,6 +193,9 @@ def build_experiment_config(
     resolved_max_retries = (
         int(max_retries) if max_retries is not None else int(_DEFAULT_MAX_RETRIES)
     )
+    resolved_think = (
+        bool(think) if think is not None else bool(cfg.get("think", _DEFAULT_THINK))
+    )
 
     fallback_models: list[str] = []
     if cascade_enabled:
@@ -169,6 +214,7 @@ def build_experiment_config(
         keep_alive=resolved_keep_alive,
         max_retries=resolved_max_retries,
         cascade_enabled=cascade_enabled,
+        think=resolved_think,
         fallback_models=fallback_models,
     )
 
@@ -178,7 +224,8 @@ def build_experiment_config(
         f"[llm_config] configuración experimental: model={config.model}, "
         f"seed={config.seed}, retries={config.max_retries}, "
         f"cascade={'enabled' if config.cascade_enabled else 'disabled'}, "
-        f"num_ctx={config.num_ctx}, temperature={config.temperature}",
+        f"num_ctx={config.num_ctx}, temperature={config.temperature}, "
+        f"think={config.think}",
     )
     return config
 
@@ -204,12 +251,14 @@ def create_ollama_chat_client(config: LlmExperimentConfig) -> dict[str, Any]:
         "max_tokens": config.max_tokens,
         "max_retries": config.max_retries,
         "cascade_enabled": config.cascade_enabled,
+        "think": config.think,
         "fallback_models": config.fallback_models,
     }
     writeLog(
         "debug",
         logger,
         f"[llm_config] cliente Ollama chat creado: model={client['model']}, "
-        f"seed={client['seed']}, num_ctx={client['num_ctx']}",
+        f"seed={client['seed']}, num_ctx={client['num_ctx']}, "
+        f"think={client['think']}",
     )
     return client

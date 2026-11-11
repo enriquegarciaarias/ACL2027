@@ -25,7 +25,8 @@ def test_build_experiment_config_defaults(monkeypatch):
     _set_llm_defaults(monkeypatch, {})
     cfg = build_experiment_config()
 
-    assert cfg.model == "qwen3:8b"
+    assert cfg.model == "qwen2.5:7b"
+    assert cfg.think is False
     assert cfg.temperature == 0.3
     assert cfg.num_ctx == 32768
     assert cfg.seed == 42
@@ -123,9 +124,9 @@ def test_config_to_dict_contains_all_fields(monkeypatch):
     d = cfg.to_dict()
 
     expected_keys = {
-        "model", "temperature", "num_ctx", "seed", "top_p", "max_tokens",
-        "timeout", "keep_alive", "max_retries", "cascade_enabled",
-        "fallback_models",
+        "model", "model_slug", "temperature", "num_ctx", "seed", "top_p",
+        "max_tokens", "timeout", "keep_alive", "max_retries",
+        "cascade_enabled", "think", "fallback_models",
     }
     assert set(d.keys()) == expected_keys
     assert d["model"] == "qwen3:8b"
@@ -141,7 +142,8 @@ def test_create_ollama_chat_client_structure(monkeypatch):
     client = create_ollama_chat_client(cfg)
 
     assert client["host"] == "http://localhost:11434"
-    assert client["model"] == "qwen3:8b"
+    assert client["model"] == "qwen2.5:7b"
+    assert client["think"] is False
     assert client["seed"] == 99
     assert client["num_ctx"] == 16384
     assert client["cascade_enabled"] is False
@@ -162,3 +164,75 @@ def test_config_is_dataclass(monkeypatch):
 
     assert cfg1 == cfg2
     assert cfg1 != cfg3
+
+
+def test_think_resolved_from_config(monkeypatch):
+    """``defaults.llm.think`` se respeta y se propaga al cliente."""
+    _set_llm_defaults(monkeypatch, {"think": True})
+    cfg = build_experiment_config()
+    assert cfg.think is True
+    assert create_ollama_chat_client(cfg)["think"] is True
+
+
+def test_think_explicit_override(monkeypatch):
+    """Un ``think`` explícito gana sobre config.json."""
+    _set_llm_defaults(monkeypatch, {"think": True})
+    cfg = build_experiment_config(think=False)
+    assert cfg.think is False
+
+
+def test_model_slug():
+    """El slug es estable y apto para rutas."""
+    from sources.phase2.llm_config import model_slug
+
+    assert model_slug("qwen3:14b") == "qwen3_14b"
+    assert model_slug("Qwen2.5:7B") == "qwen2_5_7b"
+    assert model_slug("llama3.1:8b-instruct") == "llama3_1_8b_instruct"
+    assert model_slug("") == "model"
+
+
+def test_supports_thinking():
+    """Solo la familia qwen3 recibe el parámetro ``think``."""
+    from sources.phase2.llm_config import supports_thinking
+
+    assert supports_thinking("qwen3:14b") is True
+    assert supports_thinking("qwen3:8b") is True
+    assert supports_thinking("qwen2.5:7b") is False
+    assert supports_thinking("llama3.1:8b") is False
+
+
+def test_ollama_available_models_and_check(monkeypatch):
+    """La comprobación previa detecta modelos instalados y ausentes."""
+    from sources.common import llm_client
+
+    class _Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "models": [
+                    {"name": "qwen2.5:7b"},
+                    {"name": "qwen3:14b-q4_K_M"},
+                ]
+            }
+
+    monkeypatch.setattr(llm_client.requests, "get", lambda *a, **k: _Response())
+    assert llm_client.ollama_available_models() == [
+        "qwen2.5:7b", "qwen3:14b-q4_K_M",
+    ]
+    assert llm_client.check_model_available("qwen2.5:7b") is True
+    assert llm_client.check_model_available("qwen3:14b") is True  # por familia/tag
+    assert llm_client.check_model_available("llama3.1:8b") is False
+
+
+def test_ollama_available_models_returns_empty_on_error(monkeypatch):
+    """Si Ollama no responde, la comprobación no rompe la ejecución."""
+    from sources.common import llm_client
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(llm_client.requests, "get", _boom)
+    assert llm_client.ollama_available_models() == []
+    assert llm_client.check_model_available("qwen3:14b") is None

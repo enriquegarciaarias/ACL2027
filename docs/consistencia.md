@@ -200,7 +200,8 @@ defecto**:
 - La caché guarda la respuesta **cruda** del LLM (sin compuerta), de modo que el
   veredicto se recalcula en cada ejecución: cambiar tolerancias o umbrales no
   requiere invalidar la caché ni volver a llamar al modelo.
-- Desactivación (ablación): `python main.py --proc PHASE2 ... --noGate`, o
+- Desactivación (ablación): `python main.py --proc GENERATE --experiment
+  controls ... --noGate`, o
   `defaults.llm.consistency_gate = false` en `config.json`. La laxitud se ajusta
   con `defaults.llm.consistency_tolerance_scale`.
 - El resumen de ejecución (`run_orchestrator`) y el manifiesto por sujeto

@@ -88,52 +88,76 @@ python main.py --proc INGEST --subject WESAD          # 15 sujetos, corpus compl
 Pasos: `discover → ingest → qc → window → degrade → features → represent → package`.
 `--step X` ejecuta hasta X inclusive. Genera el corpus canónico, las ventanas de 60 s, las features con SQI y las representaciones numérica y textual.
 
-### 4. Fase 2 — llamadas al LLM (`PHASE2`)
+### 4. Fase 2 — respuestas del LLM (`GENERATE`)
+
+Tres fases, un verbo cada una: `INGEST` (corpus) → `GENERATE` (respuestas) → `EVALUATE` (métricas). El **experimento** es un parámetro (`--experiment`), no una fase: `controls`, `degradation`, `centering`, `physionet`, `kemocon`.
 
 ```sh
-python main.py --proc PHASE2 --subject WESAD --subjects S5,S6
-python main.py --proc PHASE2 --subject WESAD --subjects S5 --noGate   # ablación (sin compuerta)
+# Experimento `controls`: C0 + 4 controles negativos (el antiguo PHASE2)
+python main.py --proc GENERATE --experiment controls --subject WESAD --subjects S5,S6
+python main.py --proc GENERATE --experiment controls --subject WESAD --subjects S5 --noGate
+
+# Experimento principal: degradación controlada C0–C5 (H1–H6)
+python main.py --proc GENERATE --experiment degradation --subject WESAD --representation numeric
+python main.py --proc GENERATE --experiment degradation --subject WESAD --representation text
+
+# Validación externa
+python main.py --proc GENERATE --experiment physionet --per-class 150
+python main.py --proc GENERATE --experiment kemocon --task arousal
 ```
 
-Requiere Ollama con `qwen2.5:7b`. Cada respuesta guarda decisión, confianza, claims, razonamiento, prompt completo y veredicto de la compuerta de consistencia.
+`PHASE2` sigue funcionando como alias deprecado de `GENERATE --experiment controls`. Cada respuesta guarda decisión, confianza, claims, razonamiento, prompt completo y veredicto de la compuerta de consistencia.
 
-### 5. Experimento principal — degradación controlada (H1–H6)
+### 5. Fase 3 — evaluación (`EVALUATE`)
 
 ```sh
-# Representación numérica (2.835 llamadas) y textual (2.835)
-python scripts/run_degradation_sweep.py
-python scripts/run_degradation_sweep.py --representation text
+# Métricas del experimento (según cuál sea)
+python main.py --proc EVALUATE --experiment degradation --representation numeric
+python main.py --proc EVALUATE --experiment controls
+python main.py --proc EVALUATE --experiment physionet
 
-# Análisis: corrección, abstención, calibración, claims, certeza, contraste numérico vs texto
-python scripts/analyze_degradation.py \
-  --compare-with results/output/WESAD/PHASE2/degradation_text
+# Comparar modelos: tabla por condición + diferencia de accuracy (bootstrap por sujeto)
+python main.py --proc EVALUATE --experiment degradation \
+  --compare-models qwen2.5:7b,qwen3:14b
+python main.py --proc EVALUATE --experiment controls \
+  --compare-models qwen2.5:7b,qwen3:14b
 ```
 
-Salidas: `results/output/WESAD/PHASE2/degradation/` y `degradation_text/`, más el reporte agregado.
+Salidas: `results/output/WESAD/PHASE2/degradation{,_text}/{modelo}/`, los reportes agregados y `model_comparison.json`.
 
-### 6. Validación externa (control de generalidad)
+### 6. Elegir modelo
 
 ```sh
-# K-EmoCon (arousal/valencia; no tiene etiqueta de estrés — resultado negativo documentado)
-python scripts/run_p3_kemocon.py --reference --reference-only
-
-# PhysioNet/CinC 2017 (clase `noisy` real como control de generalidad)
-python scripts/run_p3_physionet.py --per-class 150
-python scripts/analyze_p3_physionet.py   # análisis sin llamadas al LLM
+python main.py --proc GENERATE --experiment degradation --subject WESAD --model qwen3:14b
 ```
+
+Cada modelo escribe en su propio subdirectorio (`qwen3:14b` → `qwen3_14b`), así que no sobrescribe al anterior. El modelo de referencia del corpus publicado es `qwen2.5:7b`; el modo *thinking* de `qwen3` está desactivado por defecto (`--think` lo activa).
 
 ### Flags de CLI
 
 | Flag | Descripción |
 |---|---|
+| `--proc` | Fase: `INGEST`, `GENERATE` o `EVALUATE` (alias: `PHASE2`, `PHASE3`). |
+| `--experiment` | `controls` (def.), `degradation`, `centering`, `physionet`, `kemocon`. |
 | `--subject` | Carpeta en `results/input/` (default: `default`). |
-| `--proc` | Proceso: `INGEST` o `PHASE2`. |
-| `--step` | Inicia el pipeline desde un paso con nombre. |
 | `--subjects` | Subconjunto de sujetos (`S5,S6`). |
+| `--step` | Inicia el pipeline de ingesta desde un paso con nombre. |
 | `--force` | Recalcula artefactos aunque el fingerprint coincida. |
-| `--dry-run` | Resuelve configuración y rutas sin ejecutar. |
+| `--dry-run` | Imprime el plan (fase, modelo, sujetos, llamadas estimadas, salidas) y termina. |
+| `--model` | Modelo LLM (def. `defaults.llm.primary_model`). Aísla salidas por modelo. |
+| `--think` | Activa el modo *thinking* (solo `qwen3`); desactivado por defecto. |
+| `--compare-models` | `EVALUATE`: modelos a comparar (`a,b`); el primero es la referencia. |
+| `--representation` | `numeric` o `text` (experimento `degradation`). |
+| `--conditions` | Condiciones separadas por comas. |
+| `--split` | `evaluation`, `development` o `all` (al evaluar). |
+| `--max-windows` | Límite de ventanas por sujeto (pilotos). |
+| `--max-records` | Límite de registros (`physionet`). |
+| `--per-class` | Registros por clase (`physionet`). |
+| `--task` | Tarea afectiva (`kemocon`). |
+| `--tag` | Sufijo de ficheros de salida (`physionet`, `kemocon`, `centering`). |
+| `--raw-decisions` | Evalúa la decisión cruda del modelo (sin compuerta). |
 | `--noGate` | Desactiva la compuerta de consistencia (ablación). |
-| `--allowDev` | Permite sujetos de desarrollo (S2–S4) en `PHASE2`. |
+| `--allowDev` | Permite sujetos de desarrollo (S2–S4). |
 
 ---
 
@@ -167,6 +191,7 @@ ACL2027/
 │   ├── run_p3_kemocon.py            # validación externa K-EmoCon
 │   ├── run_p3_physionet.py          # validación externa PhysioNet 2017
 │   ├── analyze_p3_physionet.py      # análisis de PhysioNet 2017 (claims, calidad, ablación)
+│   ├── compare_models.py            # comparación de modelos (tabla + bootstrap por sujeto)
 │   ├── run_e12_pilot.py             # representación centrada (exploratorio)
 │   ├── resolvability_analysis.py    # separabilidad y confusor temporal
 │   ├── analyze_consistency.py       # compuerta de consistencia

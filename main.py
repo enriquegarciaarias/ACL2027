@@ -25,8 +25,15 @@ from sources.common.paramsManager import getConfigs
 # La función se importa y ejecuta de forma diferida.
 # ---------------------------------------------------------------------------
 PROCESS_REGISTRY: dict[str, str] = {
+    # Fase 1: señal -> corpus (no depende del modelo).
     "INGEST": "sources.ingestion.pipeline.process_ingest",
-    "PHASE2": "sources.phase2.orchestrator.run_phase2",
+    # Fase 2: prompts + respuestas del LLM (experimento en --experiment).
+    "GENERATE": "sources.pipelines.run_generate",
+    # Fase 3: evaluación y comparación de modelos.
+    "EVALUATE": "sources.pipelines.run_evaluate",
+    # Alias deprecados (misma maquinaria, experimento ``controls``).
+    "PHASE2": "sources.pipelines.run_generate",
+    "PHASE3": "sources.pipelines.run_evaluate",
 }
 
 

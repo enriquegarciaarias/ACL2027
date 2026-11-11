@@ -60,6 +60,104 @@ def manageArgs():
         action='store_true',
         help="Permitir sujetos de desarrollo (S2-S4) en PHASE2; por defecto solo se advierte",
     )
+    parser.add_argument(
+        '--model',
+        type=str,
+        default=None,
+        help="Modelo LLM para PHASE2 (p. ej. 'qwen3:14b'). Si se omite, se usa "
+             "defaults.llm.primary_model de config.json. Cada modelo escribe en "
+             "llm_responses/{modelo}/ para no sobrescribir resultados.",
+    )
+    parser.add_argument(
+        '--think',
+        action='store_true',
+        help="Activar el modo *thinking* del modelo (solo qwen3). Por defecto "
+             "está desactivado para mantener comparable el presupuesto de tokens.",
+    )
+    parser.add_argument(
+        '--experiment',
+        type=str,
+        default=None,
+        choices=[
+            'controls', 'degradation', 'centering', 'physionet', 'kemocon',
+        ],
+        help="Experimento para GENERATE/EVALUATE: controls (C0 + controles "
+             "negativos), degradation (C0–C5), centering (E12), physionet o "
+             "kemocon. Por defecto: controls.",
+    )
+    parser.add_argument(
+        '--compare-models',
+        type=str,
+        default='',
+        help="EVALUATE: lista de modelos separada por comas; el primero es la "
+             "referencia (p. ej. 'qwen2.5:7b,qwen3:14b').",
+    )
+    parser.add_argument(
+        '--representation',
+        type=str,
+        default=None,
+        choices=['numeric', 'text'],
+        help="Brazo de representación (experimento degradation).",
+    )
+    parser.add_argument(
+        '--conditions',
+        type=str,
+        default='',
+        help="Condiciones separadas por comas (p. ej. 'C0_clean,C4_total_eda').",
+    )
+    parser.add_argument(
+        '--split',
+        type=str,
+        default=None,
+        choices=['evaluation', 'development', 'all'],
+        help="Conjunto a evaluar (EVALUATE).",
+    )
+    parser.add_argument(
+        '--max-windows',
+        type=int,
+        default=None,
+        help="Límite de ventanas por sujeto (pilotos).",
+    )
+    parser.add_argument(
+        '--max-records',
+        type=int,
+        default=None,
+        help="Límite de registros (experimento physionet).",
+    )
+    parser.add_argument(
+        '--per-class',
+        type=int,
+        default=None,
+        help="Registros por clase en el muestreo de physionet.",
+    )
+    parser.add_argument(
+        '--task',
+        type=str,
+        default=None,
+        help="Tarea del experimento kemocon (p. ej. arousal).",
+    )
+    parser.add_argument(
+        '--tag',
+        type=str,
+        default=None,
+        help="Sufijo de los ficheros de salida (experimentos externos).",
+    )
+    parser.add_argument(
+        '--raw-decisions',
+        action='store_true',
+        help="EVALUATE controls: usar decision_llm (modelo crudo, sin compuerta).",
+    )
+    parser.add_argument(
+        '--few-shot',
+        action='store_true',
+        help="Activar few-shot en el experimento physionet.",
+    )
+    parser.add_argument(
+        '--output',
+        type=str,
+        default=None,
+        help="Ruta alternativa del informe de EVALUATE.",
+    )
 
     args = parser.parse_args()
     return args

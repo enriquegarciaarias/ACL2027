@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
 
 from sources.ingestion.represent import _opaque_window_id
+from sources.phase2.llm_config import model_slug
 from sources.phase3.certainty import linguistic_certainty
 from sources.phase3.claims import summarize_verdicts, verify_claims
 from sources.phase3.records import evaluate_records
@@ -189,7 +190,23 @@ def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--conditions", default=",".join(DEFAULT_CONDITIONS))
-    parser.add_argument("--degradation-dir", default=str(DEGRADATION_DIR))
+    parser.add_argument(
+        "--model",
+        default="",
+        help="Modelo a analizar (p. ej. 'qwen3:14b'). Lee de "
+        "degradation{,_text}/{modelo}/; vacío = carpeta histórica.",
+    )
+    parser.add_argument(
+        "--representation",
+        choices=["numeric", "text"],
+        default="numeric",
+        help="Brazo de representación del subdirectorio por modelo.",
+    )
+    parser.add_argument(
+        "--degradation-dir",
+        default="",
+        help="Directorio explícito (tiene prioridad sobre --model).",
+    )
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT))
     parser.add_argument(
         "--no-recovery",
@@ -213,8 +230,38 @@ def main(argv: list[str] | None = None) -> None:
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
     split = "" if args.split == "all" else args.split
     labels = load_labels()
-    records = load_records(Path(args.degradation_dir), set(conditions), split)
+
+    if args.degradation_dir:
+        degradation_dir = Path(args.degradation_dir)
+    else:
+        base = DEGRADATION_DIR if args.representation == "numeric" else (
+            DEGRADATION_DIR.parent / "degradation_text"
+        )
+        degradation_dir = base / model_slug(args.model) if args.model else base
+        if args.model and not degradation_dir.is_dir() and base.is_dir():
+            # Ejecuciones anteriores al aislamiento por modelo: se leen de la
+            # carpeta histórica, avisando de a quién pertenecen.
+            print(
+                f"[AVISO] No existe {degradation_dir}; se usa la carpeta "
+                f"histórica {base}."
+            )
+            degradation_dir = base
+    if not degradation_dir.is_dir():
+        raise SystemExit(f"No existe el directorio de respuestas: {degradation_dir}")
+    records = load_records(degradation_dir, set(conditions), split)
     n_loaded = len(records)
+    models_found = {
+        record.get("model") or (record.get("ollama_meta") or {}).get("model")
+        for record in records
+    }
+    models_found.discard(None)
+    if models_found:
+        print(f"Modelos en los datos: {sorted(models_found)}")
+    if args.model and models_found and args.model not in models_found:
+        raise SystemExit(
+            f"Los datos de {degradation_dir} pertenecen a {sorted(models_found)}, "
+            f"no a {args.model}. Ejecuta primero el barrido con --model {args.model}."
+        )
     if not args.no_recovery:
         records, n_recovered = apply_recovery(records)
         dropped = sum(int(r.get("dropped_claims") or 0) for r in records if r.get("recovered"))
@@ -230,6 +277,9 @@ def main(argv: list[str] | None = None) -> None:
         by_condition[record["condition_id"]].append(record)
 
     report = {
+        "model": args.model or "legacy",
+        "degradation_dir": str(degradation_dir),
+        "representation": args.representation if args.model else "legacy",
         "split": args.split,
         "n_records": len(records),
         "recovery": not args.no_recovery,
@@ -242,7 +292,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if not records:
         raise SystemExit(
-            f"No hay respuestas en {args.degradation_dir} (split={args.split})."
+            f"No hay respuestas en {degradation_dir} (split={args.split})."
         )
     subjects = sorted({record["subject"] for record in records})
     report["subjects"] = subjects

@@ -2,7 +2,7 @@
 
 **Fecha:** 2026-11-09
 **Script:** `scripts/run_degradation_sweep.py`
-**Salidas:** `results/output/WESAD/PHASE2/degradation/{subject}.responses.jsonl`
+**Salidas:** `results/output/WESAD/PHASE2/degradation/{modelo}/{subject}.responses.jsonl`
 y `degradation_summary.json`
 
 ---
@@ -24,7 +24,7 @@ evidencia de entrada. Es la variable experimental de RQ1–RQ3.
 | Referencia de estandarización | **mediana/IQR de las ventanas limpias C0 del sujeto**, aplicada a todas las condiciones |
 | Prompt | clasificación afectiva de 4 clases (tarea preregistrada) |
 | Few-shot | medianas por clase de S2–S4 (sin fuga del test) |
-| Modelo | `qwen2.5:7b`, T=0,3, seed 42 |
+| Modelo | `qwen2.5:7b` (referencia), T=0,3, seed 42; otro modelo con `--model` y subdirectorio propio |
 
 La referencia de estandarización se calcula **solo con C0**. Si se recalculara
 por condición, cada degradación se re-normalizaría y el efecto experimental se
@@ -66,7 +66,7 @@ representación **textual**: los mismos 23 valores z, renderizados como resumen
 con secciones y etiquetas legibles (`render_text_summary`), con los mismos
 few-shot estandarizados de S2–S4 y la misma tarea de 4 clases.
 
-- Salida: `results/output/WESAD/PHASE2/degradation_text/`.
+- Salida: `results/output/WESAD/PHASE2/degradation_text/{modelo}/`.
 - Comando: `python scripts/run_degradation_sweep.py --representation text`.
 - El verificador de claims entiende ambas representaciones: añade
   `METRIC_ALIASES` para etiquetas legibles ("Heart rate", "SCR count",

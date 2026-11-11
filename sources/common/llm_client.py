@@ -154,6 +154,51 @@ def _ollama_embedding_single(
     )
 
 
+def ollama_available_models(
+    host: str = "http://localhost:11434",
+    timeout: float = 5.0,
+) -> list[str]:
+    """Lista los modelos instalados en Ollama (``[]`` si no responde).
+
+    Sirve de comprobación previa: lanzar un barrido de horas contra un modelo
+    que no está descargado produciría miles de timeouts con reintentos.
+    """
+    try:
+        response = requests.get(f"{host.rstrip('/')}/api/tags", timeout=timeout)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:  # noqa: BLE001 - comprobación best-effort
+        return []
+    models = []
+    for entry in payload.get("models", []) or []:
+        name = entry.get("name") or entry.get("model")
+        if name:
+            models.append(str(name))
+    return models
+
+
+def check_model_available(
+    model: str,
+    host: str = "http://localhost:11434",
+) -> bool | None:
+    """¿Está el modelo instalado? ``None`` si no se pudo comprobar.
+
+    Acepta coincidencia exacta o por familia: ``qwen3:14b`` casa con
+    ``qwen3:14b`` y con ``qwen3:14b-q4_K_M``.
+    """
+    installed = ollama_available_models(host)
+    if not installed:
+        return None
+    if model in installed:
+        return True
+    family = model.split(":")[0]
+    tag = model.split(":")[1] if ":" in model else ""
+    return any(
+        name == model or (name.startswith(f"{family}:") and tag in name)
+        for name in installed
+    )
+
+
 def ollama_warm_up(client: Mapping[str, Any], model: str) -> None:
     """Calienta el modelo de embeddings en Ollama con una llamada ligera.
 

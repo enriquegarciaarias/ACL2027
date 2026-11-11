@@ -41,7 +41,8 @@ Reglas de uso:
   36 meditation) y quedan fijados en `prompt_builder.FEW_SHOT_EXEMPLARS`.
 - `scripts/run_e12_pilot.py` usa por defecto los sujetos de evaluación y
   **bloquea** los de desarrollo salvo `--allow-dev`.
-- `main.py --proc PHASE2` etiqueta cada respuesta y entrada de manifiesto con
+- `main.py --proc GENERATE` (`PHASE2` como alias) etiqueta cada respuesta y
+  entrada de manifiesto con
   `split = development | evaluation` y avisa si la lista incluye S2–S4
   (`--allowDev` silencia el aviso).
 - Cualquier respuesta con `split = development` es exploratoria y se excluye de

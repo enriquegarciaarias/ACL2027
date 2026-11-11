@@ -381,11 +381,16 @@ desarrollo.
 
 ## 8. Reproducción
 
+Los datos viven **dentro del proyecto** en
+`results/input/EXTERNAL/physionet2017/training2017/` (~211 MB: 8.528 `.mat` +
+`.hea` + `REFERENCE.csv`). Se puede reubicar con `--data-dir` o con
+`params.external.physionet.data_dir`. Ver [`datos_entrada.md`](datos_entrada.md).
+
 ```bash
-# Descarga (una vez)
-mkdir -p /tmp/opencode/physionet2017 && cd /tmp/opencode/physionet2017
+# Descarga (una vez, si no está)
+cd results/input/EXTERNAL/physionet2017
 curl -sLO https://physionet.org/files/challenge-2017/1.0.0/training2017.zip
-unzip -q training2017.zip
+unzip -q training2017.zip && rm training2017.zip
 
 # Piloto y corpus (LLM)
 python scripts/run_p3_physionet.py --per-class 6 --max-records 6

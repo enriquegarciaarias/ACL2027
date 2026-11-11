@@ -31,6 +31,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sources.common.provenance import utc_now
+from sources.external.paths import KEMOCON_DIR
 from sources.external.kemocon import (
     KEMOCON_FEATURES,
     KEMOCON_REFERENCE_EXTRA,
@@ -54,7 +55,11 @@ from sources.phase2.response_schema import (
 from sources.phase3.records import evaluate_binary_records
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PSRI = Path("/home/vant/Documentos/proyectos/LSI/PSRI/results/output/KEMOCON")
+#: Datos de entrada del experimento, **dentro del proyecto**: tabla de features
+#: y asignación de periodos ya calculadas por PSRI (no hace falta reingerir las
+#: señales crudas de muñeca). Se puede sobreescribir con ``--data-dir`` o con
+#: ``params.external.kemocon.data_dir`` en config.json.
+DEFAULT_DATA = KEMOCON_DIR
 DEFAULT_OUTPUT = REPO_ROOT / "results" / "output" / "KEMOCON" / "P3"
 
 DATASET_NOTE = (
@@ -261,7 +266,14 @@ def run_llm(
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--psri-dir", default=str(DEFAULT_PSRI))
+    parser.add_argument(
+        "--data-dir",
+        "--psri-dir",
+        dest="data_dir",
+        default=str(DEFAULT_DATA),
+        help="Directorio con kemocon_feature_table.csv y "
+             "kemocon_period_assignments.csv (por defecto, dentro del proyecto).",
+    )
     parser.add_argument("--subjects", default="", help="IDs de participantes separados por comas.")
     parser.add_argument("--task", choices=sorted(TASKS), default="arousal")
     parser.add_argument(
@@ -295,7 +307,7 @@ def main(argv: list[str] | None = None) -> None:
     decision_mode = task["decision_mode"]
     subjects = [s.strip() for s in args.subjects.split(",") if s.strip()] or None
     output_dir = Path(args.output_dir)
-    psri_dir = Path(args.psri_dir)
+    psri_dir = Path(args.data_dir)
     if not psri_dir.is_dir():
         raise SystemExit(f"No existe el directorio de PSRI: {psri_dir}")
 

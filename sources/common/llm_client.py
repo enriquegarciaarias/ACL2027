@@ -12,14 +12,17 @@ de SLIP):
 Este módulo es opcional: los proyectos que no usen Ollama/LLM pueden simplemente
 no importarlo.
 """
-from sources.common.common import processControl, logger, writeLog
-from sources.common.utils import read_json
+from __future__ import annotations
 
 import json
 import time
 from pathlib import Path
+from typing import Any, Mapping
 
 import requests
+
+from sources.common.common import processControl, logger, writeLog
+from sources.common.utils import read_json
 
 _DEFAULT_TIMEOUT = 120.0
 _DEFAULT_KEEP_ALIVE = "5m"

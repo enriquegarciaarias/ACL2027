@@ -8,6 +8,12 @@
 
 ---
 
+Los datos de entrada (tablas derivadas) viven **dentro del proyecto** en
+`results/input/EXTERNAL/KEMOCON/`: `kemocon_feature_table.csv` y
+`kemocon_period_assignments.csv` (5,1 MB). No hace falta reingerir las
+señales crudas de muñeca. Se puede reubicar con `--data-dir` o con
+`params.external.kemocon.data_dir`; ver [`datos_entrada.md`](datos_entrada.md).
+
 ## 1. Corrección de enfoque: K-EmoCon no mide estrés
 
 K-EmoCon **no tiene etiqueta de estrés**. Sus constructos son **valencia y

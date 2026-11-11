@@ -53,6 +53,15 @@
     },
     "datasetVars": {},
     "params": {
+        "external": {
+            "_comment": "Datos de los experimentos externos DENTRO del proyecto (results/ está gitignorado). Deja vacío para usar la ruta por defecto del repositorio.",
+            "physionet": {
+                "data_dir": ""
+            },
+            "kemocon": {
+                "data_dir": ""
+            }
+        },
         "ingestion": {
             "dataset": "WESAD",
             "source_dir": ".",

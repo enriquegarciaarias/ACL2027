@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Status](https://img.shields.io/badge/Status-Research%20prototype-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Tests](https://img.shields.io/badge/Tests-229-passing-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-323-passing-brightgreen)
 
 ---
 
@@ -53,6 +53,7 @@ Toda la documentación vive en **`docs/`**, con un índice pensado para dos lect
 | **Revisar los resultados completos del experimento principal** | [`docs/resultados_degradacion.md`](docs/resultados_degradacion.md) |
 | **Saber qué es firme y qué es exploratorio** | [`docs/split_dev_test.md`](docs/split_dev_test.md) |
 | **Conocer el pipeline de datos (Fase 1)** | [`docs/ingestion.md`](docs/ingestion.md) |
+| **Saber qué datos hay que copiar al servidor** | [`docs/datos_entrada.md`](docs/datos_entrada.md) |
 | **Ver el mapa completo de documentos** | [`docs/README.md`](docs/README.md) |
 
 El README de [`docs/`](docs/README.md) describe la arquitectura por componentes (datos, diseño experimental, resultados, validación externa, literatura y memoria operativa) y enlaza cada documento con su estado (firme / exploratorio / negativo documentado). Es el punto de entrada para quien quiera entrar en detalle.
@@ -63,10 +64,34 @@ El README de [`docs/`](docs/README.md) describe la arquitectura por componentes 
 
 ### 1. Entorno
 
+**Python 3.12** (la versión del servidor de GPU y del entorno de referencia).
+Los pinneos de `requirements.txt` tienen wheels `cp312` para todas las
+dependencias, incluidas `numpy 2.5.4`, `scipy 1.18.1`, `torch 2.15.0` y
+`triton 3.9.0`.
+
 ```sh
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip wheel
 pip install -r requirements.txt
+pip install -r requirements-dev.txt   # pytest (opcional, para tests)
+python -m pytest -q                   # 323 tests
+```
+
+Comprobación rápida de versiones:
+
+```sh
+python -V                              # Python 3.12.x
+python -c "import numpy, scipy, neurokit2, sklearn, torch; print(numpy.__version__, torch.__version__)"
+```
+
+Si prefieres no descargar las ruedas CUDA 13 de `torch` (la inferencia la hace
+Ollama; `torch` solo detecta GPU), instala torch CPU después de los requisitos:
+
+```sh
+grep -v -E '^(torch|triton|nvidia-|cuda-)' requirements.txt > /tmp/req-notorch.txt
+pip install -r /tmp/req-notorch.txt
+pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
 ### 2. Configuración
@@ -231,7 +256,7 @@ ACL2027/
 │   ├── phase2/                  # prompts, LLM, esquema de respuesta, controles negativos, gate de consistencia
 │   ├── phase3/                  # evaluación, claims, certeza, calibración, degradación
 │   └── external/                # adaptadores K-EmoCon y PhysioNet 2017
-├── tests/                       # 229 tests (sin dependencia de los datasets reales)
+├── tests/                       # 323 tests (sin dependencia de los datasets reales)
 └── results/                     # NO versionado: input/ y output/ por subject
 ```
 
@@ -243,7 +268,7 @@ ACL2027/
 python -m pytest -q
 ```
 
-**229 tests**: infraestructura, ingesta, features, representaciones, prompts, esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y adaptadores externos. No requieren descargar WESAD ni Ollama.
+**323 tests**: infraestructura, ingesta, features, representaciones, prompts, esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y adaptadores externos. No requieren descargar WESAD ni Ollama.
 
 ---
 

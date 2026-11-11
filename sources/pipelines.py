@@ -90,6 +90,22 @@ def _run_script(name: str, argv: Sequence[str]) -> None:
     module.main(list(argv))
 
 
+def external_data_dir(name: str) -> str | None:
+    """Ruta configurada en ``params.external.<name>.data_dir`` (si existe).
+
+    Los experimentos externos (physionet, kemocon) leen sus datos de dentro del
+    proyecto; esta ruta permite reubicarlos sin tocar código. Vacío = usar el
+    valor por defecto del runner (``results/input/EXTERNAL/...``).
+    """
+    params = getattr(processControl, "parms", None) or {}
+    external = (params.get("external") or {}) if isinstance(params, dict) else {}
+    entry = external.get(name) or {}
+    if not isinstance(entry, dict):
+        return None
+    value = str(entry.get("data_dir") or "").strip()
+    return value or None
+
+
 def _append_flag(argv: list[str], flag: str, value: Any) -> None:
     """Añade ``flag value`` si el valor está definido."""
     if value in (None, "", 0, False):
@@ -134,12 +150,14 @@ def build_generate_argv(
         if getattr(args, "allowDev", False):
             argv.append("--allow-dev")
     elif experiment == "physionet":
+        _append_flag(argv, "--data-dir", external_data_dir("physionet"))
         _append_flag(argv, "--per-class", getattr(args, "per_class", None))
         _append_flag(argv, "--max-records", getattr(args, "max_records", None))
         _append_flag(argv, "--tag", getattr(args, "tag", None))
         if getattr(args, "few_shot", False):
             argv.append("--few-shot")
     elif experiment == "kemocon":
+        _append_flag(argv, "--data-dir", external_data_dir("kemocon"))
         _append_flag(argv, "--task", getattr(args, "task", None))
         _append_flag(argv, "--subjects", getattr(args, "subjects", None))
         _append_flag(argv, "--max-windows", getattr(args, "max_windows", None))
@@ -185,10 +203,12 @@ def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
         # Calibración y predicción selectiva sobre las respuestas E12.
         _append_flag(argv, "--output", output)
     elif experiment == "physionet":
+        _append_flag(argv, "--data-dir", external_data_dir("physionet"))
         _append_flag(argv, "--output", output)
     elif experiment == "kemocon":
         # Sin LLM: referencia features-only y evaluación del piloto existente.
         argv.extend(["--reference", "--reference-only"])
+        _append_flag(argv, "--data-dir", external_data_dir("kemocon"))
         _append_flag(argv, "--task", getattr(args, "task", None))
         _append_flag(argv, "--subjects", getattr(args, "subjects", None))
     return argv
@@ -355,6 +375,22 @@ def _paths_info(experiment: str, args: Any) -> dict[str, Any]:
                 f"no existe el dataset {dataset_dir} "
                 "(estructura esperada: results/input/<dataset>/S*/S*.pkl)"
             )
+    # Datos de los experimentos externos: deben estar dentro del proyecto.
+    if experiment in ("physionet", "kemocon"):
+        from sources.external.paths import DEFAULT_DIRS, REQUIRED_FILES
+
+        configured = external_data_dir(experiment)
+        base = Path(configured) if configured else DEFAULT_DIRS[experiment]
+        target = base / REQUIRED_FILES[experiment]
+        info["external_data"] = str(target)
+        info["external_data_exists"] = target.exists()
+        if not target.exists():
+            warnings.append(
+                f"no existe el dato externo {target} "
+                f"(ver docs/datos_entrada.md; puede fijarse en "
+                f"params.external.{experiment}.data_dir)"
+            )
+
     info["warnings"] = warnings
     return info
 

@@ -329,8 +329,9 @@ declararse en la tesis.
 **Pregunta.** ¿Se replica el hallazgo en afecto con sensores de muñeca y habla
 espontánea?
 
-**Diseño.** 23 participantes; tabla de features de PSRI agregada a ventanas de
-60 s; z intra-participante; etiquetas externas y autoinformadas de arousal y
+**Diseño.** 23 participantes; tabla de features agregada a ventanas de 60 s
+(se usa la tabla ya derivada, en `results/input/EXTERNAL/KEMOCON/`; no se
+reingieren las señales crudas); z intra-participante; etiquetas externas y autoinformadas de arousal y
 valencia (alta vs baja); referencia logística con validación cruzada por
 participante y un piloto LLM de arousal.
 
@@ -351,7 +352,8 @@ sensor (una derivación de ECG) y una clase **natural** de evidencia inutilizabl
 (`noisy`, etiquetada por experto)?
 
 **Diseño.** 600 registros muestreados (150 por clase), split determinista por
-CRC32: 197 desarrollo / 403 evaluación. Cinco features canónicas de ECG en z
+CRC32: 197 desarrollo / 403 evaluación. Datos en
+`results/input/EXTERNAL/physionet2017/training2017/`. Cinco features canónicas de ECG en z
 poblacional (referencia de desarrollo). Prompt de 4 clases + `abstain`, sin
 few-shot. Referencia logística entrenada en desarrollo.
 

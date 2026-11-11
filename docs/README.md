@@ -32,6 +32,7 @@ Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 | [`dataIngestion.md`](dataIngestion.md) | Notas extensas de ingesta y estructura del dataset | Referencia |
 | [`sqi.md`](sqi.md) | Indicador de calidad de señal (SQI): fórmulas por modalidad, agregación, ejemplos | Firme |
 | [`experiment_degradation.md`](experiment_degradation.md) | Preregistro de la degradación controlada: canales mínimos y matriz de condiciones | Firme (diseño) |
+| [`datos_entrada.md`](datos_entrada.md) | Qué datos de entrada necesita cada experimento, dónde viven dentro del proyecto y cómo replicarlos en el servidor | Firme |
 
 ### Diseño experimental
 

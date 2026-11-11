@@ -45,6 +45,7 @@ def _reset_process_control(monkeypatch):
     """Aísla ``processControl`` entre tests."""
     monkeypatch.setattr(processControl, "args", None, raising=False)
     monkeypatch.setattr(processControl, "defaults", {"llm": {}}, raising=False)
+    monkeypatch.setattr(processControl, "parms", {}, raising=False)
 
 
 def test_experiment_defaults_to_controls():
@@ -273,3 +274,55 @@ def test_require_config_file_accepts_existing(tmp_path):
 
     (tmp_path / "config.json").write_text("{}", encoding="utf-8")
     assert paramsManager._require_config_file(str(tmp_path)).endswith("config.json")
+
+
+def test_external_data_paths_live_inside_project():
+    """Los datos externos se resuelven dentro del repositorio."""
+    from sources.external import paths
+
+    for directory in (paths.PHYSIONET2017_DIR, paths.KEMOCON_DIR):
+        assert paths.REPO_ROOT in directory.parents
+        assert "EXTERNAL" in directory.parts
+
+
+def test_external_data_dir_from_config(monkeypatch):
+    """`params.external.<exp>.data_dir` sobreescribe la ruta por defecto."""
+    monkeypatch.setattr(
+        processControl,
+        "parms",
+        {"external": {"physionet": {"data_dir": "/datos/pn17"}}},
+        raising=False,
+    )
+    assert pipelines.external_data_dir("physionet") == "/datos/pn17"
+    assert pipelines.external_data_dir("kemocon") is None
+
+
+def test_generate_argv_passes_configured_data_dir(monkeypatch):
+    monkeypatch.setattr(
+        processControl,
+        "parms",
+        {"external": {"physionet": {"data_dir": "/datos/pn17"}}},
+        raising=False,
+    )
+    argv = pipelines.build_generate_argv("physionet", _args())
+    assert "--data-dir" in argv
+    assert "/datos/pn17" in argv
+
+
+def test_plan_warns_when_external_data_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        processControl,
+        "env",
+        {"input": str(tmp_path / "in"), "output": str(tmp_path / "out")},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        processControl,
+        "parms",
+        {"external": {"physionet": {"data_dir": str(tmp_path / "nada")}}},
+        raising=False,
+    )
+    monkeypatch.setattr(processControl, "args", _args(experiment="physionet"), raising=False)
+    info = pipelines._paths_info("physionet", processControl.args)
+    assert info["external_data_exists"] is False
+    assert any("dato externo" in w for w in info["warnings"])

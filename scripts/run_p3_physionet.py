@@ -27,6 +27,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sources.common.provenance import utc_now
+from sources.external.paths import PHYSIONET2017_DIR
 from sources.external.physionet2017 import (
     CANONICAL_FEATURES,
     RHYTHM_CLASSES,
@@ -52,7 +53,10 @@ from sources.phase3.certainty import linguistic_certainty
 from sources.phase3.claims import summarize_verdicts, verify_claims
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DATA = Path("/tmp/opencode/physionet2017/training2017")
+#: Datos de entrada **dentro del proyecto** (``.mat``/``.hea`` + REFERENCE.csv).
+#: Se puede sobreescribir con ``--data-dir`` o con
+#: ``params.external.physionet.data_dir`` en config.json.
+DEFAULT_DATA = PHYSIONET2017_DIR
 DEFAULT_OUTPUT = REPO_ROOT / "results" / "output" / "PHYSIONET2017" / "P3"
 
 DATASET_NOTE = (

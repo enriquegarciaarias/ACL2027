@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -241,7 +242,6 @@ def _n_windows(subject: str) -> int | None:
     Las ventanas las produce la Fase 1 (``INGEST``), con independencia de la
     fase que se esté planificando.
     """
-    path: Path | None = None
     try:
         from sources.common.paths import subject_output_dir
 
@@ -249,18 +249,14 @@ def _n_windows(subject: str) -> int | None:
             subject_output_dir() / "INGEST" / "windows"
             / f"{subject}.windows.jsonl"
         )
-        if candidate.is_file():
-            path = candidate
-    except Exception:  # noqa: BLE001 - el plan es best-effort
-        path = None
-    if path is None:
-        fallback = (
+    except Exception:  # noqa: BLE001 - entorno no configurado (tests)
+        candidate = (
             REPO_ROOT / "results" / "output" / "WESAD" / "INGEST" / "windows"
             / f"{subject}.windows.jsonl"
         )
-        path = fallback if fallback.is_file() else None
-    if path is None:
+    if not candidate.is_file():
         return None
+    path = candidate
     try:
         with path.open(encoding="utf-8") as fh:
             return sum(1 for line in fh if line.strip())
@@ -329,6 +325,40 @@ def _estimate_calls(experiment: str, subjects: Sequence[str], args: Any) -> int 
     return None
 
 
+def _paths_info(experiment: str, args: Any) -> dict[str, Any]:
+    """Rutas y comprobaciones de existencia para el plan (``--dry-run``).
+
+    Es el preflight que se puede lanzar en el servidor antes de un barrido:
+    detecta config ausente, dataset ausente y rutas de salida.
+    """
+    env = processControl.env or {}
+    cwd = os.path.realpath(os.getcwd())
+    info: dict[str, Any] = {
+        "cwd": cwd,
+        "config_json": Path(cwd, "config.json").is_file(),
+        "results_output": env.get("output"),
+    }
+    warnings: list[str] = []
+    if not info["config_json"]:
+        warnings.append(
+            "falta config.json en el directorio de trabajo "
+            "(cp config_example.json config.json)"
+        )
+
+    if experiment in ("controls", "degradation", "centering"):
+        dataset = str(getattr(args, "subject", None) or "default")
+        dataset_dir = Path(env.get("input") or "", dataset)
+        info["dataset_dir"] = str(dataset_dir)
+        info["dataset_exists"] = dataset_dir.is_dir()
+        if not info["dataset_exists"]:
+            warnings.append(
+                f"no existe el dataset {dataset_dir} "
+                "(estructura esperada: results/input/<dataset>/S*/S*.pkl)"
+            )
+    info["warnings"] = warnings
+    return info
+
+
 def _plan(phase: str) -> dict[str, Any]:
     """Plan legible para ``--dry-run``."""
     args = processControl.args
@@ -340,6 +370,7 @@ def _plan(phase: str) -> dict[str, Any]:
         "proc": getattr(args, "proc", None),
         "phase": phase,
         "experiment": experiment,
+        "paths": _paths_info(experiment, args),
         "subject": getattr(args, "subject", None),
         "subjects": _subjects_for_plan(args),
         "model": model,

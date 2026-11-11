@@ -159,6 +159,34 @@ Cada modelo escribe en su propio subdirectorio (`qwen3:14b` → `qwen3_14b`), as
 | `--noGate` | Desactiva la compuerta de consistencia (ablación). |
 | `--allowDev` | Permite sujetos de desarrollo (S2–S4). |
 
+### Si el pipeline termina en segundos y el log parece vacío
+
+El proceso **resuelve todas las rutas contra el directorio de trabajo** y
+`config.json` está gitignorado, así que un clon reciente suele fallar antes de
+escribir nada. Comprobación rápida:
+
+```bash
+cd /ruta/al/ACL2027            # 1. cwd = raíz del repo
+ls config.json                 # 2. si no está: cp config_example.json config.json
+ls results/input/WESAD         # 3. dataset: results/input/WESAD/S*/S*.pkl
+python main.py --proc GENERATE --experiment controls --dry-run   # 4. preflight
+echo $?                        # 5. 0 = ok · 2 = falta config.json · 1 = otro fallo
+```
+
+- El log real es **`ProcessLog.txt` en el directorio de trabajo** (no el del
+  wrapper); si está vacío, el proceso murió antes de configurar el logging
+  (caso típico: falta `config.json`).
+- `--dry-run` imprime el plan con las rutas y un bloque `warnings` que indica si
+  falta el dataset, además del número estimado de llamadas.
+- `results/input` y `results/output` se crean automáticamente; el dataset no.
+- El proceso devuelve **código de salida** (0/1/2). Si el wrapper no lo
+  comprueba, un fallo parece una finalización normal:
+
+```bash
+set -euo pipefail
+python main.py --proc GENERATE --experiment controls --subject WESAD 2>&1 | tee run.log
+```
+
 ---
 
 ## 📁 Estructura del proyecto

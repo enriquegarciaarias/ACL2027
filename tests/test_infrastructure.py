@@ -52,3 +52,22 @@ def test_fingerprint_is_deterministic_and_order_independent():
     assert a == b
     assert a == sha256_json({"a": 1, "b": 2})
     assert canonical_json({"b": 2, "a": 1}) == '{"a":1,"b":2}'
+
+
+def test_manage_env_creates_input_and_output_dirs(tmp_path, monkeypatch):
+    """`results/input` y `results/output` se crean si no existen."""
+    from sources.common.paramsManager import manageEnv
+
+    monkeypatch.chdir(tmp_path)
+    env = manageEnv(
+        {
+            "environment": {
+                "input": "results/input",
+                "output": "results/output",
+                "cache": ".pycache",
+            }
+        }
+    )
+    assert (tmp_path / "results" / "input").is_dir()
+    assert (tmp_path / "results" / "output").is_dir()
+    assert env["input"].endswith("results/input")

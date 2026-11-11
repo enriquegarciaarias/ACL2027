@@ -73,7 +73,8 @@ def customProcess():
     return
 
 
-if __name__ == '__main__':
+def _run() -> int:
+    """Ejecuta el proceso y devuelve un código de salida explícito."""
     getConfigs()
     writeLog("info", logger,
              f"********** STARTING {processControl.args.proc.upper() if processControl.args and processControl.args.proc else 'PROJECT'} Process **********")
@@ -92,3 +93,48 @@ if __name__ == '__main__':
         customProcess()
 
     writeLog("info", logger, "********** PROCESS COMPLETED **********")
+    return 0
+
+
+def _shape_hint(exc: BaseException) -> str:
+    """Sugerencia accionable para los fallos de preparación más frecuentes."""
+    text = str(exc)
+    if isinstance(exc, FileNotFoundError):
+        if "config.json" in text:
+            return (
+                "Falta config.json en el directorio de trabajo. Créalo con: "
+                "cp config_example.json config.json"
+            )
+        if "results/input" in text or "directorio del dataset" in text:
+            return (
+                "Falta el dataset. Estructura esperada: "
+                "results/input/<dataset>/<sujeto>/<sujeto>.pkl "
+                "(revisa --subject y la sección environment de config.json)."
+            )
+    return ""
+
+
+if __name__ == '__main__':
+    import sys
+    import traceback
+
+    try:
+        code = _run()
+    except KeyboardInterrupt:
+        writeLog("warning", logger, "Ejecución interrumpida por el usuario.")
+        code = 130
+    except SystemExit as exc:  # salidas controladas (p. ej. preflight)
+        code = int(exc.code) if isinstance(exc.code, int) else 1
+    except BaseException as exc:  # noqa: BLE001 - se registra y se propaga el fallo
+        writeLog(
+            "error",
+            logger,
+            f"Fallo no controlado: {type(exc).__name__}: {exc}",
+        )
+        hint = _shape_hint(exc)
+        if hint:
+            writeLog("error", logger, hint)
+        # Traza completa en el log (el wrapper del servidor solo ve stdout).
+        writeLog("error", logger, traceback.format_exc())
+        code = 1
+    sys.exit(code)

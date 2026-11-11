@@ -201,3 +201,75 @@ def test_process_registry_has_three_phases():
     # alias deprecados
     assert PROCESS_REGISTRY["PHASE2"] == "sources.pipelines.run_generate"
     assert PROCESS_REGISTRY["PHASE3"] == "sources.pipelines.run_evaluate"
+
+
+def test_plan_reports_missing_dataset(monkeypatch, tmp_path):
+    """El preflight avisa si falta el dataset (fallo típico en un servidor)."""
+    monkeypatch.setattr(
+        processControl,
+        "env",
+        {
+            "input": str(tmp_path / "results" / "input"),
+            "output": str(tmp_path / "results" / "output"),
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(processControl, "args", _args(subjects="S5"), raising=False)
+    info = pipelines._paths_info("controls", processControl.args)
+    assert info["dataset_exists"] is False
+    assert any("no existe el dataset" in w for w in info["warnings"])
+
+
+def test_plan_reports_present_dataset(monkeypatch, tmp_path):
+    dataset = tmp_path / "results" / "input" / "WESAD" / "S5"
+    dataset.mkdir(parents=True)
+    monkeypatch.setattr(
+        processControl,
+        "env",
+        {
+            "input": str(tmp_path / "results" / "input"),
+            "output": str(tmp_path / "results" / "output"),
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(processControl, "args", _args(subjects="S5"), raising=False)
+    info = pipelines._paths_info("controls", processControl.args)
+    assert info["dataset_exists"] is True
+    assert info["warnings"] == []
+
+
+def test_main_shape_hint_for_missing_config():
+    from main import _shape_hint
+
+    hint = _shape_hint(FileNotFoundError("/x/config.json"))
+    assert "cp config_example.json config.json" in hint
+
+
+def test_main_shape_hint_for_missing_dataset():
+    from main import _shape_hint
+
+    hint = _shape_hint(
+        FileNotFoundError("no existe el directorio del dataset: /x/results/input/WESAD")
+    )
+    assert "results/input" in hint
+
+
+def test_require_config_file_fails_fast(tmp_path, monkeypatch):
+    """Sin `config.json` el arranque falla con mensaje claro y código 2."""
+    from sources.common import paramsManager
+
+    messages: list[str] = []
+    monkeypatch.setattr(
+        paramsManager, "writeLog", lambda level, logger, message: messages.append(message)
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        paramsManager._require_config_file(str(tmp_path))
+    assert excinfo.value.code == 2
+    assert any("cp config_example.json config.json" in m for m in messages)
+
+
+def test_require_config_file_accepts_existing(tmp_path):
+    from sources.common import paramsManager
+
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    assert paramsManager._require_config_file(str(tmp_path)).endswith("config.json")

@@ -361,6 +361,13 @@ def manageEnv(config=None):
 
     env_data['cache'] = os.path.join(env_data.get('cache', '.pycache'))
     os.makedirs(env_data['cache'], exist_ok=True)
+    # Los directorios de entrada/salida pueden no existir en un clon reciente
+    # (results/ está gitignorado): se crean para que el fallo sea el dataset
+    # ausente, con un mensaje claro, y no un FileNotFoundError genérico.
+    for key in ('input', 'output'):
+        path = env_data.get(key)
+        if path:
+            os.makedirs(path, exist_ok=True)
     os.environ['PYTHONPYCACHEPREFIX'] = env_data['cache']
     try:
         sys.pycache_prefix = env_data['cache']
@@ -434,6 +441,28 @@ def load_subject_config(subject, base_config=None):
         return base_doc
 
 
+def _require_config_file(base_path: str | None = None) -> str:
+    """Comprueba que exista ``config.json`` en el directorio de trabajo.
+
+    Falla de forma explícita (código 2) en lugar de dejar un
+    ``FileNotFoundError`` sin mensaje en el log: es el error más habitual en un
+    clon reciente del repositorio, donde ``config.json`` está gitignorado.
+
+    Returns:
+        Ruta absoluta de ``config.json``.
+    """
+    base = base_path or os.path.realpath(os.getcwd())
+    path = os.path.join(base, "config.json")
+    if not os.path.isfile(path):
+        writeLog(
+            "error",
+            logger,
+            f"No existe {path}. Créalo con: cp config_example.json config.json",
+        )
+        raise SystemExit(2)
+    return path
+
+
 def getConfigs():
     """Carga la configuración completa en el singleton `processControl`.
 
@@ -446,6 +475,8 @@ def getConfigs():
         None
     """
     processControl.args = manageArgs()
+
+    _require_config_file()
 
     base_config = configLoader()
     merged = load_subject_config(processControl.args.subject, base_config)

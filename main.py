@@ -13,8 +13,12 @@ Soporta:
   - --serverGPU: ejecutar solo la parte interactiva local ("start") o solo
     la parte no interactiva en servidor GPU ("server") (mejora propuesta).
 
+Códigos de salida: 0 correcto · 1 fallo de ejecución · 2 falta config.json ·
+3 entorno incompleto (venv o dependencias) · 130 interrumpido.
+
 Esqueleto reutilizable (patrón común heredado de PSRI y SLIP).
 """
+from sources.common import environment
 from sources.common.common import processControl, logger, writeLog
 from sources.common.paramsManager import getConfigs
 
@@ -73,8 +77,24 @@ def customProcess():
     return
 
 
+def _check_environment_or_exit() -> None:
+    """Verifica venv y dependencias antes de cargar la configuración.
+
+    Evita el error típico de lanzar el pipeline con el Python del sistema:
+    faltaría `neurokit2`/`scipy` y el fallo aparecería dentro de un import.
+    """
+    ok, errors, warnings = environment.check_environment()
+    for message in warnings:
+        writeLog("warning", logger, message)
+    if not ok:
+        for message in errors:
+            writeLog("error", logger, message)
+        raise SystemExit(3)
+
+
 def _run() -> int:
     """Ejecuta el proceso y devuelve un código de salida explícito."""
+    _check_environment_or_exit()
     getConfigs()
     writeLog("info", logger,
              f"********** STARTING {processControl.args.proc.upper() if processControl.args and processControl.args.proc else 'PROJECT'} Process **********")

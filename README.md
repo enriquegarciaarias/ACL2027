@@ -195,8 +195,22 @@ cd /ruta/al/ACL2027            # 1. cwd = raíz del repo
 ls config.json                 # 2. si no está: cp config_example.json config.json
 ls results/input/WESAD         # 3. dataset: results/input/WESAD/S*/S*.pkl
 python main.py --proc GENERATE --experiment controls --dry-run   # 4. preflight
-echo $?                        # 5. 0 = ok · 2 = falta config.json · 1 = otro fallo
+echo $?                        # 5. 0 ok · 2 falta config.json · 3 entorno incompleto · 1 otro fallo
 ```
+
+Si el error es **`ModuleNotFoundError: No module named 'neurokit2'`** (u otro
+paquete que sí está en `requirements.txt`), estás lanzando con el **Python del
+sistema** en vez del entorno del proyecto. Compruébalo:
+
+```bash
+which python                                   # debe ser .../ACL2027/.venv/bin/python
+python -c "import sys; print(sys.prefix)"      # debe apuntar a .venv
+source .venv/bin/activate                      # si no lo está
+python -m pip install -r requirements.txt
+```
+
+El arranque ya lo detecta y sale con **código 3** indicando qué falta y cómo
+instalarlo.
 
 - El log real es **`ProcessLog.txt` en el directorio de trabajo** (no el del
   wrapper); si está vacío, el proceso murió antes de configurar el logging

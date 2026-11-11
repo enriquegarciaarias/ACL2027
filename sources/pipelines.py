@@ -353,12 +353,33 @@ def _paths_info(experiment: str, args: Any) -> dict[str, Any]:
     """
     env = processControl.env or {}
     cwd = os.path.realpath(os.getcwd())
+    from sources.common import environment
+
     info: dict[str, Any] = {
         "cwd": cwd,
         "config_json": Path(cwd, "config.json").is_file(),
         "results_output": env.get("output"),
     }
     warnings: list[str] = []
+
+    # Entorno de ejecución: el error más común en servidores es lanzar con el
+    # Python del sistema en lugar del .venv del proyecto.
+    env_snapshot = environment.snapshot()
+    info["python"] = env_snapshot["python"]
+    info["python_version"] = env_snapshot["version"]
+    info["in_venv"] = env_snapshot["in_venv"]
+    info["missing_modules"] = env_snapshot["missing_modules"]
+    if env_snapshot["missing_modules"]:
+        warnings.append(
+            "faltan dependencias en el intérprete en uso "
+            f"({', '.join(env_snapshot['missing_modules'])}); instala con "
+            "python -m pip install -r requirements.txt"
+        )
+    if not env_snapshot["in_venv"]:
+        warnings.append(
+            "no se está ejecutando dentro de .venv "
+            f"(python={env_snapshot['python']}); activa el entorno del proyecto"
+        )
     if not info["config_json"]:
         warnings.append(
             "falta config.json en el directorio de trabajo "

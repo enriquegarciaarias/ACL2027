@@ -326,3 +326,35 @@ def test_plan_warns_when_external_data_missing(tmp_path, monkeypatch):
     info = pipelines._paths_info("physionet", processControl.args)
     assert info["external_data_exists"] is False
     assert any("dato externo" in w for w in info["warnings"])
+
+
+def test_plan_incluye_informe_de_gpu(monkeypatch):
+    """El plan de ``--dry-run`` informa del hardware (sin confundir 'sin GPU')."""
+    from sources.common import paramsManager
+
+    monkeypatch.setattr(
+        paramsManager,
+        "_torch_gpus",
+        lambda: [{"index": 0, "name": "RTX 4060 Ti", "memory_gb": 8.0}],
+    )
+    monkeypatch.setattr(paramsManager, "_detect_all_gpus_nvidia_smi", lambda: [])
+    info = pipelines._paths_info("controls", processControl.args)
+    assert info["gpu"]["usable"] == "torch"
+    assert info["gpu"]["device"] == "cuda"
+    assert info["gpu"]["mismatch"] is False
+    assert info["gpu"]["devices"][0]["name"] == "RTX 4060 Ti"
+
+
+def test_plan_avisa_si_la_gpu_no_es_usable_por_torch(monkeypatch):
+    from sources.common import paramsManager
+
+    monkeypatch.setattr(paramsManager, "_torch_gpus", lambda: [])
+    monkeypatch.setattr(
+        paramsManager,
+        "_detect_all_gpus_nvidia_smi",
+        lambda: [{"index": 0, "name": "A5000", "memory_gb": 24.0, "driver": "570.1"}],
+    )
+    info = pipelines._paths_info("controls", processControl.args)
+    assert info["gpu"]["mismatch"] is True
+    assert info["gpu"]["driver"] == "570.1"
+    assert any("requirements.txt" in warning for warning in info["warnings"])

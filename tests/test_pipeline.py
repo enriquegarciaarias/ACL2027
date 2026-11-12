@@ -150,3 +150,74 @@ def test_sin_flag_los_embeddings_siguen_activos(synthetic_dataset, monkeypatch):
 
     base = pipeline.get_ingestion_config()["representations"]["enabled"]
     assert captured[0] == base
+
+
+# --------------------------------------------------------------------------
+# Arranque limpio (--fresh): borrar derivados sin tocar results/input
+# --------------------------------------------------------------------------
+
+
+def _fake_corpus() -> Path:
+    corpus = pipeline.corpus_dir()
+    (corpus / "canonical").mkdir(parents=True, exist_ok=True)
+    (corpus / "canonical" / "S2.npz").write_bytes(b"x" * (2 * 1024 * 1024))
+    (corpus / "steps.json").write_text("{}", encoding="utf-8")
+    return corpus
+
+
+def test_fresh_sin_yes_no_borra(workspace):
+    corpus = _fake_corpus()
+    with pytest.raises(SystemExit) as excinfo:
+        pipeline.reset_derived(confirm=False, dry_run=False)
+    assert excinfo.value.code == 2
+    assert (corpus / "canonical" / "S2.npz").is_file()
+
+
+def test_fresh_dry_run_lista_sin_borrar(workspace):
+    corpus = _fake_corpus()
+    report = pipeline.reset_derived(confirm=False, dry_run=True)
+    assert report["dry_run"] is True
+    assert report["total_mb"] > 0
+    assert {entry["name"] for entry in report["entries"]} == {"canonical", "steps.json"}
+    assert (corpus / "canonical" / "S2.npz").is_file()
+
+
+def test_fresh_borra_derivados_y_conserva_la_entrada(workspace):
+    corpus = _fake_corpus()
+    dataset = workspace["dataset"]
+    raw = dataset / "S2"
+    raw.mkdir()
+    (raw / "S2.pkl").write_bytes(b"crudo")
+
+    report = pipeline.reset_derived(confirm=True, dry_run=False)
+
+    assert report["exists"] is True
+    assert corpus.is_dir()
+    assert list(corpus.iterdir()) == []
+    # Los datos crudos quedan intactos: empezar de cero no toca results/input.
+    assert (raw / "S2.pkl").read_bytes() == b"crudo"
+
+
+def test_fresh_avisa_de_artefactos_de_otras_fases(workspace):
+    _fake_corpus()
+    (workspace["output"] / "WESAD" / "PHASE2").mkdir(parents=True)
+    report = pipeline.reset_derived(confirm=False, dry_run=True)
+    assert any("PHASE2" in warning for warning in report["warnings"])
+
+
+def test_fresh_recalcula_el_corpus(synthetic_dataset, monkeypatch):
+    """Tras --fresh el pipeline vuelve a producir el corpus desde el .pkl."""
+    args = dict(
+        processControl.args
+        if isinstance(processControl.args, dict)
+        else vars(processControl.args)
+    )
+    args.update({"fresh": True, "yes": True})
+    monkeypatch.setattr(processControl, "args", args)
+
+    pipeline.process_ingest()
+
+    state = pipeline.load_steps()
+    assert state["steps"]["ingest"]["status"] == "done"
+    assert state["steps"]["package"]["n_windows"] == 4
+    assert pipeline.loader.canonical_paths("S2")[0].is_file()

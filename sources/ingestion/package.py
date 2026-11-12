@@ -50,6 +50,25 @@ from sources.ingestion.schemas import SCHEMA_VERSION
 #: Código que produce el empaquetado (índice, manifiesto y checksums).
 _CODE_SCOPE: tuple[str, ...] = ("sources/ingestion/package.py",)
 
+def _gpu_summary() -> dict:
+    """Resumen del hardware para el manifiesto (no importa torch si no hace falta)."""
+    from sources.common.paramsManager import gpu_report
+
+    report = gpu_report()
+    return {
+        "usable": report["usable"],
+        "device": report["device"],
+        "mismatch": report["mismatch"],
+        "torch_version": report["torch"]["version"],
+        "torch_build_cuda": report["torch"]["build_cuda"],
+        "driver": report["nvidia_smi"]["driver"],
+        "devices": [
+            {"name": device["name"], "memory_gb": round(device["memory_gb"], 1)}
+            for device in report["devices"]
+        ],
+    }
+
+
 DATA_KINDS = {
     "canonical",
     "windows",
@@ -556,6 +575,9 @@ def run_package(cfg: Mapping[str, Any], subjects: Iterable[str], *, force: bool 
             **library_versions(),
         },
         "git": git_info(),
+        # Hardware de la ejecución: distingue "sin GPU" de "GPU no usable por
+        # torch" (ver ``paramsManager.gpu_report``).
+        "gpu": _gpu_summary(),
         "config_fingerprint": sha256_json(cfg),
         "counts": counts,
         "integrity": {

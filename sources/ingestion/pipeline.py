@@ -21,12 +21,19 @@ El estado de cada paso se persiste en ``steps.json`` dentro del corpus.
 from __future__ import annotations
 
 import json
+import shutil
 from typing import Any, Iterable, Mapping, Optional
 
 import numpy as np
 
 from sources.common.common import logger, processControl, writeLog
-from sources.common.paths import atomic_write_json, corpus_dir, read_json
+from sources.common.paths import (
+    atomic_write_json,
+    corpus_dir,
+    ensure_dir,
+    read_json,
+    subject_output_dir,
+)
 from sources.common.provenance import environment_snapshot, utc_now
 from sources.common.validation import ValidationError
 from sources.ingestion import (
@@ -330,6 +337,86 @@ def _run_package(cfg: Mapping[str, Any], subjects: list[str], force: bool) -> di
     return result
 
 
+def _tree_size_mb(path) -> float:
+    """Tamaño en MB de un fichero o árbol de directorios."""
+    if path.is_file():
+        return path.stat().st_size / (1024 ** 2)
+    return sum(item.stat().st_size for item in path.rglob("*") if item.is_file()) / (
+        1024 ** 2
+    )
+
+
+def reset_derived(*, confirm: bool, dry_run: bool) -> dict:
+    """Borra los artefactos derivados de ``INGEST`` para empezar de cero.
+
+    Es el procedimiento de arranque limpio tras migrar de servidor o cuando se
+    han copiado artefactos que no deberían estar. **Nunca toca**
+    ``results/input``: los datos crudos y ``config.json`` se conservan.
+
+    Args:
+        confirm: debe ser ``True`` (``--yes``) para borrar de verdad.
+        dry_run: si es ``True`` solo lista lo que borraría.
+
+    Returns:
+        dict con ``target``, ``entries`` (subdirectorio, MB), ``total_mb`` y
+        ``warnings`` (artefactos de otras fases que se quedan obsoletos).
+
+    Raises:
+        SystemExit: código 2 si se pide borrar sin ``confirm``.
+    """
+    target = corpus_dir()
+    entries: list[dict] = []
+    if target.is_dir():
+        for child in sorted(target.iterdir()):
+            entries.append(
+                {
+                    "name": child.name,
+                    "size_mb": round(_tree_size_mb(child), 1),
+                }
+            )
+    total_mb = round(sum(entry["size_mb"] for entry in entries), 1)
+
+    warnings: list[str] = []
+    for other in ("PHASE2", "PHASE3"):
+        sibling = subject_output_dir() / other
+        if sibling.is_dir():
+            warnings.append(
+                f"{sibling} no se toca; sus respuestas corresponden al corpus anterior "
+                f"y dejarán de coincidir con las features nuevas"
+            )
+
+    report = {
+        "target": str(target),
+        "exists": target.is_dir(),
+        "entries": entries,
+        "total_mb": total_mb,
+        "dry_run": dry_run,
+        "warnings": warnings,
+    }
+    if dry_run:
+        return report
+    if not confirm:
+        writeLog(
+            "error",
+            logger,
+            f"[INGEST] --fresh borraría {total_mb} MB de {target}. "
+            "Repite con --yes para confirmar.",
+        )
+        raise SystemExit(2)
+
+    shutil.rmtree(target, ignore_errors=True)
+    ensure_dir(target)
+    writeLog(
+        "info",
+        logger,
+        f"[INGEST] empezando de cero: borrados {total_mb} MB "
+        f"({len(entries)} artefactos) de {target}",
+    )
+    for warning in warnings:
+        writeLog("warning", logger, f"[INGEST] {warning}")
+    return report
+
+
 def _strip_embeddings(cfg: dict) -> bool:
     """Quita ``embeddings`` de las representaciones activas.
 
@@ -360,6 +447,24 @@ def process_ingest() -> None:
         f"🚀 [INGEST] dataset={cfg['dataset']} subject={_arg('subject')} "
         f"step={_arg('step') or 'auto'} force={bool(_arg('force'))}",
     )
+
+    if bool(_arg("fresh")):
+        report = reset_derived(
+            confirm=bool(_arg("yes")), dry_run=bool(_arg("dry_run"))
+        )
+        for entry in report["entries"]:
+            writeLog(
+                "info", logger, f"[INGEST]   {entry['name']}: {entry['size_mb']} MB"
+            )
+        if report["dry_run"]:
+            writeLog(
+                "info",
+                logger,
+                f"[INGEST] --fresh (simulación): se borrarían {report['total_mb']} MB "
+                f"de {report['target']}; añade --yes para ejecutarlo",
+            )
+            return
+        writeLog("info", logger, "[INGEST] corpus reiniciado; se recalcula todo")
 
     if bool(_arg("dry_run")):
         _dry_run(cfg, requested)

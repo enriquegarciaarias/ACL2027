@@ -380,6 +380,29 @@ def _paths_info(experiment: str, args: Any) -> dict[str, Any]:
             "no se está ejecutando dentro de .venv "
             f"(python={env_snapshot['python']}); activa el entorno del proyecto"
         )
+
+    # Hardware: distingue "no hay GPU" de "hay GPU pero torch no puede usarla".
+    from sources.common.paramsManager import gpu_report
+
+    gpu = gpu_report()
+    info["gpu"] = {
+        "usable": gpu["usable"],
+        "device": gpu["device"],
+        "mismatch": gpu["mismatch"],
+        "torch_build_cuda": gpu["torch"]["build_cuda"],
+        "driver": gpu["nvidia_smi"]["driver"],
+        "devices": [
+            {"name": device["name"], "memory_gb": round(device["memory_gb"], 1)}
+            for device in gpu["devices"]
+        ],
+    }
+    if gpu["mismatch"]:
+        warnings.append(
+            "la GPU existe pero torch no puede usar CUDA ("
+            f"wheel CUDA {gpu['torch']['build_cuda'] or 'n/d'}, driver "
+            f"{gpu['nvidia_smi']['driver'] or 'desconocido'}); Ollama no se ve "
+            "afectado, pero para usar torch revisa el índice de requirements.txt"
+        )
     if not info["config_json"]:
         warnings.append(
             "falta config.json en el directorio de trabajo "

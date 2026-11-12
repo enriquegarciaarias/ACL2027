@@ -28,6 +28,9 @@ Invariantes:
 - Las etiquetas **nunca** entran en una representación destinada al LLM.
 - La unidad estadística es el sujeto; las ventanas son medidas repetidas.
 - Ningún artefacto se sobrescribe sin que cambie su fingerprint.
+- El corpus se puede reiniciar con `--fresh --yes`: borra
+  `results/output/{subject}/INGEST/` y recalcula. **Nunca** toca `results/input`.
+  Ver [`ingestion.md#empezar-de-cero`](#empezar-de-cero).
 - El fingerprint depende del **contenido del código** que produce el artefacto
   (`code_fingerprint`), no del commit de git: un commit de documentación no
   invalida el corpus. Ver [`verificacion_corpus.md`](verificacion_corpus.md).
@@ -700,3 +703,44 @@ Cobertura actual (49 tests):
 - orquestador, `--step` y `--dry-run`.
 
 Los tests usan un dataset sintético diminuto; no requieren WESAD.
+
+---
+
+## Empezar de cero
+
+Un servidor nuevo, o artefactos copiados que no deberían estar, se resuelven
+borrando **solo lo derivado**:
+
+```sh
+python main.py --proc INGEST --subject WESAD --fresh --dry-run   # inventario y MB
+python main.py --proc INGEST --subject WESAD --fresh --yes       # borra y recalcula
+```
+
+Qué hace `--fresh`:
+
+1. Lista el contenido de `results/output/{subject}/INGEST/` con su tamaño.
+2. Sin `--yes` **no borra nada**: registra el aviso y sale con código 2.
+3. Con `--yes`, borra el árbol completo (`canonical`, `qc`, `windows`, `degraded`,
+   `degraded_features`, `features`, `representations`, `steps.json`,
+   `corpus_*`) y deja el directorio vacío.
+4. Avisa de que existen `PHASE2`/`PHASE3` del corpus anterior, pero **no los
+   toca**.
+
+Qué **no** toca nunca: `results/input/` (WESAD y datasets externos) ni
+`config.json`.
+
+### Migrar de servidor
+
+```sh
+# máquina antigua o copia manual
+rsync -av results/input/ nuevo_servidor:~/proyectos/ACL2027/results/input/
+scp config.json nuevo_servidor:~/proyectos/ACL2027/
+
+# servidor nuevo
+python main.py --proc INGEST --subject WESAD --fresh --yes
+```
+
+El fingerprint no interviene en la decisión: con `--fresh` se recalcula todo por
+definición. Los fingerprints sirven para lo contrario, para **no** recalcular
+cuando el contenido no ha cambiado (mismo `.pkl`, mismo código, misma config).
+

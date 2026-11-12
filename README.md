@@ -65,10 +65,8 @@ El README de [`docs/`](docs/README.md) describe la arquitectura por componentes 
 
 ### 1. Entorno
 
-**Python 3.12** (la versión del servidor de GPU y del entorno de referencia).
-Los pinneos de `requirements.txt` tienen wheels `cp312` para todas las
-dependencias, incluidas `numpy 2.5.4`, `scipy 1.18.1`, `torch 2.15.0` y
-`triton 3.9.0`.
+**Python 3.12** y una máquina con **GPU CUDA** (el pipeline comprueba CUDA al
+arrancar y los LLM de la investigación se ejecutan en la GPU).
 
 ```sh
 python3.12 -m venv .venv
@@ -76,24 +74,39 @@ source .venv/bin/activate
 python -m pip install --upgrade pip wheel
 pip install -r requirements.txt
 pip install -r requirements-dev.txt   # pytest (opcional, para tests)
-python -m pytest -q                   # 323 tests
+python -m pytest -q                   # 389 tests
 ```
 
-Comprobación rápida de versiones:
+`requirements.txt` incluye `torch` y fija el índice de PyTorch en
+`--extra-index-url https://download.pytorch.org/whl/cu128`, con
+`torch==2.11.0+cu128`. La razón: el wheel por defecto de PyPI se compila contra
+**CUDA 13.x** y en un driver 12.8 no inicializa
+(`torch.cuda.is_available() == False`), aunque `torch` esté instalado.
+
+| Driver (`nvidia-smi` → *CUDA Version*) | Qué usar |
+|---|---|
+| 12.8 (servidor) | lo que ya trae `requirements.txt` (`cu128`) |
+| 13.x | cambiar el índice del fichero a `.../whl/cu132`, `torch==2.15.0+cu132` |
+| 12.4 | `.../whl/cu124` y la versión máxima de ese canal |
+
+Un wheel compilado para una CUDA **más antigua** que el driver funciona sin
+problemas (el driver es retrocompatible). El problema es solo al revés.
+
+Comprobación del hardware (fuente única del control de GPU):
 
 ```sh
-python -V                              # Python 3.12.x
-python -c "import numpy, scipy, neurokit2, sklearn, torch; print(numpy.__version__, torch.__version__)"
+python -c "from sources.common.paramsManager import gpu_report; import json; print(json.dumps(gpu_report(), indent=1))"
 ```
 
-Si prefieres no descargar las ruedas CUDA 13 de `torch` (la inferencia la hace
-Ollama; `torch` solo detecta GPU), instala torch CPU después de los requisitos:
+Salida esperada en el servidor: `usable: "torch"`, `device: "cuda"`,
+`mismatch: false`, `build_cuda: "12.8"` y la GPU con su memoria. El informe se
+registra también en el log de arranque, en `--dry-run` (`paths.gpu`) y en
+`corpus_manifest.json` (`gpu`).
 
-```sh
-grep -v -E '^(torch|triton|nvidia-|cuda-)' requirements.txt > /tmp/req-notorch.txt
-pip install -r /tmp/req-notorch.txt
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-```
+> **Si aparece `CUDA initialization: The NVIDIA driver on your system is too
+> old`.** El wheel está compilado para una CUDA más nueva que el driver. El
+> pipeline no falla (la detección cae a `nvidia-smi` y `gpu_report()` lo dice),
+> pero conviene instalar el wheel que corresponda a la tabla de arriba.
 
 ### 2. Configuración
 
@@ -113,6 +126,26 @@ python main.py --proc INGEST --subject WESAD          # 15 sujetos, corpus compl
 
 Pasos: `discover → ingest → qc → window → degrade → features → represent → package`.
 `--step X` ejecuta hasta X inclusive. Genera el corpus canónico, las ventanas de 60 s, las features con SQI y las representaciones numérica y textual.
+
+#### Empezar de cero (servidor nuevo, artefactos dudosos)
+
+Todo lo derivado vive en `results/output/{subject}/INGEST/` y se puede borrar sin
+miedo: **`results/input` nunca se toca**.
+
+```sh
+python main.py --proc INGEST --subject WESAD --fresh --dry-run   # ver qué borraría
+python main.py --proc INGEST --subject WESAD --fresh --yes       # borrar y recalcular
+```
+
+Es el procedimiento para migrar de servidor o para descartar artefactos
+copiados que no debían estar: se copia `results/input` (y `config.json`) y se
+lanza `--fresh --yes`. No hay que borrar carpetas a mano ni razonar sobre
+fingerprints.
+
+Si no se usa `--fresh`, el pipeline **reutiliza** lo que ya existe comparando
+fingerprints (contenido + código); eso es una facilidad para no recalcular, no un
+requisito. `--fresh` avisa si existen `PHASE2`/`PHASE3` con respuestas del corpus
+anterior, pero no las borra: esas cuestan horas de LLM y se decide aparte.
 
 ### 4. Fase 2 — respuestas del LLM (`GENERATE`)
 
@@ -185,6 +218,8 @@ Cada modelo escribe en su propio subdirectorio (`qwen3:14b` → `qwen3_14b`), as
 | `--noGate` | Desactiva la compuerta de consistencia (ablación). |
 | `--allowDev` | Permite sujetos de desarrollo (S2–S4). |
 | `--noEmbeddings` | `INGEST` no calcula representaciones densas (la Fase 2 no las usa). |
+| `--fresh` | `INGEST` borra los artefactos derivados y empieza de cero (no toca `results/input`). |
+| `--yes` | Confirma `--fresh`. Sin él, `--fresh` solo avisa y sale con código 2. |
 
 ### Si el pipeline termina en segundos y el log parece vacío
 

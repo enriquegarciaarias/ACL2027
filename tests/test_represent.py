@@ -179,3 +179,27 @@ def test_build_text_llm_view_excludes_wrist():
     )
     assert "WRIST" not in text
     assert "ELECTRODERMAL ACTIVITY (EDA)" in text
+
+
+def test_embeddings_se_omiten_si_ollama_no_responde(
+    synthetic_dataset, ingestion_cfg, monkeypatch
+):
+    """Ollama caído no debe tumbar la ingesta: numeric y text son obligatorias."""
+    subject = _prepare(ingestion_cfg)
+    cfg = copy.deepcopy(ingestion_cfg)
+    cfg["representations"] = {"enabled": ["numeric", "text", "embeddings"]}
+
+    def _falla(_client, _model):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(represent, "ollama_warm_up", _falla)
+
+    result = represent.run_represent(cfg, subject, force=True)
+
+    assert result["status"]["numeric"] == "ok"
+    assert result["status"]["text"] == "ok"
+    assert result["status"]["embeddings"] == "skipped"
+    # La config se recorta para que ``package`` no espere los embeddings.
+    assert "embeddings" not in cfg["representations"]["enabled"]
+    assert represent.representation_path("numeric", subject).is_file()
+    assert not represent.representation_path("embeddings", subject).exists()

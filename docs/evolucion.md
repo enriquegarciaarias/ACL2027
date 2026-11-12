@@ -196,6 +196,8 @@ Las sesiones anteriores a la creación de este documento se resumen a partir de
 | 2026-11-12 | ¿Se puede fijar torch a la CUDA del servidor? | El canal `cu128` llega a torch 2.11.0; PyPI compila 2.11/2.15 contra CUDA 13.x | `torch` se queda en `requirements.txt` con el índice `cu128`; `gpu_report()` en log, `--dry-run` y manifiesto |
 | 2026-11-12 | ¿Y si migramos a otro servidor? | No había forma de empezar de cero: el fingerprint se volvía un requisito en lugar de una facilidad | `--fresh --yes`: borra solo `results/output` y recalcula; copiar `results/input` basta |
 | 2026-11-12 | ¿Sirve de algo el fingerprint nuevo? | Tras `--fresh --yes`, la segunda ejecución da `reused` en los 15 sujetos y las 4 representaciones | Fingerprints estables: la reutilización funciona y un commit no invalida el corpus |
+| 2026-11-12 | ¿Qué pasa si Ollama no está? | El paso `represent` habría fallado tras reintentar por ventana; los embeddings son complementarios | Ollama caído ⇒ `embeddings: skipped` y la ingesta sigue con numeric/text |
+| 2026-11-12 | ¿Cómo se lanza en el clúster sin depender de `~/data`? | Los scripts quedaban fuera del repo y el lanzador apuntaba a `run_slip_gpu.sh` | `scripts/run_ACL.sh` (GPU, Ollama acotado, código de salida) + `scripts/launch_lsi.sh`; documentado en `docs/ejecucion_slurm.md` |
 
 ### Plantilla para la próxima sesión
 

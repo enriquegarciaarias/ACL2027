@@ -28,6 +28,10 @@ Invariantes:
 - Las etiquetas **nunca** entran en una representación destinada al LLM.
 - La unidad estadística es el sujeto; las ventanas son medidas repetidas.
 - Ningún artefacto se sobrescribe sin que cambie su fingerprint.
+- Si Ollama no responde, las representaciones **densas** (`embeddings`) se
+  omiten con un aviso y la ingesta continúa: son material complementario y la
+  Fase 2 solo consume `numeric` y `text`. Un Ollama caído nunca bloquea el
+  corpus.
 - El corpus se puede reiniciar con `--fresh --yes`: borra
   `results/output/{subject}/INGEST/` y recalcula. **Nunca** toca `results/input`.
   Ver [`ingestion.md#empezar-de-cero`](#empezar-de-cero).

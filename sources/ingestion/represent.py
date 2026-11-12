@@ -612,8 +612,12 @@ def run_represent(cfg: Mapping[str, Any], subject: str, *, force: bool = False) 
     }
     feature_rows = read_jsonl(features.features_path(subject))
 
+    statuses: dict[str, str] = {}
+    counters: dict[str, int] = {}
+
     # Cliente Ollama (se crea solo si se va a generar embeddings).
     ollama_client: Mapping[str, Any] | None = None
+    ollama_ready = False
     if "embeddings" in enabled:
         ollama_client = create_ollama_client()
         emb_model = str(
@@ -629,20 +633,27 @@ def run_represent(cfg: Mapping[str, Any], subject: str, *, force: bool = False) 
         # la primera vez y pueden devolver 500 si se consulta inmediatamente.
         try:
             ollama_warm_up(ollama_client, emb_model)
+            ollama_ready = True
             writeLog(
                 "info",
                 logger,
                 f"[represent] {subject}: Ollama warm-up completado (modelo={emb_model})",
             )
         except Exception as exc:
+            # Los embeddings son material complementario (la Fase 2 usa
+            # numeric/text): si Ollama no está, se omite la representación en
+            # lugar de tumbar la ingesta. Reintentar por ventana multiplicaría
+            # los timeouts y el backoff.
+            enabled = [kind for kind in enabled if kind != "embeddings"]
+            cfg["representations"]["enabled"] = list(enabled)
+            statuses["embeddings"] = "skipped"
+            counters["embeddings"] = 0
             writeLog(
                 "warning",
                 logger,
-                f"[represent] {subject}: Ollama warm-up falló (se reintentará por ventana): {exc}",
+                f"[represent] {subject}: embeddings omitidos, Ollama no responde "
+                f"({exc}); se generan solo {enabled}",
             )
-
-    statuses: dict[str, str] = {}
-    counters: dict[str, int] = {}
 
     for kind in enabled:
         if kind not in KINDS:
@@ -665,6 +676,7 @@ def run_represent(cfg: Mapping[str, Any], subject: str, *, force: bool = False) 
             continue
 
         records: list[dict] = []
+        embedding_error: str | None = None
         for feature_row in feature_rows:
             window_row = window_rows.get(feature_row["window_id"])
             if window_row is None:
@@ -683,9 +695,13 @@ def run_represent(cfg: Mapping[str, Any], subject: str, *, force: bool = False) 
                         "cliente Ollama no inicializado para embeddings",
                         where="represent",
                     )
-                payload = build_embeddings(
-                    feature_row, window_meta, cfg, ollama_client
-                )
+                try:
+                    payload = build_embeddings(
+                        feature_row, window_meta, cfg, ollama_client
+                    )
+                except Exception as exc:  # Ollama caído o modelo descargado
+                    embedding_error = str(exc)
+                    break
             records.append(
                 RepresentationRecord(
                     window_id=feature_row["window_id"],
@@ -698,6 +714,20 @@ def run_represent(cfg: Mapping[str, Any], subject: str, *, force: bool = False) 
                     schema_version=SCHEMA_VERSION,
                 ).to_dict()
             )
+
+        if embedding_error is not None:
+            cfg["representations"]["enabled"] = [
+                item for item in enabled if item != "embeddings"
+            ]
+            statuses["embeddings"] = "skipped"
+            counters["embeddings"] = 0
+            writeLog(
+                "warning",
+                logger,
+                f"[represent] {subject}: embeddings omitidos ({embedding_error}); "
+                "se generan solo las vistas numérica y textual",
+            )
+            continue
 
         ensure_dir(kind_dir(kind))
         atomic_write_jsonl(target, records)

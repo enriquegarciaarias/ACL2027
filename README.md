@@ -116,7 +116,29 @@ cp config_example.json config.json   # editar rutas, tokens y ajustes de LLM
 
 `config.json` está gitignorado. Admite merge profundo por subject (`results/input/{subject}/config.json`).
 
-### 3. Fase 1 — ingesta del corpus (`INGEST`)
+### 3. En el clúster (Slurm)
+
+Los scripts viven en `scripts/` y están documentados en
+[`docs/ejecucion_slurm.md`](docs/ejecucion_slurm.md).
+
+```bash
+./scripts/launch_lsi.sh                                   # envía run_ACL.sh y monitoriza
+./scripts/launch_lsi.sh --interval 15
+./scripts/launch_lsi.sh --proc run_ACL.sh --interval 15
+./scripts/launch_lsi.sh --help
+```
+
+`scripts/run_ACL.sh` es el trabajo Slurm: comprueba el entorno y la GPU, arranca
+Ollama (con espera acotada), ejecuta una fase del pipeline y lo apaga al salir.
+Sin argumentos hace `--proc INGEST --subject WESAD`; cualquier argumento se pasa
+tal cual a `main.py`:
+
+```bash
+sbatch scripts/run_ACL.sh --proc GENERATE --experiment degradation --subject WESAD
+sbatch scripts/run_ACL.sh --proc EVALUATE --experiment degradation
+```
+
+### 4. Fase 1 — ingesta del corpus (`INGEST`)
 
 ```sh
 python main.py --proc INGEST --subject WESAD --dry-run
@@ -147,7 +169,7 @@ fingerprints (contenido + código); eso es una facilidad para no recalcular, no 
 requisito. `--fresh` avisa si existen `PHASE2`/`PHASE3` con respuestas del corpus
 anterior, pero no las borra: esas cuestan horas de LLM y se decide aparte.
 
-### 4. Fase 2 — respuestas del LLM (`GENERATE`)
+### 5. Fase 2 — respuestas del LLM (`GENERATE`)
 
 Tres fases, un verbo cada una: `INGEST` (corpus) → `GENERATE` (respuestas) → `EVALUATE` (métricas). El **experimento** es un parámetro (`--experiment`), no una fase: `controls`, `degradation`, `centering`, `physionet`, `kemocon`.
 
@@ -167,7 +189,7 @@ python main.py --proc GENERATE --experiment kemocon --task arousal
 
 `PHASE2` sigue funcionando como alias deprecado de `GENERATE --experiment controls`. Cada respuesta guarda decisión, confianza, claims, razonamiento, prompt completo y veredicto de la compuerta de consistencia.
 
-### 5. Fase 3 — evaluación (`EVALUATE`)
+### 6. Fase 3 — evaluación (`EVALUATE`)
 
 ```sh
 # Métricas del experimento (según cuál sea)
@@ -184,7 +206,7 @@ python main.py --proc EVALUATE --experiment controls \
 
 Salidas: `results/output/WESAD/PHASE2/degradation{,_text}/{modelo}/`, los reportes agregados y `model_comparison.json`.
 
-### 6. Elegir modelo
+### 7. Elegir modelo
 
 ```sh
 python main.py --proc GENERATE --experiment degradation --subject WESAD --model qwen3:14b

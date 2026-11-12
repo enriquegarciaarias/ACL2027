@@ -476,6 +476,7 @@ desarrollo. Detalle y desviaciones declaradas:
 | Necesitas… | Documento |
 |---|---|
 | Pregunta de tesis, hipótesis y objetivos | [`hipotesis.md`](hipotesis.md) |
+| Cómo evolucionó el experimento (reorientaciones y descartes) | [`evolucion.md`](evolucion.md) |
 | Experimento principal, tablas completas e IC | [`resultados_degradacion.md`](resultados_degradacion.md) |
 | Preregistro y matriz de degradación | [`experiment_degradation.md`](experiment_degradation.md) |
 | Diseño del barrido en el LLM | [`degradacion_llm.md`](degradacion_llm.md) |

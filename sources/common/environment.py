@@ -14,7 +14,11 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 from typing import Sequence
+
+#: Raíz del repositorio (para localizar su ``.venv``).
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Módulos que deben poder importarse para ejecutar el pipeline.
 REQUIRED_MODULES: tuple[str, ...] = (
@@ -49,6 +53,12 @@ def missing_modules(
     return missing
 
 
+def project_venv_python() -> Path | None:
+    """Intérprete del ``.venv`` del proyecto, si existe."""
+    candidate = REPO_ROOT / ".venv" / "bin" / "python"
+    return candidate if candidate.is_file() else None
+
+
 def snapshot() -> dict:
     """Estado del entorno (para el plan de ``--dry-run``)."""
     return {
@@ -74,6 +84,14 @@ def check_environment() -> tuple[bool, list[str], list[str]]:
         errors.append(
             f"Faltan dependencias en {python_executable()}: {', '.join(missing)}"
         )
+        # Pista habitual en servidores: otro venv (p. ej. el del job de Slurm)
+        # en lugar del que vive dentro del proyecto.
+        project_python = project_venv_python()
+        if project_python and str(project_python) != python_executable():
+            errors.append(
+                f"El intérprete en uso no es el del proyecto. Usa "
+                f"{project_python} (o 'source {REPO_ROOT / '.venv'}/bin/activate')."
+            )
         if not in_virtualenv():
             errors.append(
                 "No se está ejecutando dentro de un entorno virtual. "

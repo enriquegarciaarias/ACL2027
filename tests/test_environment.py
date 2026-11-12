@@ -48,6 +48,21 @@ def test_check_environment_suggests_venv_when_outside(monkeypatch):
     assert any("source .venv/bin/activate" in message for message in errors)
 
 
+def test_check_environment_hints_other_venv(monkeypatch, tmp_path):
+    """Si se usa otro venv (p. ej. en Slurm), sugiere el del proyecto."""
+    other = tmp_path / "otro" / "bin" / "python"
+    project = tmp_path / "ACL2027" / ".venv" / "bin" / "python"
+    monkeypatch.setattr(environment, "missing_modules", lambda *a, **k: ["neurokit2"])
+    monkeypatch.setattr(environment, "python_executable", lambda: str(other))
+    monkeypatch.setattr(environment, "project_venv_python", lambda: project)
+
+    ok, errors, _ = environment.check_environment()
+
+    assert ok is False
+    assert any("no es el del proyecto" in message for message in errors)
+    assert any(str(project) in message for message in errors)
+
+
 def test_check_environment_warns_outside_venv_without_blocking(monkeypatch):
     monkeypatch.setattr(environment, "missing_modules", lambda *a, **k: [])
     monkeypatch.setattr(environment, "in_virtualenv", lambda: False)

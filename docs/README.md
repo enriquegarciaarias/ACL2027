@@ -17,6 +17,7 @@ pensado para dos lectores:
 | 1 | [`hipotesis.md`](hipotesis.md) | Qué pregunta la tesis, con qué hipótesis y criterios de refutación |
 | 2 | [`experimentos.md`](experimentos.md) | **Resumen ejecutivo + inventario de experimentos**: qué se construyó, qué se midió, resultados y qué es firme |
 | 3 | [`resultados_degradacion.md`](resultados_degradacion.md) | Resultados completos del experimento principal (tablas y lecturas) |
+| 4 | [`evolucion.md`](evolucion.md) | Cómo se llegó hasta aquí: qué se descartó y por qué (útil para escribir la tesis) |
 
 Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 
@@ -48,6 +49,7 @@ Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 | Documento | Contenido | Estado |
 |---|---|---|
 | [`experimentos.md`](experimentos.md) | **Resumen ejecutivo, inventario (E0–E8) y detalle de todos los experimentos** (WESAD, K-EmoCon, PhysioNet); punto de entrada único | Firme |
+| [`evolucion.md`](evolucion.md) | **Sinopsis de la evolución**: cómo cambió el experimento con cada resultado, reorientaciones y registro por sesión | Firme (memoria) |
 | [`resultados_degradacion.md`](resultados_degradacion.md) | H1–H6 y H3: corrección, abstención, claims, certeza, indicadores de calidad | **Final** |
 | [`consistencia.md`](consistencia.md) | Compuerta de consistencia fisiológica: 0 % de falsos vetos en limpio, 100 % en datos incoherentes, robustez | Firme |
 | [`claims_h5.md`](claims_h5.md) | Verificador de claims y certeza lingüística: definiciones y resultados | Firme (método) |

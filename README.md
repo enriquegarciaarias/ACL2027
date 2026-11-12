@@ -51,6 +51,7 @@ Toda la documentación vive en **`docs/`**, con un índice pensado para dos lect
 | **Entender la pregunta y las hipótesis de la tesis** | [`docs/hipotesis.md`](docs/hipotesis.md) |
 | **Ver qué se construyó, qué se midió y qué es firme** | [`docs/experimentos.md`](docs/experimentos.md) |
 | **Revisar los resultados completos del experimento principal** | [`docs/resultados_degradacion.md`](docs/resultados_degradacion.md) |
+| **Entender cómo evolucionó el experimento (qué se descartó y por qué)** | [`docs/evolucion.md`](docs/evolucion.md) |
 | **Saber qué es firme y qué es exploratorio** | [`docs/split_dev_test.md`](docs/split_dev_test.md) |
 | **Conocer el pipeline de datos (Fase 1)** | [`docs/ingestion.md`](docs/ingestion.md) |
 | **Saber qué datos hay que copiar al servidor** | [`docs/datos_entrada.md`](docs/datos_entrada.md) |
@@ -210,7 +211,20 @@ python -m pip install -r requirements.txt
 ```
 
 El arranque ya lo detecta y sale con **código 3** indicando qué falta y cómo
-instalarlo.
+instalarlo. Si además existe otro entorno (caso típico de un job de **Slurm**,
+que no hereda tu shell interactivo), el mensaje nombra el `.venv` del proyecto.
+
+En un script de `sbatch` no confíes en la activación: llama al intérprete del
+proyecto por ruta absoluta.
+
+```bash
+#!/bin/bash
+#SBATCH ...
+set -euo pipefail
+PROJECT=/ruta/al/ACL2027
+cd "$PROJECT"
+"$PROJECT/.venv/bin/python" main.py --proc INGEST --subject WESAD
+```
 
 - El log real es **`ProcessLog.txt` en el directorio de trabajo** (no el del
   wrapper); si está vacío, el proceso murió antes de configurar el logging

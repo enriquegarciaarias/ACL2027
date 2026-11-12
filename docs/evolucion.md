@@ -195,6 +195,7 @@ Las sesiones anteriores a la creación de este documento se resumen a partir de
 | 2026-11-12 | ¿Cómo afecta tener otra GPU? | El log decía «No CUDA devices» con una A5000: el respaldo por `nvidia-smi` llamaba a una función inexistente | Detección con doble vía y sin ocultar la GPU; torch solo informa, la inferencia es de Ollama |
 | 2026-11-12 | ¿Se puede fijar torch a la CUDA del servidor? | El canal `cu128` llega a torch 2.11.0; PyPI compila 2.11/2.15 contra CUDA 13.x | `torch` se queda en `requirements.txt` con el índice `cu128`; `gpu_report()` en log, `--dry-run` y manifiesto |
 | 2026-11-12 | ¿Y si migramos a otro servidor? | No había forma de empezar de cero: el fingerprint se volvía un requisito en lugar de una facilidad | `--fresh --yes`: borra solo `results/output` y recalcula; copiar `results/input` basta |
+| 2026-11-12 | ¿Sirve de algo el fingerprint nuevo? | Tras `--fresh --yes`, la segunda ejecución da `reused` en los 15 sujetos y las 4 representaciones | Fingerprints estables: la reutilización funciona y un commit no invalida el corpus |
 
 ### Plantilla para la próxima sesión
 

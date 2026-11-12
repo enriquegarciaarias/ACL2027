@@ -17,10 +17,14 @@ from sources.common.utils import configLoader, dbTimestamp
 
 import argparse
 import os
+import re
+import shutil
 import subprocess
 import sys
 import socket
 import warnings
+from functools import lru_cache
+from pathlib import Path
 
 # ``torch`` se importa de forma perezosa (ver ``_torch_module``): importarlo en
 # el arranque dispara la inicialización de CUDA y su warning aunque no se use.
@@ -29,6 +33,18 @@ _TORCH_CHECKED = False
 
 # Constants for parameter files
 JSON_PARMS = "config.json"
+
+#: Rutas donde suele estar ``nvidia-smi`` cuando no entra en el PATH del job
+#: (Slurm, contenedores, entornos mínimos).
+_NVIDIA_SMI_CANDIDATES = (
+    "/usr/bin/nvidia-smi",
+    "/usr/local/bin/nvidia-smi",
+    "/usr/local/nvidia/bin/nvidia-smi",
+    "/opt/nvidia/bin/nvidia-smi",
+)
+
+#: Fichero del driver en Linux: alternativa cuando no hay binario ``nvidia-smi``.
+_NVIDIA_PROC_VERSION = Path("/proc/driver/nvidia/version")
 
 
 def manageArgs():
@@ -199,15 +215,50 @@ def _torch_module():
     return _TORCH
 
 
+@lru_cache(maxsize=1)
+def _nvidia_smi_binary() -> str | None:
+    """Localiza ``nvidia-smi`` en el PATH o en las rutas habituales.
+
+    En Slurm y en contenedores es frecuente que el binario exista pero no esté
+    en el PATH del proceso.
+
+    Returns:
+        Ruta del ejecutable, o ``None`` si no está.
+    """
+    found = shutil.which("nvidia-smi")
+    if found:
+        return found
+    for candidate in _NVIDIA_SMI_CANDIDATES:
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def _driver_version_from_proc() -> str | None:
+    """Versión del driver leída de ``/proc/driver/nvidia/version`` (Linux)."""
+    try:
+        text = _NVIDIA_PROC_VERSION.read_text(errors="ignore")
+    except OSError:
+        return None
+    match = re.search(r"Kernel Module\s+([0-9][0-9.]*)", text)
+    return match.group(1) if match else None
+
+
 def _nvidia_smi(query: str) -> str:
     """Ejecuta ``nvidia-smi`` con una consulta y devuelve la salida cruda.
 
     Raises:
         RuntimeError: si ``nvidia-smi`` no existe o falla.
     """
+    binary = _nvidia_smi_binary()
+    if binary is None:
+        raise RuntimeError(
+            "nvidia-smi no encontrado ni en PATH ni en "
+            + ", ".join(_NVIDIA_SMI_CANDIDATES)
+        )
     try:
         result = subprocess.run(
-            ["nvidia-smi", f"--query-gpu={query}", "--format=csv,noheader,nounits"],
+            [binary, f"--query-gpu={query}", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -307,7 +358,9 @@ def gpu_report() -> dict:
     build_cuda = getattr(torch_version, "cuda", None) if torch else None
     torch_gpus = _torch_gpus()
     smi_gpus = _detect_all_gpus_nvidia_smi()
-    driver = next((gpu.get("driver") for gpu in smi_gpus if gpu.get("driver")), None)
+    driver = next(
+        (gpu.get("driver") for gpu in smi_gpus if gpu.get("driver")), None
+    ) or _driver_version_from_proc()
 
     if torch_gpus:
         usable, device, mismatch = "torch", "cuda", False

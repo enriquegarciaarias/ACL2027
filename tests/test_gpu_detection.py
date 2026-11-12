@@ -135,3 +135,71 @@ def test_gpu_report_con_torch(monkeypatch):
     assert report["usable"] == "torch"
     assert report["mismatch"] is False
     assert report["device"] == "cuda"
+
+
+def test_nvidia_smi_binary_usa_el_path(monkeypatch):
+    paramsManager._nvidia_smi_binary.cache_clear()
+    monkeypatch.setattr(paramsManager.shutil, "which", lambda _name: "/opt/x/nvidia-smi")
+    try:
+        assert paramsManager._nvidia_smi_binary() == "/opt/x/nvidia-smi"
+    finally:
+        paramsManager._nvidia_smi_binary.cache_clear()
+
+
+def test_nvidia_smi_binary_busca_rutas_habituales(monkeypatch, tmp_path):
+    """En Slurm el binario puede existir sin estar en el PATH."""
+    paramsManager._nvidia_smi_binary.cache_clear()
+    fake = tmp_path / "nvidia-smi"
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(paramsManager.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(
+        paramsManager, "_NVIDIA_SMI_CANDIDATES", (str(fake),)
+    )
+    try:
+        assert paramsManager._nvidia_smi_binary() == str(fake)
+    finally:
+        paramsManager._nvidia_smi_binary.cache_clear()
+
+
+def test_nvidia_smi_binary_sin_binario(monkeypatch, tmp_path):
+    paramsManager._nvidia_smi_binary.cache_clear()
+    monkeypatch.setattr(paramsManager.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(
+        paramsManager, "_NVIDIA_SMI_CANDIDATES", (str(tmp_path / "no_existe"),)
+    )
+    try:
+        assert paramsManager._nvidia_smi_binary() is None
+        with pytest.raises(RuntimeError, match="no encontrado"):
+            paramsManager._nvidia_smi("index,name")
+    finally:
+        paramsManager._nvidia_smi_binary.cache_clear()
+
+
+def test_driver_desde_proc(monkeypatch, tmp_path):
+    """/proc es el respaldo cuando no hay binario nvidia-smi."""
+    proc_version = tmp_path / "version"
+    proc_version.write_text(
+        "NVRM version: NVIDIA UNIX x86_64 Kernel Module  570.86.10  Thu Jan 1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(paramsManager, "_NVIDIA_PROC_VERSION", proc_version)
+    assert paramsManager._driver_version_from_proc() == "570.86.10"
+
+
+def test_driver_desde_proc_sin_fichero(monkeypatch, tmp_path):
+    monkeypatch.setattr(paramsManager, "_NVIDIA_PROC_VERSION", tmp_path / "nada")
+    assert paramsManager._driver_version_from_proc() is None
+
+
+def test_gpu_report_usa_proc_si_no_hay_nvidia_smi(monkeypatch, tmp_path):
+    proc_version = tmp_path / "version"
+    proc_version.write_text(
+        "NVRM version: NVIDIA UNIX x86_64 Kernel Module  570.86.10\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(paramsManager, "_NVIDIA_PROC_VERSION", proc_version)
+    monkeypatch.setattr(paramsManager, "_torch_gpus", lambda: [])
+    monkeypatch.setattr(paramsManager, "_detect_all_gpus_nvidia_smi", lambda: [])
+    report = paramsManager.gpu_report()
+    assert report["nvidia_smi"]["driver"] == "570.86.10"
+    assert report["usable"] is None

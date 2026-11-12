@@ -34,6 +34,7 @@ Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 | [`sqi.md`](sqi.md) | Indicador de calidad de señal (SQI): fórmulas por modalidad, agregación, ejemplos | Firme |
 | [`experiment_degradation.md`](experiment_degradation.md) | Preregistro de la degradación controlada: canales mínimos y matriz de condiciones | Firme (diseño) |
 | [`datos_entrada.md`](datos_entrada.md) | Qué datos de entrada necesita cada experimento, dónde viven dentro del proyecto y cómo replicarlos en el servidor | Firme |
+| [`verificacion_corpus.md`](verificacion_corpus.md) | Fingerprints por contenido de código y verificación de que el corpus reconstruido es el que alimentó las respuestas | Firme |
 
 ### Diseño experimental
 

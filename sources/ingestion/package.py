@@ -33,6 +33,7 @@ from sources.common.paths import (
 )
 from sources.common.provenance import (
     build_fingerprint,
+    code_fingerprint,
     git_info,
     library_versions,
     sha256_file,
@@ -45,6 +46,9 @@ from sources.ingestion.config import representations_config
 from sources.ingestion.features.common import FEATURE_VERSION
 from sources.ingestion.represent import REPRESENTATION_VERSION
 from sources.ingestion.schemas import SCHEMA_VERSION
+
+#: Código que produce el empaquetado (índice, manifiesto y checksums).
+_CODE_SCOPE: tuple[str, ...] = ("sources/ingestion/package.py",)
 
 DATA_KINDS = {
     "canonical",
@@ -506,7 +510,9 @@ def run_package(cfg: Mapping[str, Any], subjects: Iterable[str], *, force: bool 
                 (subject, entries.get(subject, {}).get("sha256")) for subject in subjects
             ),
             "config": sha256_json(cfg),
-            "git": git_info().get("commit"),
+            # Los checksums de los artefactos ya capturan el contenido: el
+            # commit de git no debe invalidar el corpus.
+            "code": code_fingerprint(_CODE_SCOPE),
         }
     )
 

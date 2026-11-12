@@ -158,6 +158,11 @@ def manageArgs():
         default=None,
         help="Ruta alternativa del informe de EVALUATE.",
     )
+    parser.add_argument(
+        '--noEmbeddings',
+        action='store_true',
+        help="INGEST: no calcular representaciones densas (no las usa la Fase 2).",
+    )
 
     args = parser.parse_args()
     return args

@@ -184,6 +184,7 @@ Cada modelo escribe en su propio subdirectorio (`qwen3:14b` → `qwen3_14b`), as
 | `--raw-decisions` | Evalúa la decisión cruda del modelo (sin compuerta). |
 | `--noGate` | Desactiva la compuerta de consistencia (ablación). |
 | `--allowDev` | Permite sujetos de desarrollo (S2–S4). |
+| `--noEmbeddings` | `INGEST` no calcula representaciones densas (la Fase 2 no las usa). |
 
 ### Si el pipeline termina en segundos y el log parece vacío
 

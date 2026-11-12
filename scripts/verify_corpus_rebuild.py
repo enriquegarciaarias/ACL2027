@@ -44,13 +44,14 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sources.common.provenance import utc_now
+from sources.common.provenance import sha256_file, utc_now
 from sources.ingestion.represent import _opaque_window_id
 from sources.phase2.prompt_builder import build_numeric_prompt, build_text_prompt
 from sources.phase2.response_schema import DECISION_MODE_AFFECTIVE
 from sources.phase3.claims import parse_prompt_features
 from sources.phase3.degradation import (
     build_payload,
+    features_path,
     load_features,
     render_text_summary,
     subject_reference,
@@ -182,6 +183,8 @@ def verify_source(
         "prompt_diff": 0,
         "features_equal": 0,
         "features_diff": 0,
+        "hash_equal": 0,
+        "hash_diff": 0,
         "missing_window": 0,
         "missing_features": 0,
         "samples": [],
@@ -213,6 +216,36 @@ def verify_source(
             condition_rows = load_features(ingest_dir, condition, subject)
         except FileNotFoundError:
             stats["missing_features"] += len(group)
+            continue
+
+        # Atajo O(1): las respuestas nuevas guardan el hash del fichero de
+        # features; si coincide, no hace falta recomponer el prompt.
+        recorded_sha = next(
+            (item["features_sha256"] for item in group if item.get("features_sha256")),
+            None,
+        )
+        if recorded_sha is not None:
+            current_sha = sha256_file(features_path(ingest_dir, condition, subject))
+            same_hash = recorded_sha == current_sha
+            stats["hash_equal" if same_hash else "hash_diff"] += len(group)
+            for record in group:
+                stats["records"] += 1
+                if same_hash:
+                    stats["prompt_equal"] += 1
+                    stats["features_equal"] += 1
+                else:
+                    stats["prompt_diff"] += 1
+                    stats["features_diff"] += 1
+                    if len(stats["samples"]) < samples:
+                        stats["samples"].append(
+                            {
+                                "subject": subject,
+                                "condition_id": condition,
+                                "window_id": record["window_id"],
+                                "features_equal": False,
+                                "diff": ["hash del fichero de features distinto"],
+                            }
+                        )
             continue
 
         for record in group:
@@ -255,9 +288,10 @@ def _fmt(stats: dict[str, Any]) -> str:
     total = stats["records"] or 1
     pct = 100.0 * stats["prompt_equal"] / total
     flag = "OK " if stats["identical"] else "DRIFT"
+    mode = "hash" if stats["hash_equal"] or stats["hash_diff"] else "prompt"
     return (
-        f"[{flag}] {stats['file']}\n"
-        f"       {stats['records']} registros · prompt idéntico "
+        f"[{flag}] {stats['file']}  ({mode})\n"
+        f"       {stats['records']} registros · idéntico "
         f"{stats['prompt_equal']} ({pct:.1f} %) · distinto {stats['prompt_diff']} · "
         f"features iguales {stats['features_equal']} · ventana ausente "
         f"{stats['missing_window']} · features ausentes {stats['missing_features']}"
@@ -319,6 +353,8 @@ def main(argv: list[str] | None = None) -> int:
             "prompt_diff",
             "features_equal",
             "features_diff",
+            "hash_equal",
+            "hash_diff",
             "missing_window",
             "missing_features",
         ):

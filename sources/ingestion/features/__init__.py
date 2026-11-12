@@ -29,12 +29,20 @@ from sources.common.paths import (
     read_json,
     read_jsonl,
 )
-from sources.common.provenance import build_fingerprint, git_info, sha256_json, utc_now
+from sources.common.provenance import (
+    build_fingerprint,
+    code_fingerprint,
+    sha256_json,
+    utc_now,
+)
 from sources.common.validation import ValidationError
 from sources.ingestion import degrade, loader, window
 from sources.ingestion.features import registry
 from sources.ingestion.features.common import FEATURE_VERSION
 from sources.ingestion.schemas import FeatureRecord, SCHEMA_VERSION
+
+#: Código que produce las features: todo el subpaquete (extractores y SQI).
+_CODE_SCOPE: tuple[str, ...] = ("sources/ingestion/features",)
 
 
 def features_dir() -> Path:
@@ -86,22 +94,11 @@ def feature_fingerprint(
         "windows_fingerprint": windows_report.get("fingerprint"),
         "features": cfg.get("features"),
         "sampling_rates": cfg.get("sampling_rates"),
-        "git": git_info().get("commit"),
+        "code": code_fingerprint(_CODE_SCOPE),
     }
     if condition_id:
         payload["condition_id"] = condition_id
     return build_fingerprint(payload)
-    return build_fingerprint(
-        {
-            "schema_version": SCHEMA_VERSION,
-            "feature_version": FEATURE_VERSION,
-            "canonical_sha256": meta.get("canonical_sha256"),
-            "windows_fingerprint": windows_report.get("fingerprint"),
-            "features": cfg.get("features"),
-            "sampling_rates": cfg.get("sampling_rates"),
-            "git": git_info().get("commit"),
-        }
-    )
 
 
 def _summary(rows: list[dict], cfg: Mapping[str, Any]) -> dict:

@@ -39,7 +39,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sources.common.llm_client import check_model_available
-from sources.common.provenance import utc_now
+from sources.common.provenance import sha256_file, utc_now
 from sources.ingestion.represent import LLM_ALLOWED_FEATURES, _opaque_window_id
 from sources.phase2.development_split import (
     DEV_SUBJECTS,
@@ -67,6 +67,7 @@ from sources.phase3.degradation import (  # noqa: E402
     ALL_CONDITIONS,
     EFFECTIVE_CONDITIONS,
     build_payload,
+    features_path,
     load_features,
     render_text_summary,
     subject_reference,
@@ -112,6 +113,13 @@ def run_subject(
 
     condition_rows = {
         condition: load_features(INGEST_DIR, condition, subject)
+        for condition in conditions
+    }
+    # Ancla de procedencia: hash del fichero exacto de features que se usa para
+    # construir el prompt. Permite verificar después (en O(1)) que el corpus
+    # reconstruido es el mismo, sin recomponer prompts.
+    condition_sha = {
+        condition: sha256_file(features_path(INGEST_DIR, condition, subject))
         for condition in conditions
     }
     window_ids = sorted(clean_rows)
@@ -174,6 +182,7 @@ def run_subject(
                 "window_id": window_id,
                 "window_id_opaque": _opaque_window_id(window_id),
                 "duration_s": duration_s,
+                "features_sha256": condition_sha[condition],
                 "status": status,
                 "decision": decision,
                 "confidence": confidence,

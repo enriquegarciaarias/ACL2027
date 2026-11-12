@@ -36,7 +36,12 @@ from sources.common.paths import (
     read_json,
     read_jsonl,
 )
-from sources.common.provenance import build_fingerprint, git_info, sha256_json, utc_now
+from sources.common.provenance import (
+    build_fingerprint,
+    code_fingerprint,
+    sha256_json,
+    utc_now,
+)
 from sources.common.validation import ValidationError
 from sources.common.llm_client import (
     create_ollama_client,
@@ -47,6 +52,9 @@ from sources.ingestion import features, loader, window
 from sources.ingestion.config import representations_config
 from sources.ingestion.features.common import FEATURE_VERSION
 from sources.ingestion.schemas import RepresentationRecord, SCHEMA_VERSION
+
+#: Código que produce las representaciones (vistas numérica y textual).
+_CODE_SCOPE: tuple[str, ...] = ("sources/ingestion/represent.py",)
 
 REPRESENTATION_VERSION = "1.3"
 KINDS = ("numeric", "text", "embeddings")
@@ -545,7 +553,7 @@ def representation_fingerprint(
             "windows_fingerprint": windows_report.get("fingerprint"),
             "canonical_sha256": meta.get("canonical_sha256"),
             "options": representations_config(cfg).get(kind),
-            "git": git_info().get("commit"),
+            "code": code_fingerprint(_CODE_SCOPE),
         }
     )
 

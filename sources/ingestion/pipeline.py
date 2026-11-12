@@ -330,9 +330,27 @@ def _run_package(cfg: Mapping[str, Any], subjects: list[str], force: bool) -> di
     return result
 
 
+def _strip_embeddings(cfg: dict) -> bool:
+    """Quita ``embeddings`` de las representaciones activas.
+
+    Returns:
+        ``True`` si la lista cambió (había embeddings activados).
+    """
+    enabled = cfg["representations"].get("enabled", [])
+    filtered = [kind for kind in enabled if kind != "embeddings"]
+    cfg["representations"]["enabled"] = filtered
+    return len(filtered) != len(enabled)
+
+
 def process_ingest() -> None:
     """Punto de entrada del proceso ``INGEST``."""
     cfg = get_ingestion_config()
+    if bool(_arg("noEmbeddings")) and _strip_embeddings(cfg):
+        writeLog(
+            "info",
+            logger,
+            "[INGEST] embeddings desactivados (--noEmbeddings): la Fase 2 no los usa",
+        )
     requested = _resolve_requested(cfg)
 
     writeLog("info", logger, "-" * 60)

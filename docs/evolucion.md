@@ -191,6 +191,7 @@ Las sesiones anteriores a la creación de este documento se resumen a partir de
 | 2026-11-11 | ¿Se puede replicar? | Faltaban datos internos, entorno y errores silenciosos | Datos en `results/input/EXTERNAL/`, preflight de entorno, Python 3.12 |
 | 2026-11-11 | ¿Cómo contamos la evolución? | El relato estaba disperso en la memoria operativa | Crear este documento como **sinopsis obligatoria por sesión** (`AGENTS.md` §0, regla 7) |
 | 2026-11-11 | Cierre: ¿está todo reproducible y documentado? | 339 tests en 3.12, 0 enlaces rotos, externos dentro del proyecto, fallos de arranque con mensaje y código de salida | Memoria consolidada en `AGENTS.md` §43 y `SESSION_STATE.md` |
+| 2026-11-12 | ¿Por qué rehízo el corpus entero un commit de documentación? | El commit estaba en los 6 fingerprints: 14/15 sujetos recanonicalizados por 19 GB; verificación 5.670/5.670 prompts idénticos | Fingerprint por contenido de código (`code_fingerprint`), `features_sha256` por respuesta y `--noEmbeddings` |
 
 ### Plantilla para la próxima sesión
 

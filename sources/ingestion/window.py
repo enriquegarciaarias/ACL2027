@@ -32,10 +32,18 @@ from sources.common.paths import (
     read_json,
     read_jsonl,
 )
-from sources.common.provenance import build_fingerprint, git_info, sha256_json, utc_now
+from sources.common.provenance import (
+    build_fingerprint,
+    code_fingerprint,
+    sha256_json,
+    utc_now,
+)
 from sources.common.validation import ValidationError
 from sources.ingestion import loader
 from sources.ingestion.schemas import SCHEMA_VERSION
+
+#: Código que produce la segmentación (sin el historial de git).
+_CODE_SCOPE: tuple[str, ...] = ("sources/ingestion/window.py",)
 
 CHEST_CHANNELS = ("ACC", "ECG", "EMG", "EDA", "Temp", "Resp")
 WRIST_RATES = (
@@ -75,7 +83,7 @@ def window_fingerprint(meta: Mapping[str, Any], cfg: Mapping[str, Any]) -> str:
             "windows": cfg.get("windows"),
             "labels_keep": cfg.get("labels", {}).get("keep"),
             "sampling_rates": cfg.get("sampling_rates"),
-            "git": git_info().get("commit"),
+            "code": code_fingerprint(_CODE_SCOPE),
         }
     )
 

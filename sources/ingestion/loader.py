@@ -24,7 +24,13 @@ import numpy as np
 
 from sources.common.common import logger, writeLog
 from sources.common.paths import atomic_savez, atomic_write_json, ensure_dir, read_json
-from sources.common.provenance import build_fingerprint, git_info, sha256_file, utc_now
+from sources.common.provenance import (
+    build_fingerprint,
+    code_fingerprint,
+    git_info,
+    sha256_file,
+    utc_now,
+)
 from sources.common.validation import ValidationError, check_array, check_same_length, require, require_keys
 from sources.ingestion import units
 from sources.ingestion.schemas import CanonicalMeta, SCHEMA_VERSION, SubjectEntry
@@ -32,6 +38,12 @@ from sources.ingestion.schemas import CanonicalMeta, SCHEMA_VERSION, SubjectEntr
 REQUIRED_TOP_KEYS = ("signal", "label", "subject")
 CHEST_CHANNELS = ("ACC", "ECG", "EMG", "EDA", "Temp", "Resp")
 WRIST_CHANNELS = ("ACC", "BVP", "EDA", "TEMP")
+
+#: Código que produce el canónico (no incluye el historial de git).
+_CODE_SCOPE: tuple[str, ...] = (
+    "sources/ingestion/loader.py",
+    "sources/ingestion/units.py",
+)
 
 
 def canonical_dir() -> Path:
@@ -135,7 +147,9 @@ def ingest_fingerprint(entry: SubjectEntry, cfg: Mapping[str, Any]) -> str:
         "units": cfg["units"],
         "labels": cfg["labels"],
         "hashing": cfg["hashing"],
-        "git": git_info().get("commit"),
+        # El commit de git queda fuera a propósito: solo invalida el corpus un
+        # cambio en el código que lo produce (ver ``code_fingerprint``).
+        "code": code_fingerprint(_CODE_SCOPE),
     }
     return build_fingerprint(payload)
 
@@ -218,7 +232,7 @@ def run_ingest(
         label_counts=label_counts_dict,
         unit_reports=unit_reports,
     )
-    atomic_write_json(meta_path, meta.to_dict())
+    atomic_write_json(meta_path, {**meta.to_dict(), "git": git_info()})
 
     writeLog(
         "info",

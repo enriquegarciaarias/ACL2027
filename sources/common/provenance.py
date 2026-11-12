@@ -115,6 +115,52 @@ def build_fingerprint(parts: Mapping[str, Any]) -> str:
     return sha256_json(dict(parts))
 
 
+def repo_root() -> Path:
+    """Raíz del repositorio (``sources/common/provenance.py`` → tres niveles)."""
+    return Path(__file__).resolve().parents[2]
+
+
+@lru_cache(maxsize=32)
+def code_fingerprint(scope: tuple[str, ...]) -> str:
+    """SHA-256 del código que produce un artefacto.
+
+    Sustituye al commit de git dentro de los fingerprints. La diferencia es
+    deliberada: un commit de documentación **no** invalida el corpus, pero un
+    cambio en el código que calcula el artefacto **sí**. Así el fingerprint
+    mide el contenido del pipeline, no el historial del repositorio.
+
+    Args:
+        scope: rutas relativas a la raíz del repositorio. Un directorio se
+            expande a todos sus ``*.py`` (recursivo, sin ``__pycache__``).
+
+    Returns:
+        SHA-256 de ``{ruta: sha256}`` ordenado por ruta.
+    """
+    root = repo_root()
+    digests: dict[str, str] = {}
+    for entry in sorted(scope):
+        path = root / entry
+        if path.is_dir():
+            files = sorted(
+                item
+                for item in path.rglob("*.py")
+                if "__pycache__" not in item.parts
+            )
+        elif path.is_file():
+            files = [path]
+        else:
+            digests[entry] = "missing"
+            continue
+        for file in files:
+            try:
+                relative = str(file.relative_to(root))
+            except ValueError:  # pragma: no cover - ruta fuera del repo
+                relative = str(file)
+            digests[relative] = hashlib.sha256(file.read_bytes()).hexdigest()
+    return sha256_json(digests)
+
+
+
 def environment_snapshot() -> dict:
     """Instantánea de procedencia para incluir en el manifiesto del corpus."""
     return {

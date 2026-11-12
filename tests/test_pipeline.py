@@ -89,3 +89,64 @@ def test_dry_run_does_not_touch_output(synthetic_dataset, capsys):
     assert payload["selected_subjects"] == ["S2", "S3"]
     assert payload["config"]["windows"]["length_s"] == 60.0
     assert not pipeline.discover.manifest_path().exists()
+
+
+def test_strip_embeddings_quita_solo_esa_representacion():
+    cfg = {"representations": {"enabled": ["numeric", "text", "embeddings"]}}
+    assert pipeline._strip_embeddings(cfg) is True
+    assert cfg["representations"]["enabled"] == ["numeric", "text"]
+
+
+def test_strip_embeddings_sin_embeddings_activos():
+    cfg = {"representations": {"enabled": ["numeric", "text"]}}
+    assert pipeline._strip_embeddings(cfg) is False
+    assert cfg["representations"]["enabled"] == ["numeric", "text"]
+
+
+def test_no_embeddings_no_calcula_vectores(synthetic_dataset, monkeypatch):
+    """``--noEmbeddings`` quita los vectores densos de la configuración de INGEST."""
+    args = dict(
+        processControl.args
+        if isinstance(processControl.args, dict)
+        else vars(processControl.args)
+    )
+    args["noEmbeddings"] = True
+    args["step"] = "represent"  # detiene el pipeline antes de empaquetar
+    monkeypatch.setattr(processControl, "args", args)
+
+    captured: list[list[str]] = []
+
+    def _fake_run_represent(cfg, subjects, force):
+        captured.append(list(cfg["representations"]["enabled"]))
+        return {"subjects": subjects}
+
+    monkeypatch.setattr(pipeline, "_run_represent", _fake_run_represent)
+    pipeline.process_ingest()
+
+    base = pipeline.get_ingestion_config()["representations"]["enabled"]
+    assert captured, "el paso represent debe ejecutarse"
+    assert "embeddings" not in captured[0]
+    assert captured[0] == [kind for kind in base if kind != "embeddings"]
+
+
+def test_sin_flag_los_embeddings_siguen_activos(synthetic_dataset, monkeypatch):
+    args = dict(
+        processControl.args
+        if isinstance(processControl.args, dict)
+        else vars(processControl.args)
+    )
+    args.pop("noEmbeddings", None)
+    args["step"] = "represent"
+    monkeypatch.setattr(processControl, "args", args)
+
+    captured: list[list[str]] = []
+
+    def _fake_run_represent(cfg, subjects, force):
+        captured.append(list(cfg["representations"]["enabled"]))
+        return {"subjects": subjects}
+
+    monkeypatch.setattr(pipeline, "_run_represent", _fake_run_represent)
+    pipeline.process_ingest()
+
+    base = pipeline.get_ingestion_config()["representations"]["enabled"]
+    assert captured[0] == base

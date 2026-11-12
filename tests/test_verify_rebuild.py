@@ -188,3 +188,48 @@ def test_main_devuelve_2_sin_artefactos(tmp_path):
          "--output", str(tmp_path / "out.json")]
     )
     assert code == 2
+
+
+def test_atajo_por_hash_cuando_la_respuesta_lo_trae(tmp_path):
+    """Con ``features_sha256`` guardado, se compara el hash y no el prompt."""
+    corpus = tmp_path / "INGEST"
+    _write_corpus(corpus)
+    responses = tmp_path / "degradation" / "SX.responses.jsonl"
+    _write_responses(responses, "prompt irrelevante", "C1_partial_resp")
+
+    from sources.common.provenance import sha256_file
+
+    digest = sha256_file(
+        corpus / "degraded_features" / "C1_partial_resp" / "SX.features.jsonl"
+    )
+    record = json.loads(responses.read_text(encoding="utf-8"))
+    record["features_sha256"] = digest
+    responses.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    stats = verify.verify_source(responses, corpus)
+    assert stats["hash_equal"] == 1
+    assert stats["hash_diff"] == 0
+    assert stats["prompt_equal"] == 1  # no se recompone el prompt
+    assert stats["identical"] is True
+
+
+def test_atajo_por_hash_detecta_deriva(tmp_path):
+    corpus = tmp_path / "INGEST"
+    _write_corpus(corpus, degraded_hr=80.0)
+    responses = tmp_path / "degradation" / "SX.responses.jsonl"
+    _write_responses(responses, "prompt irrelevante", "C1_partial_resp")
+
+    from sources.common.provenance import sha256_file
+
+    digest = sha256_file(
+        corpus / "degraded_features" / "C1_partial_resp" / "SX.features.jsonl"
+    )
+    record = json.loads(responses.read_text(encoding="utf-8"))
+    record["features_sha256"] = digest
+    responses.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    _write_corpus(corpus, degraded_hr=95.0)  # el fichero cambia
+    stats = verify.verify_source(responses, corpus)
+    assert stats["hash_diff"] == 1
+    assert stats["prompt_diff"] == 1
+    assert stats["identical"] is False

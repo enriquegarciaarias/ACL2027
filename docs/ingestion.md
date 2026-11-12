@@ -28,6 +28,9 @@ Invariantes:
 - Las etiquetas **nunca** entran en una representación destinada al LLM.
 - La unidad estadística es el sujeto; las ventanas son medidas repetidas.
 - Ningún artefacto se sobrescribe sin que cambie su fingerprint.
+- El fingerprint depende del **contenido del código** que produce el artefacto
+  (`code_fingerprint`), no del commit de git: un commit de documentación no
+  invalida el corpus. Ver [`verificacion_corpus.md`](verificacion_corpus.md).
 - Toda magnitud declara unidad y método de cálculo.
 
 ---

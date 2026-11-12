@@ -24,10 +24,18 @@ import numpy as np
 
 from sources.common.common import logger, writeLog
 from sources.common.paths import atomic_write_json, corpus_dir, ensure_dir, read_json
-from sources.common.provenance import build_fingerprint, git_info, sha256_json, utc_now
+from sources.common.provenance import (
+    build_fingerprint,
+    code_fingerprint,
+    sha256_json,
+    utc_now,
+)
 from sources.common.validation import ValidationError, require
 from sources.ingestion import loader
 from sources.ingestion.schemas import SCHEMA_VERSION
+
+#: Código que produce el informe QC (sin el historial de git).
+_CODE_SCOPE: tuple[str, ...] = ("sources/ingestion/qc.py",)
 
 CHANNEL_ORDER = (
     "chest.ACC",
@@ -59,7 +67,7 @@ def qc_fingerprint(meta: Mapping[str, Any], cfg: Mapping[str, Any]) -> str:
             "canonical_sha256": meta.get("canonical_sha256"),
             "qc": cfg.get("qc"),
             "sampling_rates": cfg.get("sampling_rates"),
-            "git": git_info().get("commit"),
+            "code": code_fingerprint(_CODE_SCOPE),
         }
     )
 

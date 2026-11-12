@@ -121,21 +121,25 @@ cp config_example.json config.json   # editar rutas, tokens y ajustes de LLM
 Los scripts viven en `scripts/` y están documentados en
 [`docs/ejecucion_slurm.md`](docs/ejecucion_slurm.md).
 
+Sin valores por defecto: `--proc` (el script) y la fase detrás de `--` son
+obligatorios.
+
 ```bash
-./scripts/launch_lsi.sh                                   # envía run_ACL.sh y monitoriza
-./scripts/launch_lsi.sh --interval 15
-./scripts/launch_lsi.sh --proc run_ACL.sh --interval 15
+./scripts/launch_lsi.sh --proc run_ACL.sh -- --proc INGEST --subject WESAD
+./scripts/launch_lsi.sh --proc run_ACL.sh -- --proc GENERATE --experiment degradation --subject WESAD
+./scripts/launch_lsi.sh --proc run_ACL.sh --interval 15 -- --proc INGEST --subject WESAD
 ./scripts/launch_lsi.sh --help
 ```
 
 `scripts/run_ACL.sh` es el trabajo Slurm: comprueba el entorno y la GPU, arranca
 Ollama (con espera acotada), ejecuta una fase del pipeline y lo apaga al salir.
-Sin argumentos hace `--proc INGEST --subject WESAD`; cualquier argumento se pasa
-tal cual a `main.py`:
+Los argumentos son obligatorios y se pasan tal cual a `main.py` (sin `--proc`
+sale con código 2):
 
 ```bash
+sbatch scripts/run_ACL.sh --proc INGEST   --subject WESAD
 sbatch scripts/run_ACL.sh --proc GENERATE --experiment degradation --subject WESAD
-sbatch scripts/run_ACL.sh --proc EVALUATE --experiment degradation
+sbatch scripts/run_ACL.sh --proc EVALUATE --experiment degradation --subject WESAD
 ```
 
 ### 4. Fase 1 — ingesta del corpus (`INGEST`)

@@ -2,14 +2,20 @@
 # launch_lsi.sh - Lanza un job Slurm y monitoriza su estado hasta el final.
 #
 # Uso:
-#   ./launch_lsi.sh [--proc SCRIPT] [--interval SEG] [-h|--help]
+#   ./launch_lsi.sh --proc SCRIPT [--interval SEG] [-h|--help] [-- ARGS...]
+#
+# `--proc` es OBLIGATORIO: no hay script por defecto, para que el comando diga
+# siempre qué se está lanzando.
 #
 # Ejemplos:
-#   ./launch_lsi.sh                                   # scripts/run_ACL.sh, refresco 30 s
-#   ./launch_lsi.sh --interval 15
-#   ./launch_lsi.sh --proc run_ACL.sh                 # mismo script, explícito
-#   ./launch_lsi.sh --proc ~/data/run_ACL.sh --interval 15
-#   ./launch_lsi.sh --proc run_slip_gpu.sh            # compatibilidad con SLIP
+#   ./launch_lsi.sh --proc run_ACL.sh -- --proc INGEST --subject WESAD
+#   ./launch_lsi.sh --proc run_ACL.sh --interval 15 -- --proc INGEST --subject WESAD
+#   ./launch_lsi.sh --proc run_ACL.sh -- --proc GENERATE --experiment degradation --subject WESAD
+#   ./launch_lsi.sh --proc ~/data/run_slip_gpu.sh --interval 15
+#
+# Todo lo que va después de `--` se envía como argumentos al script Slurm:
+#   ./launch_lsi.sh -- --proc GENERATE --experiment degradation --subject WESAD
+#   ./launch_lsi.sh -- --proc INGEST --subject WESAD --fresh --yes
 #
 # El script se busca, en este orden: el directorio de este lanzador
 # (`scripts/`), el directorio actual, `~/data` y `~`.
@@ -42,23 +48,27 @@ usage() {
 Uso: $(basename "$0") [opciones]
 
 Opciones:
-  --proc SCRIPT        Script Slurm a enviar (por defecto: run_ACL.sh).
-                       Se busca en $SCRIPT_DIR, \$PWD, \$HOME/data y \$HOME,
-                       además de rutas absolutas.
+  --proc SCRIPT        Script Slurm a enviar (OBLIGATORIO; sin él se sale con
+                       código 2). Se busca en el directorio de este lanzador,
+                       \$PWD, \$HOME/data y \$HOME, además de rutas absolutas.
   --interval SEG       Intervalo de refresco en segundos (por defecto: 30).
   -h, --help           Muestra esta ayuda.
 
+  -- ARGS...           Todo lo que siga a «--» se pasa al script Slurm (y de
+                       ahí a main.py). Permite monitorizar cualquier fase.
+
 Ejemplos:
-  $(basename "$0")
-  $(basename "$0") --proc run_ACL.sh
-  $(basename "$0") --proc run_ACL.sh --interval 15
-  $(basename "$0") --proc ~/data/run_ACL.sh --interval 15
+  $(basename "$0") --proc run_ACL.sh -- --proc INGEST --subject WESAD
+  $(basename "$0") --proc run_ACL.sh --interval 15 -- --proc INGEST --subject WESAD
+  $(basename "$0") --proc run_ACL.sh -- --proc GENERATE --experiment degradation --subject WESAD
+  $(basename "$0") --proc ~/data/run_slip_gpu.sh --interval 15
 EOF
 }
 
 # ---------- Parseo de argumentos ----------
 PROC=""
 INTERVAL=30
+JOB_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -78,12 +88,21 @@ while [[ $# -gt 0 ]]; do
             shift ;;
         -h|--help)
             usage; exit 0 ;;
+        --)
+            shift
+            JOB_ARGS=("$@")
+            break ;;
         *)
             err "ERROR: opción desconocida: $1"; usage; exit 2 ;;
     esac
 done
 
-PROC="${PROC:-run_ACL.sh}"
+if [[ -z "$PROC" ]]; then
+    err "ERROR: falta --proc (script Slurm a enviar)."
+    echo
+    usage
+    exit 2
+fi
 
 # ---------- Resolución del script ----------
 resolve_script() {
@@ -169,7 +188,12 @@ info "   JobName:   $JOBNAME"
 [[ -n "$PARTITION" ]] && info "   Partition: $PARTITION"
 echo
 
-SUBMIT_OUT=$(sbatch "$SCRIPT" 2>&1) || { err "Fallo al enviar: $SUBMIT_OUT"; exit 1; }
+if (( ${#JOB_ARGS[@]} > 0 )); then
+    info "   Args:      ${JOB_ARGS[*]}"
+    SUBMIT_OUT=$(sbatch "$SCRIPT" "${JOB_ARGS[@]}" 2>&1) || { err "Fallo al enviar: $SUBMIT_OUT"; exit 1; }
+else
+    SUBMIT_OUT=$(sbatch "$SCRIPT" 2>&1) || { err "Fallo al enviar: $SUBMIT_OUT"; exit 1; }
+fi
 echo "$SUBMIT_OUT"
 
 JOBID=$(printf '%s' "$SUBMIT_OUT" | grep -oE 'Submitted batch job [0-9]+' | grep -oE '[0-9]+' | tail -n1 || true)

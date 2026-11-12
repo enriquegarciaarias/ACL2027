@@ -13,14 +13,14 @@
 # Hace, en este orden: comprueba el entorno y la GPU, arranca Ollama, ejecuta
 # una fase del pipeline y lo deja todo limpio (Ollama incluido) al salir.
 #
-# Uso:
-#   sbatch scripts/run_ACL.sh
-#   sbatch scripts/run_ACL.sh --proc INGEST --subject WESAD
+# Uso (los argumentos son OBLIGATORIOS; se pasan tal cual a `main.py`):
+#   sbatch scripts/run_ACL.sh --proc INGEST   --subject WESAD
 #   sbatch scripts/run_ACL.sh --proc GENERATE --experiment degradation --subject WESAD
-#   sbatch scripts/run_ACL.sh --proc EVALUATE --experiment degradation
+#   sbatch scripts/run_ACL.sh --proc EVALUATE --experiment degradation --subject WESAD
 #
-# Sin argumentos ejecuta la fase 1 (`INGEST`) del corpus completo. Cualquier
-# argumento se pasa tal cual a `main.py`.
+# Sin argumentos, o sin `--proc`/`--subject`, el trabajo no arranca: sale con
+# código 2 y muestra el uso. Se prefiere un fallo temprano a ejecutar una fase
+# o escribir en results/output/default/ sin querer.
 #
 # Nota sobre Ollama: es imprescindible para `GENERATE` y para los embeddings.
 # Si no arranca y la fase no es `GENERATE`, el trabajo continúa y `represent`
@@ -28,6 +28,37 @@
 # un Ollama caído.
 
 set -euo pipefail
+
+# ---------- 0. Argumentos obligatorios (fallo temprano) ----------
+if (( $# == 0 )); then
+    echo "[ERROR] faltan argumentos: hay que indicar la fase del pipeline."
+    echo "        uso: sbatch $0 --proc INGEST --subject WESAD"
+    echo "             sbatch $0 --proc GENERATE --experiment degradation --subject WESAD"
+    echo "             sbatch $0 --proc EVALUATE --experiment degradation --subject WESAD"
+    exit 2
+fi
+
+HAS_PROC=0
+HAS_SUBJECT=0
+for arg in "$@"; do
+    case "$arg" in
+        --proc|--proc=*)       HAS_PROC=1 ;;
+        --subject|--subject=*) HAS_SUBJECT=1 ;;
+    esac
+done
+
+if (( HAS_PROC == 0 )); then
+    echo "[ERROR] falta --proc (fase del pipeline: INGEST, GENERATE o EVALUATE)."
+    echo "        recibido: $*"
+    exit 2
+fi
+
+if (( HAS_SUBJECT == 0 )); then
+    echo "[ERROR] falta --subject (destino en results/output/{subject}/)."
+    echo "        para WESAD: --subject WESAD"
+    echo "        recibido: $*"
+    exit 2
+fi
 
 # ---------- Localización del proyecto a partir del propio script ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -124,11 +155,7 @@ else
 fi
 
 # ---------- 4. Fase del pipeline ----------
-if (( $# > 0 )); then
-    PIPELINE_ARGS=("$@")
-else
-    PIPELINE_ARGS=(--proc INGEST --subject WESAD)
-fi
+PIPELINE_ARGS=("$@")
 
 if (( OLLAMA_READY == 0 )); then
     case " ${PIPELINE_ARGS[*]} " in

@@ -14,20 +14,40 @@ Cómo se lanza el pipeline en el servidor. Dos scripts, en `scripts/`:
 Envía el trabajo y sigue su estado hasta que termina: cola, nodo asignado,
 últimas líneas del log y resumen final con `sacct`.
 
+No hay valores por defecto: **`--proc` es obligatorio** y la fase se indica
+siempre detrás de `--`. El comando dice exactamente qué se lanza.
+
 ```bash
-./scripts/launch_lsi.sh                                   # run_ACL.sh, refresco 30 s
-./scripts/launch_lsi.sh --interval 15                     # refresco cada 15 s
-./scripts/launch_lsi.sh --proc run_ACL.sh                 # explícito
-./scripts/launch_lsi.sh --proc ~/data/run_ACL.sh --interval 15
-./scripts/launch_lsi.sh --proc run_slip_gpu.sh            # compatibilidad con SLIP
+# corpus
+./scripts/launch_lsi.sh --proc run_ACL.sh -- --proc INGEST --subject WESAD
+
+# mismo, refresco cada 15 s
+./scripts/launch_lsi.sh --proc run_ACL.sh --interval 15 -- --proc INGEST --subject WESAD
+
+# respuestas del LLM
+./scripts/launch_lsi.sh --proc run_ACL.sh -- \
+    --proc GENERATE --experiment degradation --subject WESAD
+
+# empezar de cero
+./scripts/launch_lsi.sh --proc run_ACL.sh -- \
+    --proc INGEST --subject WESAD --fresh --yes
+
+# otro script (p. ej. SLIP)
+./scripts/launch_lsi.sh --proc ~/data/run_slip_gpu.sh --interval 15
+
 ./scripts/launch_lsi.sh --help
 ```
 
 | Opción | Por defecto | Descripción |
 |---|---|---|
-| `--proc SCRIPT` | `run_ACL.sh` | Script Slurm a enviar |
+| `--proc SCRIPT` | **obligatorio** | Script Slurm a enviar |
 | `--interval SEG` | `30` | Refresco del monitor |
+| `-- ARGS...` | — | Argumentos para el script Slurm (y de ahí a `main.py`) |
 | `-h`, `--help` | — | Ayuda |
+
+Sin `--proc` el lanzador sale con código **2** y muestra el uso. La separación
+es deliberada: `--proc` antes de `--` es *qué script*; lo que va después de `--`
+es *qué fase del pipeline*.
 
 **Resolución del script** (en este orden): el directorio del lanzador
 (`scripts/`), el directorio actual, `~/data` y `~`; las rutas absolutas se
@@ -50,15 +70,18 @@ SLIP en `~/data`.
 ## 2. Trabajo `run_ACL.sh`
 
 ```bash
-sbatch scripts/run_ACL.sh                                          # INGEST completo
-sbatch scripts/run_ACL.sh --proc INGEST --subject WESAD --noEmbeddings
+sbatch scripts/run_ACL.sh --proc INGEST   --subject WESAD
+sbatch scripts/run_ACL.sh --proc INGEST   --subject WESAD --noEmbeddings
 sbatch scripts/run_ACL.sh --proc GENERATE --experiment degradation --subject WESAD
-sbatch scripts/run_ACL.sh --proc EVALUATE --experiment degradation
+sbatch scripts/run_ACL.sh --proc EVALUATE --experiment degradation --subject WESAD
 ```
 
-Sin argumentos ejecuta `--proc INGEST --subject WESAD`. **Cualquier argumento se
-pasa tal cual a `main.py`**, así que el mismo script sirve para las tres fases y
-para los experimentos (`--experiment controls|degradation|centering|physionet|kemocon`).
+**Los argumentos son obligatorios** y se pasan tal cual a `main.py`. Si faltan
+argumentos, `--proc` o `--subject`, el trabajo **no arranca**: sale con código 2
+y muestra el uso. Es un fallo temprano a propósito, para no ejecutar una fase
+que nadie pidió ni escribir en `results/output/default/` por descuido.
+
+Con el lanzador, esos argumentos van detrás de `--`.
 
 Secuencia:
 
@@ -99,7 +122,7 @@ Slurm marcará el trabajo como `FAILED` cuando el pipeline falle, en lugar de
 
 ```bash
 # Corpus (una vez; reutiliza por fingerprint en las siguientes)
-./scripts/launch_lsi.sh
+sbatch scripts/run_ACL.sh --proc INGEST --subject WESAD
 
 # Empezar de cero (servidor nuevo, artefactos dudosos)
 sbatch scripts/run_ACL.sh --proc INGEST --subject WESAD --fresh --yes
@@ -108,7 +131,7 @@ sbatch scripts/run_ACL.sh --proc INGEST --subject WESAD --fresh --yes
 sbatch scripts/run_ACL.sh --proc GENERATE --experiment degradation --subject WESAD
 
 # Métricas, sin LLM
-sbatch scripts/run_ACL.sh --proc EVALUATE --experiment degradation
+sbatch scripts/run_ACL.sh --proc EVALUATE --experiment degradation --subject WESAD
 ```
 
 `--fresh` **no** va en el lanzamiento habitual: borra los 15 GB derivados y

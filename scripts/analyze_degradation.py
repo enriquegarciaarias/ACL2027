@@ -109,6 +109,136 @@ def _certainty_stats(items: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _claims_and_certainty(
+    records: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Respaldo de claims (H5) y certeza lingüística (H2b) de un grupo."""
+    verdicts: list[dict[str, Any]] = []
+    certainties: list[dict[str, Any]] = []
+    certainties_decided: list[dict[str, Any]] = []
+    certainties_abstain: list[dict[str, Any]] = []
+    n_claims = 0
+    for record in records:
+        claims = record.get("claims") or []
+        n_claims += len(claims)
+        if claims:
+            verdicts.extend(verify_claims(claims, record.get("prompt", "")))
+        certainty = linguistic_certainty(record.get("reasoning", "") or "")
+        if certainty["n_words"] > 0:
+            certainties.append(certainty)
+            if (record.get("decision") or "") == "abstain":
+                certainties_abstain.append(certainty)
+            else:
+                certainties_decided.append(certainty)
+
+    claims_block = {**summarize_verdicts(verdicts), "n_claims_total": n_claims}
+    certainty_block = {
+        **_certainty_stats(certainties),
+        # La certeza de una abstención habla de la evidencia («the channel is
+        # clearly missing»), no del afecto: se separa para no confundir H2b con
+        # la redacción del veto.
+        "decided": _certainty_stats(certainties_decided),
+        "abstain": _certainty_stats(certainties_abstain),
+    }
+    return claims_block, certainty_block
+
+
+def _confidence_auroc(
+    records: list[dict[str, Any]], labels: dict[str, str], binary: bool
+) -> float:
+    """AUROC de la confianza prediciendo corrección (H2a)."""
+    from sources.phase3.evaluator import _compute_auroc_one_vs_rest
+
+    y_true: list[str] = []
+    scores: list[float] = []
+    for record in records:
+        decision = record.get("decision")
+        valid = ("stress", "non-stress") if binary else (
+            "baseline", "stress", "amusement", "meditation"
+        )
+        if decision not in valid:
+            continue
+        truth = labels.get(record["window_id"], "UNKNOWN")
+        if truth == "UNKNOWN":
+            continue
+        correct = (
+            (decision == "stress") == (truth == "stress")
+            if binary
+            else decision == truth
+        )
+        y_true.append("correct" if correct else "incorrect")
+        scores.append(float(record.get("confidence") or 0) / 100.0)
+    if not y_true or len(set(y_true)) < 2:
+        return float("nan")
+    return _compute_auroc_one_vs_rest(
+        y_true,
+        {"correct": scores, "incorrect": [1.0 - s for s in scores]},
+        "correct",
+    )
+
+
+def analyze_group_binary(
+    records: list[dict[str, Any]], labels: dict[str, str]
+) -> dict[str, Any]:
+    """Métricas de un grupo cuando el prompt es binario stress/non-stress.
+
+    Las decisiones ya son ``stress`` / ``non-stress`` / ``abstain``: no hay
+    mapeo desde 4 clases. El resto de bloques (claims, certeza, confianza,
+    indicadores) se calcula igual que en el modo afectivo.
+    """
+    if not records:
+        return {"n": 0}
+
+    records = [
+        {
+            **record,
+            "window_id_opaque": record.get("window_id_opaque")
+            or _opaque_window_id(record["window_id"]),
+        }
+        for record in records
+    ]
+    label_by_opaque = {
+        record["window_id_opaque"]: labels.get(record["window_id"], "UNKNOWN")
+        for record in records
+    }
+    metrics = evaluate_binary_records(records, label_by_opaque)
+    claims_block, certainty_block = _claims_and_certainty(records)
+    confidences = [
+        float(record["confidence"])
+        for record in records
+        if record.get("confidence") is not None
+    ]
+
+    return {
+        "n": metrics["n"],
+        "n_valid": metrics["n_valid"],
+        "n_invalid": metrics["n_invalid"],
+        "n_abstain": metrics["n_abstain"],
+        "n_decided": metrics["n_decided"],
+        "coverage": metrics["coverage"],
+        "abstention_rate": metrics["abstention_rate"],
+        "accuracy": metrics["accuracy"],
+        "balanced_accuracy": metrics["balanced_accuracy"],
+        "precision_stress": metrics["precision_stress"],
+        "recall_stress": metrics["recall_stress"],
+        "specificity": metrics["specificity"],
+        "ece": metrics["ece"],
+        "brier": metrics["brier"],
+        "auroc": metrics.get("auroc_stress", float("nan")),
+        "f1_stress": metrics.get("f1_stress", float("nan")),
+        "decisions": metrics.get("decisions", {}),
+        "confidence_mean": float(np.mean(confidences)) if confidences else float("nan"),
+        "confidence_std": float(np.std(confidences)) if confidences else float("nan"),
+        "n_distinct_confidence": len({round(c, 2) for c in confidences}),
+        "confidence_auroc_correctness": _confidence_auroc(records, labels, binary=True),
+        "claims": claims_block,
+        "certainty": certainty_block,
+        # Sin desglose por clase: el endpoint binario ya lo resume la tabla propia.
+        "per_class": {},
+        "binary_mapped": metrics,
+    }
+
+
 def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict[str, Any]:
     """Métricas de corrección, calibración, claims y certeza de un grupo."""
     if not records:
@@ -128,48 +258,9 @@ def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict
     }
     metrics = evaluate_records(records, label_by_opaque)
 
-    verdicts = []
-    certainties = []
-    certainties_decided: list[dict[str, Any]] = []
-    certainties_abstain: list[dict[str, Any]] = []
-    n_claims = 0
-    for record in records:
-        claims = record.get("claims") or []
-        n_claims += len(claims)
-        if claims:
-            verdicts.extend(verify_claims(claims, record.get("prompt", "")))
-        certainty = linguistic_certainty(record.get("reasoning", "") or "")
-        if certainty["n_words"] > 0:
-            certainties.append(certainty)
-            if (record.get("decision") or "") == "abstain":
-                certainties_abstain.append(certainty)
-            else:
-                certainties_decided.append(certainty)
+    claims_block, certainty_block = _claims_and_certainty(records)
+    confidence_auroc = _confidence_auroc(records, labels, binary=False)
 
-    from sources.phase3.evaluator import _compute_auroc_one_vs_rest
-
-    y_true: list[str] = []
-    scores: list[float] = []
-    for record in records:
-        decision = record.get("decision")
-        if decision not in ("baseline", "stress", "amusement", "meditation"):
-            continue
-        truth = labels.get(record["window_id"], "UNKNOWN")
-        if truth == "UNKNOWN":
-            continue
-        y_true.append("correct" if decision == truth else "incorrect")
-        scores.append(float(record.get("confidence") or 0) / 100.0)
-    confidence_auroc = (
-        _compute_auroc_one_vs_rest(
-            y_true,
-            {"correct": scores, "incorrect": [1.0 - s for s in scores]},
-            "correct",
-        )
-        if y_true and len(set(y_true)) > 1
-        else float("nan")
-    )
-
-    claim_summary = summarize_verdicts(verdicts)
     confidences = [
         float(record["confidence"])
         for record in records
@@ -229,15 +320,8 @@ def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict
         "confidence_auroc_correctness": confidence_auroc,
         "per_class": per_class,
         "binary_mapped": binary_mapped,
-        "claims": {**claim_summary, "n_claims_total": n_claims},
-        "certainty": {
-            **_certainty_stats(certainties),
-            # La certeza de una abstención habla de la evidencia («the channel
-            # is clearly missing»), no del afecto: se separa para no confundir
-            # H2b con la redacción del veto.
-            "decided": _certainty_stats(certainties_decided),
-            "abstain": _certainty_stats(certainties_abstain),
-        },
+        "claims": claims_block,
+        "certainty": certainty_block,
     }
 
 
@@ -274,6 +358,13 @@ def main(argv: list[str] | None = None) -> None:
         "para el contraste H3.",
     )
     parser.add_argument(
+        "--decision-mode",
+        choices=["affective", "binary"],
+        default="affective",
+        help="Tarea con la que se generaron las respuestas: 4 clases o binario "
+        "stress/non-stress. Debe coincidir con el barrido (--decision-mode).",
+    )
+    parser.add_argument(
         "--split",
         default="evaluation",
         choices=["evaluation", "development", "all"],
@@ -285,12 +376,16 @@ def main(argv: list[str] | None = None) -> None:
     split = "" if args.split == "all" else args.split
     labels = load_labels()
 
+    binary = args.decision_mode == "binary"
+    analyze_fn = analyze_group_binary if binary else analyze_group
+
     if args.degradation_dir:
         degradation_dir = Path(args.degradation_dir)
     else:
-        base = DEGRADATION_DIR if args.representation == "numeric" else (
-            DEGRADATION_DIR.parent / "degradation_text"
-        )
+        name = "degradation" if args.representation == "numeric" else "degradation_text"
+        if binary:
+            name += "_binary"
+        base = DEGRADATION_DIR.parent / name
         degradation_dir = base / model_slug(args.model) if args.model else base
         if args.model and not degradation_dir.is_dir() and base.is_dir():
             # Ejecuciones anteriores al aislamiento por modelo: se leen de la
@@ -334,13 +429,14 @@ def main(argv: list[str] | None = None) -> None:
         "model": args.model or "legacy",
         "degradation_dir": str(degradation_dir),
         "representation": args.representation if args.model else "legacy",
+        "decision_mode": args.decision_mode,
         "split": args.split,
         "n_records": len(records),
         "recovery": not args.no_recovery,
         "conditions": {},
     }
     for condition in conditions:
-        report["conditions"][condition] = analyze_group(
+        report["conditions"][condition] = analyze_fn(
             by_condition.get(condition, []), labels
         )
 
@@ -375,6 +471,7 @@ def main(argv: list[str] | None = None) -> None:
     with output_path.open("w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2, ensure_ascii=False)
 
+    print(f"\nTarea: {args.decision_mode} | representación: {args.representation}")
     print("\n=== Degradación: corrección, abstención y calibración ===")
     header = (
         f"{'condición':16s} {'n':>5s} {'abst':>6s} {'acc':>6s} {'bal':>6s} "
@@ -453,12 +550,13 @@ def main(argv: list[str] | None = None) -> None:
             f"{entry['accuracy']:8.3f} {entry['abstention_rate']:9.3f}"
         )
 
-    print("\n=== Por clase real: recall (todas / decididas) ===")
+    if not binary:
+        print("\n=== Por clase real: recall (todas / decididas) ===")
     classes = ("baseline", "stress", "amusement", "meditation")
     print(f"{'condición':16s} " + " ".join(f"{c[:7]:>13s}" for c in classes))
     for condition in conditions:
         entry = report["conditions"][condition]
-        if not entry.get("n"):
+        if binary or not entry.get("n"):
             continue
         cells = []
         for class_name in classes:
@@ -475,22 +573,26 @@ def main(argv: list[str] | None = None) -> None:
         "recall es 0 aunque la accuracy de 4 clases parezca alta."
     )
 
-    print("\n=== Endpoint binario (4 clases mapeadas a stress / non-stress) ===")
+    print(
+        "\n=== Endpoint binario (prompt binario) ==="
+        if binary
+        else "\n=== Endpoint binario (4 clases mapeadas a stress / non-stress) ==="
+    )
     print(
         f"{'condición':16s} {'cob':>6s} {'abst':>6s} {'acc':>6s} {'bal':>6s} "
         f"{'prec':>6s} {'rec':>6s} {'ref_bin':>8s}"
     )
     for condition in conditions:
         entry = report["conditions"][condition]
-        binary = entry.get("binary_mapped") or {}
+        binary_entry = entry.get("binary_mapped") or {}
         ref = report["reference_by_condition"].get(condition, {})
-        if not binary.get("n"):
+        if not binary_entry.get("n"):
             continue
         print(
-            f"{condition:16s} {binary['coverage']:6.3f} "
-            f"{binary['abstention_rate']:6.3f} {binary['accuracy']:6.3f} "
-            f"{binary['balanced_accuracy']:6.3f} "
-            f"{binary['precision_stress']:6.3f} {binary['recall_stress']:6.3f} "
+            f"{condition:16s} {binary_entry['coverage']:6.3f} "
+            f"{binary_entry['abstention_rate']:6.3f} {binary_entry['accuracy']:6.3f} "
+            f"{binary_entry['balanced_accuracy']:6.3f} "
+            f"{binary_entry['precision_stress']:6.3f} {binary_entry['recall_stress']:6.3f} "
             f"{ref.get('balanced_accuracy_binary', float('nan')):8.3f}"
         )
     print(
@@ -547,7 +649,7 @@ def main(argv: list[str] | None = None) -> None:
         )
         for condition in conditions:
             base = report["conditions"][condition]
-            other = analyze_group(other_by_condition.get(condition, []), labels)
+            other = analyze_fn(other_by_condition.get(condition, []), labels)
             if not base.get("n") or not other.get("n"):
                 continue
             d_acc = other["accuracy"] - base["accuracy"]

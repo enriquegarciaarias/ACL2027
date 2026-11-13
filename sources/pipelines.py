@@ -141,6 +141,7 @@ def build_generate_argv(
         _append_flag(argv, "--representation", getattr(args, "representation", None))
         _append_flag(argv, "--conditions", getattr(args, "conditions", None))
         _append_flag(argv, "--subjects", getattr(args, "subjects", None))
+        _append_flag(argv, "--decision-mode", getattr(args, "decision_mode", None))
         if getattr(args, "think", False):
             argv.append("--think")
         if getattr(args, "allowDev", False):
@@ -199,6 +200,7 @@ def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
         _append_flag(argv, "--model", getattr(args, "model", None))
         _append_flag(argv, "--representation", getattr(args, "representation", None))
         _append_flag(argv, "--conditions", getattr(args, "conditions", None))
+        _append_flag(argv, "--decision-mode", getattr(args, "decision_mode", None))
         _append_flag(argv, "--split", getattr(args, "split", None))
         _append_flag(argv, "--output", output)
     elif experiment == "centering":
@@ -251,6 +253,7 @@ def build_compare_argv(args: Any) -> list[str] | None:
     )
     _append_flag(argv, "--representation", getattr(args, "representation", None))
     _append_flag(argv, "--conditions", getattr(args, "conditions", None))
+    _append_flag(argv, "--decision-mode", getattr(args, "decision_mode", None))
     _append_flag(argv, "--output", getattr(args, "output", None))
     return argv
 
@@ -459,6 +462,7 @@ def _plan(phase: str) -> dict[str, Any]:
         "representation": getattr(args, "representation", None),
         "conditions": getattr(args, "conditions", None) or None,
         "split": getattr(args, "split", None),
+        "decision_mode": getattr(args, "decision_mode", None) or "affective",
         "force": bool(getattr(args, "force", False)),
         "allowDev": bool(getattr(args, "allowDev", False)),
     }

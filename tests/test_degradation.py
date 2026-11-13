@@ -193,3 +193,69 @@ def test_certainty_stats_empty_is_nan():
     stats = _certainty_stats([])
     assert stats["n"] == 0
     assert stats["certainty_index_mean"] != stats["certainty_index_mean"]  # NaN
+
+
+# ---------------------------------------------------------------------------
+# Tarea binaria (stress / non-stress) en el barrido y en el análisis
+# ---------------------------------------------------------------------------
+def test_output_directory_separates_binary_from_affective(tmp_path, monkeypatch):
+    """La tarea va en el nombre del directorio: no se mezclan corpus."""
+    import run_degradation_sweep as sweep
+
+    monkeypatch.setattr(sweep, "OUTPUT_DIR", tmp_path)
+
+    affective = sweep.output_directory("numeric", "affective", "qwen3:14b")
+    binary = sweep.output_directory("numeric", "stress_binary", "qwen3:14b")
+
+    assert affective == tmp_path.parent / "degradation" / "qwen3_14b"
+    assert binary == tmp_path.parent / "degradation_binary" / "qwen3_14b"
+    assert affective != binary
+
+
+def _binary_records() -> list[dict]:
+    base = {
+        "condition_id": "C0_clean",
+        "subject": "S5",
+        "claims": [],
+        "reasoning": "Steady.",
+        "prompt": "",
+    }
+    return [
+        {**base, "window_id": "WESAD:S5:w1", "window_id_opaque": "o1",
+         "status": "valid_response", "decision": "stress", "confidence": 90},
+        {**base, "window_id": "WESAD:S5:w2", "window_id_opaque": "o2",
+         "status": "valid_response", "decision": "non-stress", "confidence": 80},
+        {**base, "window_id": "WESAD:S5:w3", "window_id_opaque": "o3",
+         "status": "valid_response", "decision": "stress", "confidence": 70},
+        {**base, "window_id": "WESAD:S5:w4", "window_id_opaque": "o4",
+         "status": "valid_abstention", "decision": "abstain", "confidence": 30},
+    ]
+
+
+def _binary_labels() -> dict[str, str]:
+    return {
+        "WESAD:S5:w1": "stress",
+        "WESAD:S5:w2": "baseline",   # non-stress
+        "WESAD:S5:w3": "baseline",   # falso positivo
+        "WESAD:S5:w4": "meditation",  # non-stress, abstención
+    }
+
+
+def test_analyze_group_binary_uses_binary_metrics():
+    """Con prompt binario no hay mapeo 4→2: se evalúa la decisión tal cual."""
+    from analyze_degradation import analyze_group_binary
+
+    metrics = analyze_group_binary(_binary_records(), _binary_labels())
+
+    assert metrics["n"] == 4
+    assert metrics["n_decided"] == 3
+    assert metrics["accuracy"] == pytest.approx(2 / 3)
+    assert metrics["precision_stress"] == pytest.approx(0.5)
+    assert metrics["recall_stress"] == pytest.approx(1.0)
+    assert metrics["per_class"] == {}
+
+
+def test_analyze_group_binary_empty():
+    from analyze_degradation import analyze_group_binary
+
+    assert analyze_group_binary([], {}) == {"n": 0}

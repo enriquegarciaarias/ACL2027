@@ -63,17 +63,24 @@ def _model_dir(base: Path, model: str, quiet: bool = False) -> Path:
     )
 
 
-def _base_dir(mode: str, representation: str) -> Path:
+def _base_dir(
+    mode: str, representation: str, decision_mode: str = "affective"
+) -> Path:
     """Directorio raíz de los datos del modo pedido."""
     if mode == "degradation":
         name = "degradation" if representation == "numeric" else "degradation_text"
+        if decision_mode == "binary":
+            name += "_binary"
     else:
         name = "llm_responses"
     return REPO_ROOT / "results" / "output" / "WESAD" / "PHASE2" / name
 
 
 def check_distinct_models(
-    models: Sequence[str], mode: str, representation: str
+    models: Sequence[str],
+    mode: str,
+    representation: str,
+    decision_mode: str = "affective",
 ) -> None:
     """Falla si dos modelos apuntan al mismo directorio de datos.
 
@@ -81,7 +88,7 @@ def check_distinct_models(
     ``qwen3:14b`` llegó truncado como ``qwen3`` y ambos modelos cayeron en la
     carpeta histórica, así que se comparaba un corpus consigo mismo.
     """
-    base = _base_dir(mode, representation)
+    base = _base_dir(mode, representation, decision_mode)
     seen: dict[Path, str] = {}
     for model in models:
         directory = _model_dir(base, model, quiet=True)
@@ -110,18 +117,25 @@ def load_degradation(
     model: str,
     representation: str,
     conditions: set[str],
+    decision_mode: str = "affective",
 ) -> tuple[list[dict[str, Any]], Any]:
     """Registros del barrido de degradación y la función de métricas."""
-    from analyze_degradation import analyze_group, load_labels, load_records
+    from analyze_degradation import (
+        analyze_group,
+        analyze_group_binary,
+        load_labels,
+        load_records,
+    )
 
-    base = _base_dir("degradation", representation)
+    base = _base_dir("degradation", representation, decision_mode)
     directory = _model_dir(base, model)
     labels = load_labels()
     records = load_records(directory, conditions, split="evaluation")
     from sources.phase3.recovery import apply_recovery
 
     records, _ = apply_recovery(records)
-    return records, (lambda rows: analyze_group(rows, labels))
+    evaluator = analyze_group_binary if decision_mode == "binary" else analyze_group
+    return records, (lambda rows: evaluator(rows, labels))
 
 
 def load_phase2(
@@ -256,11 +270,77 @@ def summarize(metrics: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _decided_pairs(rows: Iterable[Mapping[str, Any]]) -> tuple[list[tuple[float, float]], int]:
+    """Pares (confianza, acierto) de las ventanas decididas, y total de ventanas.
+
+    Las abstenciones y las respuestas inválidas se excluyen del par pero sí
+    cuentan en el total: la cobertura se mide sobre todas las ventanas.
+    """
+    pairs: list[tuple[float, float]] = []
+    n_total = 0
+    for row in rows:
+        if (row.get("status") or "") == "invalid_output":
+            continue
+        n_total += 1
+        decision = row.get("decision")
+        if not decision or decision == "abstain":
+            continue
+        truth = row.get("_truth")
+        if not truth:
+            continue
+        pairs.append(
+            (
+                float(row.get("confidence") or 0.0),
+                1.0 if decision == truth else 0.0,
+            )
+        )
+    return pairs, n_total
+
+
+def accuracy_at_coverage(
+    pairs: Sequence[tuple[float, float]], coverage: float, n_total: int
+) -> tuple[float, int]:
+    """Accuracy de las ``k`` decididas más confiadas (``k = cobertura × N``).
+
+    Responde a "¿quién acierta más **con la misma cobertura**?" sin que la
+    abstención premie o castigue artificialmente a un modelo.
+
+    Returns:
+        ``(accuracy, n_evaluadas)``; ``(nan, 0)`` si no hay nada que evaluar.
+    """
+    k = int(round(max(0.0, min(1.0, coverage)) * n_total))
+    if k <= 0 or not pairs:
+        return float("nan"), 0
+    ordered = sorted(pairs, key=lambda item: -item[0])[:k]
+    return sum(hit for _, hit in ordered) / len(ordered), len(ordered)
+
+
+def risk_coverage_by_condition(
+    rows_by_model: Mapping[str, list[dict[str, Any]]],
+    coverage_by_model: Mapping[str, float],
+) -> dict[str, dict[str, Any]]:
+    """Accuracy a la cobertura mínima común de cada condición."""
+    target = min(
+        (cov for cov in coverage_by_model.values() if cov == cov), default=float("nan")
+    )
+    out: dict[str, Any] = {"target_coverage": target, "models": {}}
+    for model, rows in rows_by_model.items():
+        pairs, n_total = _decided_pairs(rows)
+        accuracy, n_eval = accuracy_at_coverage(pairs, target, n_total)
+        out["models"][model] = {
+            "accuracy": accuracy,
+            "n_evaluated": n_eval,
+            "n_total": n_total,
+        }
+    return out
+
+
 def compare(
     models: Sequence[str],
     mode: str,
     representation: str,
     conditions: Sequence[str],
+    decision_mode: str = "affective",
 ) -> dict[str, Any]:
     """Ejecuta la comparación y devuelve el informe."""
     from analyze_degradation import load_labels
@@ -270,12 +350,17 @@ def compare(
     tables: dict[str, list[dict[str, Any]]] = {c: [] for c in conditions}
     counts: dict[tuple[str, str], dict[str, tuple[int, int]]] = {}
     models_in_data: dict[str, list[str]] = {}
+    rows_by_condition: dict[str, dict[str, list[dict[str, Any]]]] = {
+        c: {} for c in conditions
+    }
 
     for model in models:
         if mode == "phase2":
             records, evaluator = load_phase2(model, condition_set)
         else:
-            records, evaluator = load_degradation(model, representation, condition_set)
+            records, evaluator = load_degradation(
+                model, representation, condition_set, decision_mode
+            )
 
         found = sorted(_models_found(records))
         models_in_data[model] = found
@@ -295,6 +380,7 @@ def compare(
             entry = {"model": model, **summarize(evaluator(rows))}
             tables[condition].append(entry)
             counts[(model, condition)] = per_subject_counts(rows)
+            rows_by_condition[condition][model] = rows
 
     deltas: dict[str, dict[str, Any]] = {}
     baseline = models[0]
@@ -311,16 +397,33 @@ def compare(
                 counts[key_a], counts[key_b]
             )
 
+    # Accuracy a cobertura comparable: la comparación justa cuando un modelo se
+    # abstiene mucho más que el otro.
+    risk_coverage: dict[str, dict[str, Any]] = {}
+    for condition in conditions:
+        entries = [entry for entry in tables.get(condition, []) if entry.get("n")]
+        if len(entries) < 2:
+            continue
+        coverage_by_model = {
+            entry["model"]: 1.0 - float(entry.get("abstention_rate") or 0.0)
+            for entry in entries
+        }
+        risk_coverage[condition] = risk_coverage_by_condition(
+            rows_by_condition.get(condition, {}), coverage_by_model
+        )
+
     return {
         "generated_at": utc_now(),
         "mode": mode,
         "representation": representation if mode != "phase2" else "llm_views",
+        "decision_mode": decision_mode,
         "baseline_model": baseline,
         "models": list(models),
         "models_in_data": models_in_data,
         "conditions": list(conditions),
         "tables": tables,
         "deltas": deltas,
+        "risk_coverage": risk_coverage,
     }
 
 
@@ -328,7 +431,7 @@ def print_report(report: Mapping[str, Any]) -> None:
     """Tabla legible por consola."""
     print(
         f"\n=== Comparación de modelos ({report['mode']}, "
-        f"{report['representation']}) ==="
+        f"{report['representation']}, tarea={report.get('decision_mode', 'affective')}) ==="
     )
     print(f"Modelos: {', '.join(report['models'])}")
     for model, found in report["models_in_data"].items():
@@ -377,6 +480,27 @@ def print_report(report: Mapping[str, Any]) -> None:
             "modelos: con 1 sujeto (o 0) el intervalo no es inferencia."
         )
 
+    risk = report.get("risk_coverage") or {}
+    if risk:
+        print("\nAccuracy a cobertura comparable (la mínima común de cada condición):")
+        print(
+            f"{'condición':16s} {'cob':>6s} "
+            + " ".join(f"{m[:12]:>14s}" for m in report["models"])
+        )
+        for condition, block in risk.items():
+            cells = []
+            for model in report["models"]:
+                info = block["models"].get(model) or {}
+                cells.append(
+                    f"{info.get('accuracy', float('nan')):6.3f}"
+                    f"({info.get('n_evaluated', 0):3d})".rjust(14)
+                )
+            print(f"{condition:16s} {block['target_coverage']:6.3f} " + " ".join(cells))
+        print(
+            "  (n) = ventanas evaluadas tras recortar a esa cobertura. Iguala el "
+            "número de respuestas y elimina la ventaja de abstenerse."
+        )
+
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -396,6 +520,12 @@ def main(argv: list[str] | None = None) -> None:
         default="numeric",
         help="Brazo de representación (solo modo degradation).",
     )
+    parser.add_argument(
+        "--decision-mode",
+        choices=["affective", "binary"],
+        default="affective",
+        help="Tarea del barrido: 4 clases o binario (directorio *_binary).",
+    )
     parser.add_argument("--conditions", default=",".join(DEFAULT_CONDITIONS))
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT))
     args = parser.parse_args(argv)
@@ -403,10 +533,14 @@ def main(argv: list[str] | None = None) -> None:
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     if len(models) < 2:
         raise SystemExit("Se necesitan al menos dos modelos para comparar.")
-    check_distinct_models(models, args.mode, args.representation)
+    check_distinct_models(
+        models, args.mode, args.representation, args.decision_mode
+    )
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
 
-    report = compare(models, args.mode, args.representation, conditions)
+    report = compare(
+        models, args.mode, args.representation, conditions, args.decision_mode
+    )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")

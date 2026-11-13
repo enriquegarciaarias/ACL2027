@@ -57,7 +57,11 @@ from sources.phase2.prompt_builder import (
     build_numeric_prompt,
     build_text_prompt,
 )
-from sources.phase2.response_schema import DECISION_MODE_AFFECTIVE, validate_llm_output
+from sources.phase2.response_schema import (
+    DECISION_MODE_AFFECTIVE,
+    DECISION_MODE_STRESS_BINARY,
+    validate_llm_output,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INGEST_DIR = REPO_ROOT / "results" / "output" / "WESAD" / "INGEST"
@@ -73,6 +77,20 @@ from sources.phase3.degradation import (  # noqa: E402
     subject_reference,
     z_scores,
 )
+
+
+def output_directory(
+    representation: str, decision_mode: str, model: str
+) -> Path:
+    """Directorio de salida: representación × tarea × modelo.
+
+    La tarea forma parte del nombre: mezclar respuestas de 4 clases y binarias
+    invalidaría cualquier comparación.
+    """
+    base_name = "degradation" if representation == "numeric" else "degradation_text"
+    if decision_mode == DECISION_MODE_STRESS_BINARY:
+        base_name += "_binary"
+    return OUTPUT_DIR.parent / base_name / model_slug(model)
 
 
 def load_windows(subject: str) -> dict[str, dict[str, Any]]:
@@ -93,6 +111,7 @@ def run_subject(
     max_windows: int | None,
     use_few_shot: bool,
     representation: str,
+    decision_mode: str = DECISION_MODE_AFFECTIVE,
 ) -> dict[str, Any]:
     responses_path = output_dir / f"{subject}.responses.jsonl"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -144,7 +163,7 @@ def run_subject(
                     num_ctx=config.num_ctx,
                     use_few_shot=use_few_shot,
                     standardized=True,
-                    decision_mode=DECISION_MODE_AFFECTIVE,
+                    decision_mode=decision_mode,
                 )
             else:
                 payload = build_payload(
@@ -158,12 +177,12 @@ def run_subject(
                     use_few_shot=use_few_shot,
                     include_additional=True,
                     standardized=True,
-                    decision_mode=DECISION_MODE_AFFECTIVE,
+                    decision_mode=decision_mode,
                 )
             assert_no_leakage(prompt)
             try:
                 raw_output, ollama_meta = _call_ollama_chat(client, prompt, config, seed=seed)
-                validated = validate_llm_output(raw_output)
+                validated = validate_llm_output(raw_output, decision_mode=decision_mode)
                 status, decision = validated.status, validated.decision
                 confidence = validated.confidence
                 claims = [c.to_dict() for c in validated.claims]
@@ -179,6 +198,7 @@ def run_subject(
                 "model": config.model,
                 "condition_id": condition,
                 "representation": representation,
+                "decision_mode": decision_mode,
                 "window_id": window_id,
                 "window_id_opaque": _opaque_window_id(window_id),
                 "duration_s": duration_s,
@@ -242,6 +262,13 @@ def main(argv: list[str] | None = None) -> None:
         default="numeric",
         help="Representación de la señal (H3).",
     )
+    parser.add_argument(
+        "--decision-mode",
+        choices=["affective", "binary"],
+        default="affective",
+        help="Tarea del prompt: 4 clases afectivas (preregistrada) o binario "
+        "stress/non-stress (endpoint primario).",
+    )
     parser.add_argument("--output-dir", default="")
     args = parser.parse_args(argv)
 
@@ -256,6 +283,11 @@ def main(argv: list[str] | None = None) -> None:
     if warning:
         print(f"[DEG] AVISO: {warning}")
 
+    decision_mode = (
+        DECISION_MODE_STRESS_BINARY
+        if args.decision_mode == "binary"
+        else DECISION_MODE_AFFECTIVE
+    )
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
     unknown = [c for c in conditions if c not in ALL_CONDITIONS]
     if unknown:
@@ -275,9 +307,9 @@ def main(argv: list[str] | None = None) -> None:
     else:
         # Un subdirectorio por modelo: comparar modelos no sobrescribe
         # ni reutiliza (por error) las respuestas de otro modelo.
-        output_dir = OUTPUT_DIR.parent / (
-            "degradation" if args.representation == "numeric" else "degradation_text"
-        ) / model_slug(config.model)
+        output_dir = output_directory(
+            args.representation, decision_mode, config.model
+        )
 
     if check_model_available(config.model) is False:
         print(
@@ -286,7 +318,8 @@ def main(argv: list[str] | None = None) -> None:
         )
     print(
         f"Barrido de degradación | sujetos={subjects} | condiciones={conditions} | "
-        f"representación={args.representation} | modelo={config.model} | "
+        f"representación={args.representation} | tarea={args.decision_mode} | "
+        f"modelo={config.model} | "
         f"think={config.think} | few_shot={not args.no_few_shot} | "
         f"salida={output_dir}"
     )
@@ -298,6 +331,7 @@ def main(argv: list[str] | None = None) -> None:
         "model": config.model,
         "model_slug": config.model_slug,
         "representation": args.representation,
+        "decision_mode": args.decision_mode,
         "config": config.to_dict(),
     }
     for subject in subjects:
@@ -311,6 +345,7 @@ def main(argv: list[str] | None = None) -> None:
             max_windows=args.max_windows,
             use_few_shot=not args.no_few_shot,
             representation=args.representation,
+            decision_mode=decision_mode,
         )
         summary["subjects"][subject] = result
         for key in total:

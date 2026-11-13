@@ -139,6 +139,15 @@ def manageArgs():
         help="Condiciones separadas por comas (p. ej. 'C0_clean,C4_total_eda').",
     )
     parser.add_argument(
+        '--decision-mode',
+        type=str,
+        default=None,
+        choices=['affective', 'binary'],
+        help="Tarea del prompt en el experimento de degradación: 4 clases "
+             "afectivas (preregistrada) o binario stress/non-stress (endpoint "
+             "primario). Se guarda en un directorio distinto por tarea.",
+    )
+    parser.add_argument(
         '--split',
         type=str,
         default=None,

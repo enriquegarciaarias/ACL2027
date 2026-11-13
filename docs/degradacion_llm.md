@@ -91,3 +91,32 @@ few-shot estandarizados de S2–S4 y la misma tarea de 4 clases.
    el modelo de referencia.
 5. **Indicador externo** (H6): AUROC incremental de la compuerta de
    consistencia (P1) sobre la confianza declarada.
+
+## 8. Tarea binaria (endpoint primario)
+
+El barrido se diseñó con la tarea afectiva de 4 clases (preregistrada). Para
+medir el **endpoint primario** (`stress` vs `non-stress`) con el prompt correcto,
+el runner y el analizador aceptan `--decision-mode binary`:
+
+```bash
+# piloto: solo C0, 567 llamadas (~1 h con el 14b)
+python scripts/run_degradation_sweep.py --model qwen3:14b \
+    --conditions C0_clean --decision-mode binary
+python scripts/analyze_degradation.py --model qwen3:14b --decision-mode binary
+```
+
+- **Directorios separados por tarea**: `degradation_binary/{modelo}/` (y
+  `degradation_text_binary/{modelo}/` para el brazo textual). Mezclar respuestas
+  de 4 clases y binarias invalidaría la comparación, igual que mezclar modelos.
+- El registro de cada respuesta guarda `decision_mode`; el resumen también.
+- El prompt binario incluye su propia nota de tarea (`BINARY_TASK_NOTE`), sus
+  ejemplares few-shot (desarrollo S2–S4) y su esquema de decisión
+  (`stress` | `non-stress` | `abstain`).
+- El analizador evalúa con `evaluate_binary_records` (sin mapeo desde 4 clases):
+  accuracy, balanced, precisión/recall de `stress`, cobertura, AUROC, Brier, ECE,
+  claims y certeza (separada por decisión).
+- `compare_models.py --decision-mode binary` compara dos modelos en esa tarea.
+
+Motivo: con el prompt de 4 clases el modelo **nunca** optimiza la frontera
+binaria. Los resultados publicados del binario en P2 usaron un prompt específico;
+este flag permite reproducir esa condición bajo degradación controlada.

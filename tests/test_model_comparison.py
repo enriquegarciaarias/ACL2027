@@ -127,7 +127,7 @@ def test_check_distinct_models_rejects_shared_directory(tmp_path, monkeypatch):
     la carpeta histórica; el comparador debe pararlo en vez de comparar un
     corpus consigo mismo."""
     _write(tmp_path / "S5.responses.jsonl", "")
-    monkeypatch.setattr(cm, "_base_dir", lambda mode, representation: tmp_path)
+    monkeypatch.setattr(cm, "_base_dir", lambda *args, **kwargs: tmp_path)
 
     with pytest.raises(SystemExit) as exc:
         cm.check_distinct_models(["qwen2.5:7b", "qwen3"], "degradation", "numeric")
@@ -138,7 +138,7 @@ def test_check_distinct_models_accepts_separate_directories(tmp_path, monkeypatc
     """Con los dos subdirectorios por modelo no hay colisión."""
     _write(tmp_path / "qwen2_5_7b" / "S5.responses.jsonl", "")
     _write(tmp_path / "qwen3_14b" / "S5.responses.jsonl", "")
-    monkeypatch.setattr(cm, "_base_dir", lambda mode, representation: tmp_path)
+    monkeypatch.setattr(cm, "_base_dir", lambda *args, **kwargs: tmp_path)
 
     cm.check_distinct_models(
         ["qwen2.5:7b", "qwen3:14b"], "degradation", "numeric"
@@ -204,3 +204,39 @@ def test_print_report_warns_about_deltas_with_one_subject(capsys):
     out = capsys.readouterr().out
     assert "+0.457" in out
     assert "no es inferencia" in out
+
+
+def test_accuracy_at_coverage_uses_most_confident():
+    """A cobertura 0.5 se queda con la mitad más confiada, no con cualquiera."""
+    pairs = [(90.0, 1.0), (80.0, 1.0), (20.0, 0.0), (10.0, 0.0)]
+    accuracy, n_eval = cm.accuracy_at_coverage(pairs, coverage=0.5, n_total=4)
+    assert n_eval == 2
+    assert accuracy == pytest.approx(1.0)
+
+
+def test_accuracy_at_coverage_empty_and_zero():
+    import math
+
+    for pairs, coverage in (([], 0.5), ([(90.0, 1.0)], 0.0)):
+        accuracy, n_eval = cm.accuracy_at_coverage(pairs, coverage, 10)
+        assert math.isnan(accuracy)
+        assert n_eval == 0
+
+
+def test_decided_pairs_excludes_abstain_but_counts_total():
+    rows = [
+        {"status": "valid_response", "decision": "stress", "confidence": 90, "_truth": "stress"},
+        {"status": "valid_abstention", "decision": "abstain", "confidence": 30, "_truth": "stress"},
+        {"status": "invalid_output", "decision": None, "confidence": 0, "_truth": "baseline"},
+    ]
+    pairs, n_total = cm._decided_pairs(rows)
+    assert pairs == [(90.0, 1.0)]
+    assert n_total == 2          # la inválida no cuenta como ventana evaluable
+
+
+def test_base_dir_binary_uses_own_directory(monkeypatch, tmp_path):
+    monkeypatch.setattr(cm, "REPO_ROOT", tmp_path)
+    affective = cm._base_dir("degradation", "numeric", "affective")
+    binary = cm._base_dir("degradation", "numeric", "binary")
+    assert affective.name == "degradation"
+    assert binary.name == "degradation_binary"

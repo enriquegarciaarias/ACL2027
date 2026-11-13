@@ -367,3 +367,18 @@ def test_plan_avisa_si_la_gpu_no_es_usable_por_torch(monkeypatch):
     assert info["gpu"]["mismatch"] is True
     assert info["gpu"]["driver"] == "570.1"
     assert any("requirements.txt" in warning for warning in info["warnings"])
+
+
+def test_generate_degradation_passes_decision_mode():
+    """El modo binario debe llegar al barrido (si no, se mediría otra tarea)."""
+    argv = pipelines.build_generate_argv(
+        "degradation", _args(decision_mode="binary")
+    )
+    assert "--decision-mode" in argv and "binary" in argv
+
+
+def test_evaluate_degradation_passes_decision_mode():
+    argv = pipelines.build_evaluate_argv(
+        "degradation", _args(decision_mode="binary")
+    )
+    assert "--decision-mode" in argv and "binary" in argv

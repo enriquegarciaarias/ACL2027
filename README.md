@@ -118,28 +118,35 @@ cp config_example.json config.json   # editar rutas, tokens y ajustes de LLM
 
 ### 3. En el clúster (Slurm)
 
-Los scripts viven en `scripts/` y están documentados en
-[`docs/ejecucion_slurm.md`](docs/ejecucion_slurm.md).
+Los scripts viven en `scripts/` (fuente versionada) y están documentados en
+[`docs/ejecucion_slurm.md`](docs/ejecucion_slurm.md). **En el servidor se
+ejecutan desde `~/data`** (`~/data/launch_lsi.sh`, `~/data/run_ACL.sh`), no desde
+`scripts/`: tras editarlos hay que copiarlos con
+`cp scripts/run_ACL.sh scripts/launch_lsi.sh ~/data/`.
 
 Sin valores por defecto: `--proc` (el script) y la fase detrás de `--` son
 obligatorios.
 
 ```bash
-./scripts/launch_lsi.sh --proc run_ACL.sh -- --proc INGEST --subject WESAD
-./scripts/launch_lsi.sh --proc run_ACL.sh -- --proc GENERATE --experiment degradation --subject WESAD
-./scripts/launch_lsi.sh --proc run_ACL.sh --interval 15 -- --proc INGEST --subject WESAD
-./scripts/launch_lsi.sh --help
+~/data/launch_lsi.sh --proc run_ACL.sh -- --proc INGEST --subject WESAD
+~/data/launch_lsi.sh --proc run_ACL.sh -- --proc GENERATE --experiment degradation --subject WESAD
+~/data/launch_lsi.sh --proc run_ACL.sh --interval 15 -- --proc INGEST --subject WESAD
+~/data/launch_lsi.sh --help
 ```
 
-`scripts/run_ACL.sh` es el trabajo Slurm: comprueba el entorno y la GPU, arranca
-Ollama (con espera acotada), ejecuta una fase del pipeline y lo apaga al salir.
+El proyecto vive en `~/data/proyectos/ACL2027`; el trabajo lo resuelve con
+`ACL2027_PROJECT` (o con `--project`), porque Slurm ejecuta una copia en
+`/var/spool/slurmd`.
+
+`run_ACL.sh` es el trabajo Slurm: comprueba el entorno y la GPU, arranca Ollama
+(con espera acotada), ejecuta una fase del pipeline y lo apaga al salir.
 Los argumentos son obligatorios y se pasan tal cual a `main.py` (sin `--proc`
 sale con código 2):
 
 ```bash
-sbatch scripts/run_ACL.sh --proc INGEST   --subject WESAD
-sbatch scripts/run_ACL.sh --proc GENERATE --experiment degradation --subject WESAD
-sbatch scripts/run_ACL.sh --proc EVALUATE --experiment degradation --subject WESAD
+sbatch ~/data/run_ACL.sh --proc INGEST   --subject WESAD
+sbatch ~/data/run_ACL.sh --proc GENERATE --experiment degradation --subject WESAD
+sbatch ~/data/run_ACL.sh --proc EVALUATE --experiment degradation --subject WESAD
 ```
 
 ### 4. Fase 1 — ingesta del corpus (`INGEST`)

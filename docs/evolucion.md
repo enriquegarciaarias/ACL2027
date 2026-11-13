@@ -198,6 +198,9 @@ Las sesiones anteriores a la creación de este documento se resumen a partir de
 | 2026-11-12 | ¿Sirve de algo el fingerprint nuevo? | Tras `--fresh --yes`, la segunda ejecución da `reused` en los 15 sujetos y las 4 representaciones | Fingerprints estables: la reutilización funciona y un commit no invalida el corpus |
 | 2026-11-12 | ¿Qué pasa si Ollama no está? | El paso `represent` habría fallado tras reintentar por ventana; los embeddings son complementarios | Ollama caído ⇒ `embeddings: skipped` y la ingesta sigue con numeric/text |
 | 2026-11-12 | ¿Cómo se lanza en el clúster sin depender de `~/data`? | Los scripts quedaban fuera del repo y el lanzador apuntaba a `run_slip_gpu.sh` | `scripts/run_ACL.sh` (GPU, Ollama acotado, código de salida) + `scripts/launch_lsi.sh`; documentado en `docs/ejecucion_slurm.md` |
+| 2026-11-13 | ¿Se sostiene el sistema tras estabilizar el corpus? | Job `INGEST` COMPLETED 0:0 (3:32, 211 artefactos); siguiente run 100 % `reused` | Corpus y fingerprints cerrados; el trabajo pasa a la fase LLM |
+| 2026-11-13 | ¿Responde un modelo mayor a la degradación? | Humo `qwen3:14b` (25 llamadas, 0 errores): abstiene en C2/C4/C5 y decide en C0/C1 | Lanzar el barrido completo de 14b (~5 h, `--time 12:00:00`) y comparar con 7b |
+| 2026-11-13 | ¿Desde dónde se lanzan los scripts? | Se documentaban como `./scripts/launch_lsi.sh`, pero en el servidor el despliegue vive en `~/data` y esa ruta no existe en el repo | Regla permanente (`AGENTS.md` §0.8): repo = fuente, `~/data` = despliegue; todos los comandos usan `~/data/launch_lsi.sh` |
 
 ### Plantilla para la próxima sesión
 

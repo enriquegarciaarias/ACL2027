@@ -10,6 +10,10 @@
 #
 # run_ACL.sh — trabajo Slurm del proyecto ACL2027.
 #
+# UBICACIÓN: este fichero es la FUENTE (repo: scripts/run_ACL.sh). En el
+# servidor se envía la copia DESPLEGADA en ~/data/run_ACL.sh. Tras editar aquí,
+# hay que desplegar: cp scripts/run_ACL.sh scripts/launch_lsi.sh ~/data/
+#
 # Hace, en este orden: comprueba el entorno y la GPU, arranca Ollama, ejecuta
 # una fase del pipeline y lo deja todo limpio (Ollama incluido) al salir.
 #
@@ -60,9 +64,13 @@ if (( HAS_SUBJECT == 0 )); then
     exit 2
 fi
 
-# ---------- Localización del proyecto a partir del propio script ----------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+# ---------- Localización del proyecto ----------
+# OJO: NO se deduce de la ruta de este script. Slurm copia el trabajo a
+# /var/spool/slurmd/jobXXXX/slurm_script, así que $BASH_SOURCE apunta al spool.
+# Este script vive en ~/data (junto al lanzador), mientras que el proyecto y su
+# entorno están en otro sitio. Se resuelve por variable de entorno, con la ruta
+# del servidor como valor por defecto.
+PROJECT_DIR="${ACL2027_PROJECT:-$HOME/data/proyectos/ACL2027}"
 
 echo "=== Iniciando trabajo en $(hostname) a las $(date) ==="
 echo "job: ${SLURM_JOB_ID:-?} | proyecto: $PROJECT_DIR"
@@ -74,8 +82,10 @@ export PYTHONUNBUFFERED=1
 VENV="$PROJECT_DIR/.venv"
 if [[ ! -x "$VENV/bin/python" ]]; then
     echo "[ERROR] no existe el entorno en $VENV/bin/python"
-    echo "        crea el entorno con: python3.12 -m venv $VENV"
-    echo "        o revisa la ruta del proyecto en este script"
+    echo "        proyecto resuelto: $PROJECT_DIR"
+    echo "        se puede cambiar con la variable ACL2027_PROJECT o con"
+    echo "        'launch_lsi.sh --project <ruta>' (sbatch --export)"
+    echo "        crear el entorno: python3.12 -m venv $VENV"
     exit 1
 fi
 # shellcheck disable=SC1091
@@ -113,6 +123,10 @@ python -c "from sources.common.paramsManager import gpu_report; import json; pri
     || echo "[WARN] gpu_report falló; revisa la instalación del entorno"
 
 # ---------- 3. Ollama ----------
+# Se replica el arranque que ya funcionaba en el servidor: `ollama serve` en
+# segundo plano, 5 s de cortesía y sondeo con `curl -s`. Lo único que se añade
+# es un tope de espera, la reutilización de un servidor ya existente y, si no
+# arranca, el final de su log para saber por qué.
 export PATH="$HOME/data/.local/bin:$PATH"
 export LD_LIBRARY_PATH="$HOME/data/.local/lib/ollama:${LD_LIBRARY_PATH:-}"
 export OLLAMA_MODELS="${OLLAMA_MODELS:-$HOME/data/.ollama/models}"
@@ -121,35 +135,56 @@ mkdir -p "$OLLAMA_MODELS"
 OLLAMA_LOG_DIR="$HOME/data/logs"
 mkdir -p "$OLLAMA_LOG_DIR"
 OLLAMA_LOG="$OLLAMA_LOG_DIR/ollama_${SLURM_JOB_ID:-$$}.log"
+OLLAMA_URL="http://127.0.0.1:11434"
+# Arranque en frío observado en el servidor: ~35 s. 24 × 5 s = 2 min de margen.
+OLLAMA_ATTEMPTS="${OLLAMA_ATTEMPTS:-24}"
+
+# `curl -s` como en el script de SLIP, con un tope amplio: el original no tenía
+# timeout, y con `--max-time 2` una primera respuesta lenta (NFS frío, muchos
+# modelos) contaba como "no listo" y alargaba el arranque artificialmente.
+ollama_up() { curl -s --max-time 10 "$OLLAMA_URL/api/tags" > /dev/null; }
 
 OLLAMA_PID=""
-# Limpieza garantizada aunque el pipeline falle (set -e)
 cleanup() {
     if [[ -n "$OLLAMA_PID" ]] && kill -0 "$OLLAMA_PID" 2>/dev/null; then
         echo "Apagando Ollama (pid $OLLAMA_PID)..."
-        kill "$OLLAMA_PID" 2>/dev/null || true
+        # Los runners de GPU son hijos del servidor: se intentan cerrar antes.
+        command -v pkill >/dev/null 2>&1 && pkill -TERM -P "$OLLAMA_PID" 2>/dev/null || true
+        kill -TERM "$OLLAMA_PID" 2>/dev/null || true
         wait "$OLLAMA_PID" 2>/dev/null || true
     fi
 }
-trap cleanup EXIT
+trap cleanup EXIT INT TERM HUP
 
 OLLAMA_READY=0
-if command -v ollama >/dev/null 2>&1; then
+if ollama_up; then
+    # Caso típico tras cancelar un job: su Ollama sigue vivo en el nodo. Se
+    # reutiliza, pero NO se apaga al salir (no lo arrancó este trabajo).
+    echo "[WARN] ya hay un Ollama respondiendo en $OLLAMA_URL (¿job anterior cancelado?)."
+    echo "       Se reutiliza y NO se apagará al terminar este trabajo."
+    OLLAMA_READY=1
+elif command -v ollama >/dev/null 2>&1; then
     echo "Arrancando Ollama (log: $OLLAMA_LOG)..."
     ollama serve > "$OLLAMA_LOG" 2>&1 &
     OLLAMA_PID=$!
 
-    # Espera acotada: 12 intentos × 5 s. Antes, un `until` sin límite podía
-    # consumir las 4 h de pared esperando a un Ollama que no arranca.
-    for attempt in $(seq 1 12); do
-        if curl -sf --max-time 2 http://127.0.0.1:11434/api/tags > /dev/null; then
-            echo "Ollama listo (intento $attempt)."
+    sleep 5
+    for attempt in $(seq 1 "$OLLAMA_ATTEMPTS"); do
+        if ollama_up; then
+            echo "Ollama listo (intento $attempt, ~$(( attempt * 5 )) s)."
             OLLAMA_READY=1
             break
         fi
-        echo "  ... Ollama aún no responde ($attempt/12)"
+        echo "  ... Ollama aún no responde ($attempt/$OLLAMA_ATTEMPTS)"
         sleep 5
     done
+
+    if (( OLLAMA_READY == 0 )); then
+        echo "[ERROR] Ollama no respondió en $(( OLLAMA_ATTEMPTS * 5 )) s."
+        echo "--- últimas 20 líneas de $OLLAMA_LOG ---"
+        tail -n 20 "$OLLAMA_LOG" 2>/dev/null || echo "  (sin log)"
+        echo "----------------------------------------"
+    fi
 else
     echo "[WARN] ollama no está en PATH; no se arranca"
 fi

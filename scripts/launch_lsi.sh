@@ -1,6 +1,11 @@
 #!/bin/bash
 # launch_lsi.sh - Lanza un job Slurm y monitoriza su estado hasta el final.
 #
+# UBICACIÓN: este fichero es la FUENTE (repo: scripts/launch_lsi.sh). En el
+# servidor se ejecuta la copia DESPLEGADA en ~/data/launch_lsi.sh, junto a
+# run_ACL.sh. Tras editar aquí, hay que desplegar:
+#   cp scripts/run_ACL.sh scripts/launch_lsi.sh ~/data/
+#
 # Uso:
 #   ./launch_lsi.sh --proc SCRIPT [--interval SEG] [-h|--help] [-- ARGS...]
 #
@@ -12,6 +17,8 @@
 #   ./launch_lsi.sh --proc run_ACL.sh --interval 15 -- --proc INGEST --subject WESAD
 #   ./launch_lsi.sh --proc run_ACL.sh -- --proc GENERATE --experiment degradation --subject WESAD
 #   ./launch_lsi.sh --proc ~/data/run_slip_gpu.sh --interval 15
+#   ./launch_lsi.sh --proc run_ACL.sh --project ~/data/proyectos/ACL2027 -- \
+#       --proc INGEST --subject WESAD
 #
 # Todo lo que va después de `--` se envía como argumentos al script Slurm:
 #   ./launch_lsi.sh -- --proc GENERATE --experiment degradation --subject WESAD
@@ -51,6 +58,11 @@ Opciones:
   --proc SCRIPT        Script Slurm a enviar (OBLIGATORIO; sin él se sale con
                        código 2). Se busca en el directorio de este lanzador,
                        \$PWD, \$HOME/data y \$HOME, además de rutas absolutas.
+  --time LIMITE        Tiempo máximo del job (p. ej. 12:00:00). Sobrescribe el
+                       #SBATCH --time del script. Pensado para barridos largos.
+  --project DIR        Directorio del proyecto (venv, config.json, results).
+                       Se exporta a Slurm como ACL2027_PROJECT. Si no se indica,
+                       run_ACL.sh usa ~/data/proyectos/ACL2027.
   --interval SEG       Intervalo de refresco en segundos (por defecto: 30).
   -h, --help           Muestra esta ayuda.
 
@@ -62,13 +74,17 @@ Ejemplos:
   $(basename "$0") --proc run_ACL.sh --interval 15 -- --proc INGEST --subject WESAD
   $(basename "$0") --proc run_ACL.sh -- --proc GENERATE --experiment degradation --subject WESAD
   $(basename "$0") --proc ~/data/run_slip_gpu.sh --interval 15
+  $(basename "$0") --proc run_ACL.sh --project ~/data/proyectos/ACL2027 -- --proc INGEST --subject WESAD
 EOF
 }
 
 # ---------- Parseo de argumentos ----------
 PROC=""
+PROJECT=""
+TIME_LIMIT=""
 INTERVAL=30
 JOB_ARGS=()
+SAW_SEP=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -78,6 +94,20 @@ while [[ $# -gt 0 ]]; do
         --proc=*)
             PROC="${1#*=}"
             [[ -n "$PROC" ]] || { err "ERROR: --proc requiere un argumento"; exit 2; }
+            shift ;;
+        --time)
+            [[ $# -ge 2 && "$2" != -* ]] || { err "ERROR: --time requiere un argumento"; exit 2; }
+            TIME_LIMIT="$2"; shift 2 ;;
+        --time=*)
+            TIME_LIMIT="${1#*=}"
+            [[ -n "$TIME_LIMIT" ]] || { err "ERROR: --time requiere un argumento"; exit 2; }
+            shift ;;
+        --project)
+            [[ $# -ge 2 && "$2" != -* ]] || { err "ERROR: --project requiere un argumento"; exit 2; }
+            PROJECT="$2"; shift 2 ;;
+        --project=*)
+            PROJECT="${1#*=}"
+            [[ -n "$PROJECT" ]] || { err "ERROR: --project requiere un argumento"; exit 2; }
             shift ;;
         --interval)
             [[ $# -ge 2 && "$2" =~ ^[0-9]+$ ]] || { err "ERROR: --interval requiere un entero"; exit 2; }
@@ -89,6 +119,7 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             usage; exit 0 ;;
         --)
+            SAW_SEP=1
             shift
             JOB_ARGS=("$@")
             break ;;
@@ -101,6 +132,16 @@ if [[ -z "$PROC" ]]; then
     err "ERROR: falta --proc (script Slurm a enviar)."
     echo
     usage
+    exit 2
+fi
+
+# `--` sin nada detrás = el pipeline arrancaría sin fase. Suele ser una
+# continuación de línea rota al copiar (un `\` con espacio detrás la anula).
+if (( SAW_SEP == 1 )) && (( ${#JOB_ARGS[@]} == 0 )); then
+    err "ERROR: '--' sin argumentos para el script."
+    err "  Si has partido el comando en varias líneas, el '\' final debe ser el"
+    err "  último carácter de la línea. Deja el comando en una sola línea:"
+    err "  $(basename "$0") --proc $PROC -- --proc INGEST --subject WESAD"
     exit 2
 fi
 
@@ -186,14 +227,29 @@ info "== Enviando job =="
 info "   Script:    $SCRIPT"
 info "   JobName:   $JOBNAME"
 [[ -n "$PARTITION" ]] && info "   Partition: $PARTITION"
-echo
 
-if (( ${#JOB_ARGS[@]} > 0 )); then
-    info "   Args:      ${JOB_ARGS[*]}"
-    SUBMIT_OUT=$(sbatch "$SCRIPT" "${JOB_ARGS[@]}" 2>&1) || { err "Fallo al enviar: $SUBMIT_OUT"; exit 1; }
-else
-    SUBMIT_OUT=$(sbatch "$SCRIPT" 2>&1) || { err "Fallo al enviar: $SUBMIT_OUT"; exit 1; }
+if [[ -n "$TIME_LIMIT" ]]; then
+    # Formatos de Slurm: MM, MM:SS, HH:MM:SS, D-HH:MM(:SS)
+    if [[ ! "$TIME_LIMIT" =~ ^([0-9]+-)?[0-9]{1,2}(:[0-9]{2}){0,2}$ ]]; then
+        err "ERROR: --time con formato no válido: $TIME_LIMIT (usa HH:MM:SS)"
+        exit 2
+    fi
+    info "   MaxTime:   $TIME_LIMIT"
 fi
+
+SBATCH_OPTS=()
+[[ -n "$TIME_LIMIT" ]] && SBATCH_OPTS+=(--time="$TIME_LIMIT")
+if [[ -n "$PROJECT" ]]; then
+    PROJECT="$(cd "${PROJECT/#\~/$HOME}" 2>/dev/null && pwd)" \
+        || { err "ERROR: no existe el directorio del proyecto: $PROJECT"; exit 1; }
+    info "   Project:   $PROJECT"
+    # --export=ALL preserva el entorno del submit y añade la variable que lee run_ACL.sh
+    SBATCH_OPTS+=(--export="ALL,ACL2027_PROJECT=$PROJECT")
+fi
+
+info "   Args:      ${JOB_ARGS[*]:-<ninguno>}"
+SUBMIT_OUT=$(sbatch "${SBATCH_OPTS[@]}" "$SCRIPT" "${JOB_ARGS[@]}" 2>&1) \
+    || { err "Fallo al enviar: $SUBMIT_OUT"; exit 1; }
 echo "$SUBMIT_OUT"
 
 JOBID=$(printf '%s' "$SUBMIT_OUT" | grep -oE 'Submitted batch job [0-9]+' | grep -oE '[0-9]+' | tail -n1 || true)

@@ -325,6 +325,37 @@ def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict
     }
 
 
+def print_per_class_table(
+    report: dict[str, Any], conditions: list[str]
+) -> None:
+    """Recall por clase real (solo tiene sentido con el prompt de 4 clases)."""
+    if not any(
+        entry.get("per_class") for entry in report["conditions"].values()
+    ):
+        return
+    classes = ("baseline", "stress", "amusement", "meditation")
+    print("\n=== Por clase real: recall (todas / decididas) ===")
+    print(f"{'condición':16s} " + " ".join(f"{c[:7]:>13s}" for c in classes))
+    for condition in conditions:
+        entry = report["conditions"][condition]
+        if not entry.get("n"):
+            continue
+        cells = []
+        for class_name in classes:
+            bucket = (entry.get("per_class") or {}).get(class_name)
+            if not bucket:
+                cells.append(f"{'-':>13s}")
+                continue
+            cells.append(
+                f"{bucket['recall']:5.3f}/{bucket['recall_decided']:5.3f}".rjust(13)
+            )
+        print(f"{condition:16s} " + " ".join(cells))
+    print(
+        "  baseline/amusement/meditation: si el modelo nunca las predice, su "
+        "recall es 0 aunque la accuracy de 4 clases parezca alta."
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--conditions", default=",".join(DEFAULT_CONDITIONS))
@@ -551,27 +582,7 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     if not binary:
-        print("\n=== Por clase real: recall (todas / decididas) ===")
-    classes = ("baseline", "stress", "amusement", "meditation")
-    print(f"{'condición':16s} " + " ".join(f"{c[:7]:>13s}" for c in classes))
-    for condition in conditions:
-        entry = report["conditions"][condition]
-        if binary or not entry.get("n"):
-            continue
-        cells = []
-        for class_name in classes:
-            bucket = (entry.get("per_class") or {}).get(class_name)
-            if not bucket:
-                cells.append(f"{'-':>13s}")
-                continue
-            cells.append(
-                f"{bucket['recall']:5.3f}/{bucket['recall_decided']:5.3f}".rjust(13)
-            )
-        print(f"{condition:16s} " + " ".join(cells))
-    print(
-        "  baseline/amusement/meditation: si el modelo nunca las predice, su "
-        "recall es 0 aunque la accuracy de 4 clases parezca alta."
-    )
+        print_per_class_table(report, conditions)
 
     print(
         "\n=== Endpoint binario (prompt binario) ==="

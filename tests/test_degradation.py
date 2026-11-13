@@ -259,3 +259,13 @@ def test_analyze_group_binary_empty():
     from analyze_degradation import analyze_group_binary
 
     assert analyze_group_binary([], {}) == {"n": 0}
+
+
+def test_print_per_class_table_silent_without_per_class(capsys):
+    """Con prompt binario no hay desglose por clase: no se imprime la tabla."""
+    from analyze_degradation import print_per_class_table
+
+    report = {"conditions": {"C0_clean": {"n": 567, "per_class": {}}}}
+    print_per_class_table(report, ["C0_clean"])
+    out = capsys.readouterr().out
+    assert out == ""   # nada: sin per_class no hay tabla que imprimir

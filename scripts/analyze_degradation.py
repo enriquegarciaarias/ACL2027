@@ -90,6 +90,25 @@ def load_records(
     return records
 
 
+def _certainty_stats(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Resumen de certeza lingüística de un conjunto de respuestas."""
+    if not items:
+        return {
+            "n": 0,
+            "hedges_mean": float("nan"),
+            "boosters_mean": float("nan"),
+            "certainty_index_mean": float("nan"),
+            "words_mean": float("nan"),
+        }
+    return {
+        "n": len(items),
+        "hedges_mean": float(np.mean([c["hedges"] for c in items])),
+        "boosters_mean": float(np.mean([c["boosters"] for c in items])),
+        "certainty_index_mean": float(np.mean([c["certainty_index"] for c in items])),
+        "words_mean": float(np.mean([c["n_words"] for c in items])),
+    }
+
+
 def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict[str, Any]:
     """Métricas de corrección, calibración, claims y certeza de un grupo."""
     if not records:
@@ -111,6 +130,8 @@ def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict
 
     verdicts = []
     certainties = []
+    certainties_decided: list[dict[str, Any]] = []
+    certainties_abstain: list[dict[str, Any]] = []
     n_claims = 0
     for record in records:
         claims = record.get("claims") or []
@@ -120,6 +141,10 @@ def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict
         certainty = linguistic_certainty(record.get("reasoning", "") or "")
         if certainty["n_words"] > 0:
             certainties.append(certainty)
+            if (record.get("decision") or "") == "abstain":
+                certainties_abstain.append(certainty)
+            else:
+                certainties_decided.append(certainty)
 
     from sources.phase3.evaluator import _compute_auroc_one_vs_rest
 
@@ -206,21 +231,12 @@ def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict
         "binary_mapped": binary_mapped,
         "claims": {**claim_summary, "n_claims_total": n_claims},
         "certainty": {
-            "n_responses": len(certainties),
-            "hedges_mean": float(np.mean([c["hedges"] for c in certainties]))
-            if certainties
-            else float("nan"),
-            "boosters_mean": float(np.mean([c["boosters"] for c in certainties]))
-            if certainties
-            else float("nan"),
-            "certainty_index_mean": float(
-                np.mean([c["certainty_index"] for c in certainties])
-            )
-            if certainties
-            else float("nan"),
-            "words_mean": float(np.mean([c["n_words"] for c in certainties]))
-            if certainties
-            else float("nan"),
+            **_certainty_stats(certainties),
+            # La certeza de una abstención habla de la evidencia («the channel
+            # is clearly missing»), no del afecto: se separa para no confundir
+            # H2b con la redacción del veto.
+            "decided": _certainty_stats(certainties_decided),
+            "abstain": _certainty_stats(certainties_abstain),
         },
     }
 
@@ -396,17 +412,30 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     print("\n=== Certeza lingüística (H2b) ===")
-    print(f"{'condición':16s} {'hedges':>7s} {'boost':>7s} {'índice':>8s} {'palabras':>9s}")
+    print(
+        f"{'condición':16s} {'hedges':>7s} {'boost':>7s} {'índice':>8s} "
+        f"{'palabras':>9s} {'índ_dec':>8s} {'n_dec':>6s} {'índ_abs':>8s} {'n_abs':>6s}"
+    )
     for condition in conditions:
         entry = report["conditions"][condition]
         certainty = entry.get("certainty") or {}
-        if not certainty.get("n_responses"):
+        if not certainty.get("n"):
             continue
+        decided = certainty.get("decided") or {}
+        abstain = certainty.get("abstain") or {}
         print(
             f"{condition:16s} {certainty['hedges_mean']:7.2f} "
             f"{certainty['boosters_mean']:7.2f} {certainty['certainty_index_mean']:8.2f} "
-            f"{certainty['words_mean']:9.1f}"
+            f"{certainty['words_mean']:9.1f} "
+            f"{decided.get('certainty_index_mean', float('nan')):8.2f} "
+            f"{decided.get('n', 0):6d} "
+            f"{abstain.get('certainty_index_mean', float('nan')):8.2f} "
+            f"{abstain.get('n', 0):6d}"
         )
+    print(
+        "  índice: global. índ_dec / índ_abs: solo decididas / solo abstenciones "
+        "(una abstención habla de la evidencia, no del afecto)."
+    )
 
     print("\n=== H1/H4: resolubilidad (referencia features-only) y abstención ===")
     print(

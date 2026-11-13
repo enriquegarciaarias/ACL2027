@@ -172,3 +172,24 @@ def test_analyze_group_binary_mapped_endpoint():
     assert binary["coverage"] == pytest.approx(0.75)
     assert binary["accuracy"] == pytest.approx(1.0)
     assert binary["recall_stress"] == pytest.approx(1.0)
+
+
+def test_analyze_group_splits_certainty_by_decision():
+    """Una abstención habla de la evidencia, no del afecto: se separa (H2b)."""
+    from analyze_degradation import analyze_group
+
+    metrics = analyze_group(_analysis_records(), _analysis_labels())
+    certainty = metrics["certainty"]
+
+    assert certainty["n"] == 4
+    assert certainty["decided"]["n"] == 3
+    assert certainty["abstain"]["n"] == 1
+    assert certainty["decided"]["n"] + certainty["abstain"]["n"] == certainty["n"]
+
+
+def test_certainty_stats_empty_is_nan():
+    from analyze_degradation import _certainty_stats
+
+    stats = _certainty_stats([])
+    assert stats["n"] == 0
+    assert stats["certainty_index_mean"] != stats["certainty_index_mean"]  # NaN

@@ -379,3 +379,42 @@ def test_unknown_decision_mode_raises():
 
 def test_binary_decisions_constant():
     assert BINARY_DECISIONS == frozenset({"stress", "non-stress", "abstain"})
+
+
+def test_magnitude_stable_is_normalized_to_low():
+    """El job 2632 produjo `magnitude: "stable"`: se normaliza, no se descarta."""
+    raw = (
+        '{"decision": "baseline", "confidence": 70, '
+        '"claims": [{"metric": "eda_mean_us", "channel": "eda", '
+        '"direction": "stable", "magnitude": "stable"}], '
+        '"reasoning": "EDA stays flat."}'
+    )
+    resp = validate_llm_output(raw)
+    assert resp.status == "valid_response"
+    assert resp.claims[0].direction == "stable"
+    assert resp.claims[0].magnitude == "low"
+
+
+def test_magnitude_stability_synonyms_are_normalized():
+    for word in ("unchanged", "no change", "same", "flat", "none", "n/a"):
+        raw = (
+            '{"decision": "baseline", "confidence": 60, "claims": '
+            '[{"metric": "ecg_hr_bpm", "channel": "ecg", '
+            f'"direction": "stable", "magnitude": "{word}"}}], '
+            '"reasoning": "HR is steady."}'
+        )
+        resp = validate_llm_output(raw)
+        assert resp.status == "valid_response", (word, resp.error_message)
+        assert resp.claims[0].magnitude == "low"
+
+
+def test_magnitude_unknown_value_still_invalid():
+    raw = (
+        '{"decision": "baseline", "confidence": 60, "claims": '
+        '[{"metric": "ecg_hr_bpm", "channel": "ecg", '
+        '"direction": "stable", "magnitude": "banana"}], '
+        '"reasoning": "HR is steady."}'
+    )
+    resp = validate_llm_output(raw)
+    assert resp.status == "invalid_output"
+    assert "no permitido" in resp.error_message

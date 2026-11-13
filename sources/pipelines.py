@@ -141,6 +141,8 @@ def build_generate_argv(
         _append_flag(argv, "--representation", getattr(args, "representation", None))
         _append_flag(argv, "--conditions", getattr(args, "conditions", None))
         _append_flag(argv, "--subjects", getattr(args, "subjects", None))
+        if getattr(args, "think", False):
+            argv.append("--think")
         if getattr(args, "allowDev", False):
             argv.append("--allow-dev")
     elif experiment == "centering":

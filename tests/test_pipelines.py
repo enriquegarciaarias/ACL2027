@@ -73,6 +73,15 @@ def test_generate_degradation_argv():
     assert "--conditions" in argv and "C0_clean,C4_total_eda" in argv
     assert "--subjects" in argv and "S5,S6" in argv
     assert "--allow-dev" in argv
+    assert "--think" not in argv
+
+
+def test_generate_degradation_passes_think():
+    """``--think`` no se perdía en el despacho (gap detectado el 2026-11-13)."""
+    argv = pipelines.build_generate_argv(
+        "degradation", _args(representation="numeric", think=True)
+    )
+    assert "--think" in argv
 
 
 def test_generate_physionet_argv():

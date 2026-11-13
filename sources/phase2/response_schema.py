@@ -136,6 +136,14 @@ MAGNITUDE_ALIASES: dict[str, str] = {
     "severe": "high",
 }
 
+# Palabras de estabilidad que el modelo escribe a veces como **magnitud**
+# (``"direction": "stable", "magnitude": "stable"``). La magnitud no se evalúa
+# en los claims estables (ver ``sources.phase3.claims``), así que se normaliza
+# al nivel menos específico en lugar de descartar la respuesta entera.
+STABILITY_WORDS_AS_MAGNITUDE: frozenset[str] = frozenset(
+    {"stable", "unchanged", "no change", "same", "flat", "none", "n/a", "na"}
+)
+
 # Campos obligatorios del esquema JSON (en orden: decision antes de reasoning).
 REQUIRED_FIELDS: tuple[str, ...] = ("decision", "confidence", "claims", "reasoning")
 
@@ -252,6 +260,12 @@ def _validate_claim(claim: Any, index: int) -> tuple[Claim | None, str | None]:
     magnitude = magnitude.lower().strip()
     direction = DIRECTION_ALIASES.get(direction, direction)
     magnitude = MAGNITUDE_ALIASES.get(magnitude, magnitude)
+
+    # ``"magnitude": "stable"`` (y sinónimos) en lugar de low|medium|high: se
+    # normaliza, porque la magnitud no se evalúa cuando la dirección es estable
+    # y descartar la respuesta perdería también sus demás claims.
+    if magnitude in STABILITY_WORDS_AS_MAGNITUDE:
+        magnitude = "low"
 
     # Extraer el nombre base del canal eliminando prefijos de ubicación
     # (ej. "wrist_eda" -> "eda", "chest_ecg" -> "ecg").

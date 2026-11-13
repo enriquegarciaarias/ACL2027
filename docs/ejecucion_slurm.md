@@ -237,6 +237,7 @@ de enviar el trabajo.
 | `bind: address already in use` | quedó un Ollama de un job anterior | el script lo detecta y lo reutiliza; si es de otro usuario, `scancel` el job o espera |
 | Lanzas `ollama serve` a mano y el job "se arregla" | el manual ocupa el puerto; el del job falla al bindear | no lances uno en paralelo: espera los 2 min del script |
 | El job muere a las 4 h en mitad de un barrido | el `#SBATCH --time` del script es de 4 h y 2.835 llamadas rondan las 5 | `--time 12:00:00`; el barrido reanuda por `(ventana, condición)` |
+| `main.py: error: unrecognized arguments: --` (código 2) | se coló un `--` **entre** los argumentos de la fase al copiar el comando; el separador va una sola vez, antes de la fase | desde 2026-11-13 `main.py` lo ignora con aviso y el lanzador avisa antes de enviar; aun así, revisa el comando |
 | El job termina en segundos y el log parece vacío | falta `config.json` o el dataset | `python main.py ... --dry-run` y revisa `paths` y `warnings` |
 | `Job completado` pero sin resultados | el pipeline devolvió error y el wrapper no lo miraba | ahora `run_ACL.sh` propaga el código y Slurm marca `FAILED` |
 

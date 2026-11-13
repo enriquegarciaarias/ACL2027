@@ -145,6 +145,18 @@ if (( SAW_SEP == 1 )) && (( ${#JOB_ARGS[@]} == 0 )); then
     exit 2
 fi
 
+# Un '--' dentro de los argumentos de la fase es un resto de copia: solo hay un
+# separador válido, el que va antes de la fase. main.py lo ignora con aviso,
+# pero mejor decirlo antes de enviar el trabajo.
+for _arg in "${JOB_ARGS[@]}"; do
+    if [[ "$_arg" == "--" ]]; then
+        warn "AVISO: sobra un '--' entre los argumentos de la fase (se ignorará)."
+        warn "       El separador va una sola vez, antes de la fase:"
+        warn "       $(basename "$0") --proc $PROC -- --proc GENERATE --subject WESAD ..."
+        break
+    fi
+done
+
 # ---------- Resolución del script ----------
 resolve_script() {
     local name="$1"

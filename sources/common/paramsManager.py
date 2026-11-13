@@ -47,6 +47,25 @@ _NVIDIA_SMI_CANDIDATES = (
 _NVIDIA_PROC_VERSION = Path("/proc/driver/nvidia/version")
 
 
+def _strip_stray_separator(argv: list[str]) -> tuple[list[str], int]:
+    """Descarta los ``--`` sueltos que ``argparse`` no sabe ignorar.
+
+    El parser no tiene argumentos posicionales, y en ese caso ``argparse``
+    **no** consume un ``--`` huérfano: lo denuncia como
+    ``unrecognized arguments: --`` y sale con código 2. Es lo que ocurre al
+    copiar de más el separador de ``launch_lsi.sh`` (allí ``--`` separa el
+    script de la fase; detrás solo debe ir una vez).
+
+    Args:
+        argv: argumentos tal cual llegan (sin ``sys.argv[0]``).
+
+    Returns:
+        ``(argv_limpio, n_descartados)``.
+    """
+    cleaned = [arg for arg in argv if arg != "--"]
+    return cleaned, len(argv) - len(cleaned)
+
+
 def manageArgs():
     """Parsea los argumentos de línea de comandos del proceso principal.
 
@@ -188,7 +207,17 @@ def manageArgs():
         help="Confirmar operaciones destructivas (--fresh).",
     )
 
-    args = parser.parse_args()
+    argv, dropped = _strip_stray_separator(sys.argv[1:])
+    if dropped:
+        writeLog(
+            "warning",
+            logger,
+            f"Se ignora{'n' if dropped > 1 else ''} {dropped} '--' suelto"
+            f"{'s' if dropped > 1 else ''} en los argumentos. El separador de "
+            "launch_lsi.sh va una sola vez, justo antes de la fase.",
+        )
+
+    args = parser.parse_args(argv)
     return args
 
 

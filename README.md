@@ -138,6 +138,11 @@ El proyecto vive en `~/data/proyectos/ACL2027`; el trabajo lo resuelve con
 `ACL2027_PROJECT` (o con `--project`), porque Slurm ejecuta una copia en
 `/var/spool/slurmd`.
 
+**Por defecto, en el servidor todo se lanza así.** Solo lo pequeño (sin GPU ni
+Ollama, minutos) se ejecuta a mano en la terminal SSH: `--dry-run`,
+`scripts/compare_models.py`, `scripts/analyze_*.py`, `bash -n`, `ls`/`grep`.
+Ante la duda, lanzador.
+
 `run_ACL.sh` es el trabajo Slurm: comprueba el entorno y la GPU, arranca Ollama
 (con espera acotada), ejecuta una fase del pipeline y lo apaga al salir.
 Los argumentos son obligatorios y se pasan tal cual a `main.py` (sin `--proc`

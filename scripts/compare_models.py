@@ -46,20 +46,52 @@ DEFAULT_OUTPUT = REPO_ROOT / "results" / "output" / "WESAD" / "PHASE2" / (
 )
 
 
-def _model_dir(base: Path, model: str) -> Path:
+def _model_dir(base: Path, model: str, quiet: bool = False) -> Path:
     """Subdirectorio del modelo, con caída a la carpeta histórica."""
     candidate = base / model_slug(model)
     if candidate.is_dir():
         return candidate
     if base.is_dir() and any(base.glob("*.responses.jsonl")):
-        print(
-            f"[AVISO] No existe {candidate}; se usa la carpeta histórica {base}."
-        )
+        if not quiet:
+            print(
+                f"[AVISO] No existe {candidate}; se usa la carpeta histórica {base}."
+            )
         return base
     raise SystemExit(
         f"No hay respuestas para {model} en {candidate}. "
         f"Ejecuta primero el experimento con --model {model}."
     )
+
+
+def _base_dir(mode: str, representation: str) -> Path:
+    """Directorio raíz de los datos del modo pedido."""
+    if mode == "degradation":
+        name = "degradation" if representation == "numeric" else "degradation_text"
+    else:
+        name = "llm_responses"
+    return REPO_ROOT / "results" / "output" / "WESAD" / "PHASE2" / name
+
+
+def check_distinct_models(
+    models: Sequence[str], mode: str, representation: str
+) -> None:
+    """Falla si dos modelos apuntan al mismo directorio de datos.
+
+    Es la red de seguridad para el caso del job 2703 (2026-11-13): el nombre
+    ``qwen3:14b`` llegó truncado como ``qwen3`` y ambos modelos cayeron en la
+    carpeta histórica, así que se comparaba un corpus consigo mismo.
+    """
+    base = _base_dir(mode, representation)
+    seen: dict[Path, str] = {}
+    for model in models:
+        directory = _model_dir(base, model, quiet=True)
+        if directory in seen:
+            raise SystemExit(
+                f"Los modelos '{seen[directory]}' y '{model}' apuntan al mismo "
+                f"directorio ({directory}). Suele ser un nombre truncado o mal "
+                "copiado en --models: revisa la lista."
+            )
+        seen[directory] = model
 
 
 def _models_found(records: Iterable[Mapping[str, Any]]) -> set[str]:
@@ -82,9 +114,7 @@ def load_degradation(
     """Registros del barrido de degradación y la función de métricas."""
     from analyze_degradation import analyze_group, load_labels, load_records
 
-    base = REPO_ROOT / "results" / "output" / "WESAD" / "PHASE2" / (
-        "degradation" if representation == "numeric" else "degradation_text"
-    )
+    base = _base_dir("degradation", representation)
     directory = _model_dir(base, model)
     labels = load_labels()
     records = load_records(directory, conditions, split="evaluation")
@@ -304,8 +334,8 @@ def print_report(report: Mapping[str, Any]) -> None:
     for model, found in report["models_in_data"].items():
         print(f"  {model}: datos de {found}")
     print(
-        f"\n{'condición':16s} {'modelo':16s} {'n':>5s} {'abst':>6s} {'acc':>6s} "
-        f"{'bal':>6s} {'ECE':>6s} {'sup':>6s} {'contra':>7s} {'certeza':>8s}"
+        f"\n{'condición':16s} {'modelo':16s} {'n':>5s} {'dec':>5s} {'abst':>6s} {'acc*':>6s} "
+        f"{'bal*':>6s} {'ECE*':>6s} {'sup':>6s} {'contra':>7s} {'certeza':>8s}"
     )
     for condition in report["conditions"]:
         for entry in report["tables"].get(condition, []):
@@ -314,8 +344,10 @@ def print_report(report: Mapping[str, Any]) -> None:
                 contra = f"{entry['claims_contradicted']:7.3f}"
             else:
                 support, contra = "   n/a", "    n/a"
+            decided = int(round(entry["n"] * (1.0 - entry["abstention_rate"])))
             print(
                 f"{condition:16s} {entry['model']:16s} {entry['n']:5d} "
+                f"{decided:5d} "
                 f"{entry['abstention_rate']:6.3f} {entry['accuracy']:6.3f} "
                 f"{entry['balanced_accuracy']:6.3f} {entry['ece']:6.3f} "
                 f"{support} {contra} "
@@ -323,8 +355,15 @@ def print_report(report: Mapping[str, Any]) -> None:
             )
         print()
 
+    print(
+        "  * acc, bal y ECE se calculan solo sobre las DECIDIDAS. Con abstención "
+        "alta (mirar 'dec') no son comparables:\n"
+        "    un modelo que se abstiene en el 99 % puede mostrar acc 1.000 sobre "
+        "una sola ventana."
+    )
+
     if report["deltas"]:
-        print("Diferencias de accuracy (bootstrap por sujeto, IC 95 %):")
+        print("\nDiferencias de accuracy (bootstrap por sujeto, IC 95 %):")
         for condition, entries in report["deltas"].items():
             for label, stats in entries.items():
                 print(
@@ -333,6 +372,10 @@ def print_report(report: Mapping[str, Any]) -> None:
                     f"[{stats['ci_low']:+.3f}; {stats['ci_high']:+.3f}] "
                     f"({stats['n_subjects']} sujetos)"
                 )
+        print(
+            "  Solo se remuestrean los sujetos con ventanas decididas en ambos "
+            "modelos: con 1 sujeto (o 0) el intervalo no es inferencia."
+        )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -360,6 +403,7 @@ def main(argv: list[str] | None = None) -> None:
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     if len(models) < 2:
         raise SystemExit("Se necesitan al menos dos modelos para comparar.")
+    check_distinct_models(models, args.mode, args.representation)
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
 
     report = compare(models, args.mode, args.representation, conditions)

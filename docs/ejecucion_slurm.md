@@ -96,6 +96,13 @@ es *qué fase del pipeline*.
 > detrás de la barra la anula y bash ejecuta cada línea por separado
 > (`--proc: no se encontró la orden`). El lanzador detecta el caso de `--` sin
 > argumentos y se detiene con un mensaje, pero mejor evitarlo.
+>
+> **Cuidado al copiar comandos largos.** Si el terminal los parte por ancho,
+> bash ejecuta el fragmento sobrante como comando aparte y verás líneas como
+> `14b: no se encontró la orden` o `representation: no se encontró la orden`
+> mientras `main.py` recibe un argumento truncado (`qwen3:` en lugar de
+> `qwen3:14b`). Comprueba con `echo` antes de enviar, o usa comandos cortos
+> (p. ej. `python scripts/compare_models.py --models qwen2.5:7b,qwen3:14b`).
 
 **Resolución del script** (en este orden): el directorio del lanzador
 (`scripts/`), el directorio actual, `~/data` y `~`; las rutas absolutas se
@@ -207,6 +214,28 @@ sbatch ~/data/run_ACL.sh --proc EVALUATE --experiment degradation --subject WESA
 `--fresh` **no** va en el lanzamiento habitual: borra los 15 GB derivados y
 recalcula. Sin él, `INGEST` reutiliza en segundos lo que no ha cambiado
 (ver [`ingestion.md`](ingestion.md#empezar-de-cero)).
+
+`EVALUATE` no usa GPU ni Ollama (solo lee artefactos), así que puede ejecutarse
+**en el nodo de login** sin cola. Para el comparador, el comando corto es:
+
+```bash
+python scripts/compare_models.py --models qwen2.5:7b,qwen3:14b
+```
+
+### Qué se lanza con Slurm y qué se corre en la terminal
+
+Regla: **en el servidor, por defecto se lanza con `~/data/launch_lsi.sh`**.
+Solo se ejecuta a mano en la terminal SSH lo que es pequeño (sin GPU, sin
+Ollama, minutos) y no compite por la partición. El nodo de login es compartido.
+
+| Tarea | Cómo |
+|---|---|
+| `INGEST`, `GENERATE` (cualquier experimento) | lanzador (Slurm) |
+| `GENERATE --think`, barridos de degradación, pilotos con LLM | lanzador (Slurm) |
+| `EVALUATE` largo (p. ej. `physionet` con 8.5k registros) | lanzador (Slurm) |
+| `--dry-run` de cualquier fase | terminal SSH |
+| `scripts/compare_models.py`, `scripts/analyze_*.py` | terminal SSH (minutos, solo leen) |
+| `bash -n`, `ls`, `grep`, inspección de artefactos | terminal SSH |
 
 ---
 

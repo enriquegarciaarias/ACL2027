@@ -39,7 +39,7 @@ from sources.ingestion.represent import _opaque_window_id
 from sources.phase2.llm_config import model_slug
 from sources.phase3.certainty import linguistic_certainty
 from sources.phase3.claims import summarize_verdicts, verify_claims
-from sources.phase3.records import evaluate_records
+from sources.phase3.records import evaluate_binary_records, evaluate_records
 from sources.phase3.recovery import apply_recovery
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -150,6 +150,42 @@ def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict
         for record in records
         if record.get("confidence") is not None
     ]
+
+    # Desglose por clase real: ¿el modelo llega a predecir las cuatro?
+    per_class: dict[str, dict[str, Any]] = {}
+    for record in records:
+        truth = label_by_opaque.get(record["window_id_opaque"], "UNKNOWN")
+        if truth == "UNKNOWN":
+            continue
+        bucket = per_class.setdefault(
+            truth, {"n": 0, "decided": 0, "correct": 0, "predictions": {}}
+        )
+        bucket["n"] += 1
+        decision = record.get("decision")
+        if not decision or decision == "abstain":
+            continue
+        bucket["decided"] += 1
+        bucket["predictions"][decision] = bucket["predictions"].get(decision, 0) + 1
+        if decision == truth:
+            bucket["correct"] += 1
+    for bucket in per_class.values():
+        bucket["recall"] = bucket["correct"] / bucket["n"] if bucket["n"] else 0.0
+        bucket["recall_decided"] = (
+            bucket["correct"] / bucket["decided"] if bucket["decided"] else 0.0
+        )
+
+    # Endpoint primario en modo binario: se reinterpreta la decisión de 4 clases
+    # (baseline, amusement y meditation → non-stress). Mide al LLM con la misma
+    # vara que la referencia binaria, sin gastar llamadas.
+    binary_mapped = evaluate_binary_records(
+        records,
+        label_by_opaque,
+        other_decisions_map={
+            "baseline": "non-stress",
+            "amusement": "non-stress",
+            "meditation": "non-stress",
+        },
+    )
     return {
         "n": metrics["n"],
         "n_valid": metrics["n_valid"],
@@ -166,6 +202,8 @@ def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict
         "confidence_std": float(np.std(confidences)) if confidences else float("nan"),
         "n_distinct_confidence": len({round(c, 2) for c in confidences}),
         "confidence_auroc_correctness": confidence_auroc,
+        "per_class": per_class,
+        "binary_mapped": binary_mapped,
         "claims": {**claim_summary, "n_claims_total": n_claims},
         "certainty": {
             "n_responses": len(certainties),
@@ -385,6 +423,51 @@ def main(argv: list[str] | None = None) -> None:
             f"{ref['balanced_accuracy_binary']:8.3f} {str(ref['resolvable']):>10s} "
             f"{entry['accuracy']:8.3f} {entry['abstention_rate']:9.3f}"
         )
+
+    print("\n=== Por clase real: recall (todas / decididas) ===")
+    classes = ("baseline", "stress", "amusement", "meditation")
+    print(f"{'condición':16s} " + " ".join(f"{c[:7]:>13s}" for c in classes))
+    for condition in conditions:
+        entry = report["conditions"][condition]
+        if not entry.get("n"):
+            continue
+        cells = []
+        for class_name in classes:
+            bucket = (entry.get("per_class") or {}).get(class_name)
+            if not bucket:
+                cells.append(f"{'-':>13s}")
+                continue
+            cells.append(
+                f"{bucket['recall']:5.3f}/{bucket['recall_decided']:5.3f}".rjust(13)
+            )
+        print(f"{condition:16s} " + " ".join(cells))
+    print(
+        "  baseline/amusement/meditation: si el modelo nunca las predice, su "
+        "recall es 0 aunque la accuracy de 4 clases parezca alta."
+    )
+
+    print("\n=== Endpoint binario (4 clases mapeadas a stress / non-stress) ===")
+    print(
+        f"{'condición':16s} {'cob':>6s} {'abst':>6s} {'acc':>6s} {'bal':>6s} "
+        f"{'prec':>6s} {'rec':>6s} {'ref_bin':>8s}"
+    )
+    for condition in conditions:
+        entry = report["conditions"][condition]
+        binary = entry.get("binary_mapped") or {}
+        ref = report["reference_by_condition"].get(condition, {})
+        if not binary.get("n"):
+            continue
+        print(
+            f"{condition:16s} {binary['coverage']:6.3f} "
+            f"{binary['abstention_rate']:6.3f} {binary['accuracy']:6.3f} "
+            f"{binary['balanced_accuracy']:6.3f} "
+            f"{binary['precision_stress']:6.3f} {binary['recall_stress']:6.3f} "
+            f"{ref.get('balanced_accuracy_binary', float('nan')):8.3f}"
+        )
+    print(
+        "  acc/bal/prec/rec se miden sobre las decididas ('cob' = cobertura). "
+        "La columna ref_bin es la referencia features-only."
+    )
 
     print("\n=== H2a: confianza como predictor de corrección ===")
     print(f"{'condición':16s} {'AUROC_conf':>10s} {'conf':>6s} {'acc':>6s} {'sobreconf':>10s}")

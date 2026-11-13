@@ -120,3 +120,87 @@ def test_summarize_counts_evaluable_claims():
     summary = cm.summarize(metrics)
     assert summary["claims_evaluable"] == 20
     assert summary["claims_supported"] == pytest.approx(0.75)
+
+
+def test_check_distinct_models_rejects_shared_directory(tmp_path, monkeypatch):
+    """Job 2703: `qwen3:14b` llegó truncado como `qwen3` y ambos cayeron en
+    la carpeta histórica; el comparador debe pararlo en vez de comparar un
+    corpus consigo mismo."""
+    _write(tmp_path / "S5.responses.jsonl", "")
+    monkeypatch.setattr(cm, "_base_dir", lambda mode, representation: tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        cm.check_distinct_models(["qwen2.5:7b", "qwen3"], "degradation", "numeric")
+    assert "mismo directorio" in str(exc.value)
+
+
+def test_check_distinct_models_accepts_separate_directories(tmp_path, monkeypatch):
+    """Con los dos subdirectorios por modelo no hay colisión."""
+    _write(tmp_path / "qwen2_5_7b" / "S5.responses.jsonl", "")
+    _write(tmp_path / "qwen3_14b" / "S5.responses.jsonl", "")
+    monkeypatch.setattr(cm, "_base_dir", lambda mode, representation: tmp_path)
+
+    cm.check_distinct_models(
+        ["qwen2.5:7b", "qwen3:14b"], "degradation", "numeric"
+    )
+
+
+def test_model_dir_quiet_suppresses_legacy_warning(tmp_path, capsys):
+    """El preflight no repite el aviso de la carpeta histórica."""
+    _write(tmp_path / "S5.responses.jsonl", "")
+    cm._model_dir(tmp_path, "qwen2.5:7b", quiet=True)
+    assert capsys.readouterr().out == ""
+
+
+def _report_stub(abstention: float, accuracy: float, n: int = 100) -> dict:
+    return {
+        "mode": "degradation",
+        "representation": "numeric",
+        "models": ["a", "b"],
+        "models_in_data": {"a": ["a"], "b": ["b"]},
+        "conditions": ["C0_clean"],
+        "tables": {
+            "C0_clean": [
+                {
+                    "model": "b",
+                    "n": n,
+                    "abstention_rate": abstention,
+                    "accuracy": accuracy,
+                    "balanced_accuracy": accuracy,
+                    "ece": 0.1,
+                    "claims_evaluable": 10,
+                    "claims_supported": 0.8,
+                    "claims_contradicted": 0.2,
+                    "certainty_index": 0.0,
+                    "claims_n": 40,
+                }
+            ]
+        },
+        "deltas": {},
+    }
+
+
+def test_print_report_shows_decided_count(capsys):
+    cm.print_report(_report_stub(abstention=0.963, accuracy=0.571, n=567))
+    out = capsys.readouterr().out
+    assert "dec" in out
+    assert "21" in out          # 567 × (1 − 0.963) ≈ 21 decididas
+    assert "DECIDIDAS" in out   # aviso de la trampa de la abstención
+
+
+def test_print_report_warns_about_deltas_with_one_subject(capsys):
+    report = _report_stub(abstention=0.998, accuracy=1.0)
+    report["deltas"] = {
+        "C2_partial_eda": {
+            "b - a": {
+                "delta": 0.457,
+                "ci_low": 0.457,
+                "ci_high": 0.457,
+                "n_subjects": 1,
+            }
+        }
+    }
+    cm.print_report(report)
+    out = capsys.readouterr().out
+    assert "+0.457" in out
+    assert "no es inferencia" in out

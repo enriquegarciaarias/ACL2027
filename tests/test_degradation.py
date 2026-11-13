@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from sources.phase3.degradation import (
     EFFECTIVE_CONDITIONS,
@@ -69,3 +73,102 @@ def test_build_payload_reference_is_condition_independent():
     degraded = build_payload("w", {"eda_mean_us": 0.0}, centers, scales, 60.0)
     assert clean["modalities"]["eda"]["eda_mean_us"]["value"] == pytest.approx(0.0)
     assert degraded["modalities"]["eda"]["eda_mean_us"]["value"] == pytest.approx(-2.0)
+
+
+# ---------------------------------------------------------------------------
+# Desglose por clase y endpoint binario mapeado (analyze_degradation)
+# ---------------------------------------------------------------------------
+def _analysis_records() -> list[dict]:
+    """Cuatro ventanas, una por clase; el modelo nunca predice amusement ni
+    meditation (patrón real del 7b) y se abstiene en una."""
+    return [
+        {
+            "window_id": "WESAD:S5:w00001",
+            "window_id_opaque": "win_00000001",
+            "condition_id": "C0_clean",
+            "subject": "S5",
+            "status": "valid_response",
+            "decision": "baseline",
+            "confidence": 80,
+            "claims": [],
+            "reasoning": "Stable.",
+            "prompt": "",
+        },
+        {
+            "window_id": "WESAD:S5:w00002",
+            "window_id_opaque": "win_00000002",
+            "condition_id": "C0_clean",
+            "subject": "S5",
+            "status": "valid_response",
+            "decision": "stress",
+            "confidence": 90,
+            "claims": [],
+            "reasoning": "Elevated.",
+            "prompt": "",
+        },
+        {
+            # amusement real, predicho baseline: fallo de 4 clases y acierto binario
+            "window_id": "WESAD:S5:w00003",
+            "window_id_opaque": "win_00000003",
+            "condition_id": "C0_clean",
+            "subject": "S5",
+            "status": "valid_response",
+            "decision": "baseline",
+            "confidence": 70,
+            "claims": [],
+            "reasoning": "Calm.",
+            "prompt": "",
+        },
+        {
+            # meditation real, abstención
+            "window_id": "WESAD:S5:w00004",
+            "window_id_opaque": "win_00000004",
+            "condition_id": "C0_clean",
+            "subject": "S5",
+            "status": "valid_abstention",
+            "decision": "abstain",
+            "confidence": 30,
+            "claims": [],
+            "reasoning": "Insufficient.",
+            "prompt": "",
+        },
+    ]
+
+
+def _analysis_labels() -> dict[str, str]:
+    return {
+        "WESAD:S5:w00001": "baseline",
+        "WESAD:S5:w00002": "stress",
+        "WESAD:S5:w00003": "amusement",
+        "WESAD:S5:w00004": "meditation",
+    }
+
+
+def test_analyze_group_per_class_recall():
+    """El recall por clase distingue 'no predice la clase' de 'la confunde'."""
+    from analyze_degradation import analyze_group
+
+    metrics = analyze_group(_analysis_records(), _analysis_labels())
+    per_class = metrics["per_class"]
+
+    assert per_class["baseline"]["recall"] == 1.0
+    assert per_class["stress"]["recall"] == 1.0
+    assert per_class["amusement"]["recall"] == 0.0
+    assert per_class["amusement"]["predictions"] == {"baseline": 1}
+    assert per_class["meditation"]["decided"] == 0
+    assert per_class["meditation"]["recall_decided"] == 0.0
+
+
+def test_analyze_group_binary_mapped_endpoint():
+    """Con el mapeo 4→2, amusement/baseline cuentan como acierto binario."""
+    from analyze_degradation import analyze_group
+
+    metrics = analyze_group(_analysis_records(), _analysis_labels())
+    binary = metrics["binary_mapped"]
+
+    assert binary["positive_label"] == "stress"
+    assert binary["n_decided"] == 3          # 3 decididas, 1 abstención
+    assert binary["abstention_rate"] == pytest.approx(0.25)
+    assert binary["coverage"] == pytest.approx(0.75)
+    assert binary["accuracy"] == pytest.approx(1.0)
+    assert binary["recall_stress"] == pytest.approx(1.0)

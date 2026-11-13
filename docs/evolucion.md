@@ -201,6 +201,7 @@ Las sesiones anteriores a la creación de este documento se resumen a partir de
 | 2026-11-13 | ¿Se sostiene el sistema tras estabilizar el corpus? | Job `INGEST` COMPLETED 0:0 (3:32, 211 artefactos); siguiente run 100 % `reused` | Corpus y fingerprints cerrados; el trabajo pasa a la fase LLM |
 | 2026-11-13 | ¿Responde un modelo mayor a la degradación? | Humo `qwen3:14b` (25 llamadas, 0 errores): abstiene en C2/C4/C5 y decide en C0/C1 | Lanzar el barrido completo de 14b (~5 h, `--time 12:00:00`) y comparar con 7b |
 | 2026-11-13 | ¿Desde dónde se lanzan los scripts? | Se documentaban como `./scripts/launch_lsi.sh`, pero en el servidor el despliegue vive en `~/data` y esa ruta no existe en el repo | Regla permanente (`AGENTS.md` §0.8): repo = fuente, `~/data` = despliegue; todos los comandos usan `~/data/launch_lsi.sh` |
+| 2026-11-13 | ¿Se puede ejecutar `python main.py` directamente en el servidor? | No por defecto: el trabajo va por Slurm (GPU, Ollama, cola); solo lo pequeño (sin GPU/Ollama, minutos) cabe en la terminal SSH | Regla `AGENTS.md` §0.9 + tabla «qué se lanza y qué se corre a mano» en `docs/ejecucion_slurm.md` |
 
 ### Plantilla para la próxima sesión
 

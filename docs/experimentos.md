@@ -99,6 +99,17 @@ valores), pero **no razona sobre el conjunto**: cuando la evidencia se degrada,
 sigue afirmando con confianza y solo añade cautela en el lenguaje, sin abstenerse
 ni corregir su inferencia.
 
+### Lectura de la matriz modelos × tarea (E9)
+
+Con prompt binario y 2 modelos, la jerarquía se invierte al degradar: en
+limpio están **empatados** (Δ +0,014, IC [−0,012; +0,040]) y con la EDA a cero
+**fallan en direcciones opuestas** (el 7b sobrerreclama estrés, balanced 0,63;
+el 14b dice `non-stress` para todo, balanced 0,50). La accuracy premia al
+segundo porque 0,845 es la tasa base: **la evaluación de robustez debe usar
+balanced y cobertura, no accuracy**. La abstención resulta ser el *residuo del
+espacio de etiquetas*: desaparece cuando existe una clase comodín
+(`non-stress`). Detalle en [`resultados_binario.md`](resultados_binario.md).
+
 ### Lectura de los controles externos
 
 - **PhysioNet/CinC 2017** (ritmo en ECG, clase `noisy` real): el modelo cae al
@@ -130,6 +141,7 @@ de desarrollo).
 | E6 | Representación centrada (E12) | ¿Ayuda normalizar por sujeto? | z robusto intra-sujeto, 15 sujetos | 705 respuestas | accuracy, AUROC | 0,485→0,587; AUROC stress 0,744→0,958 | Exploratorio · **Contaminado** | [`e12_resultados.md`](e12_resultados.md) |
 | E7 | Validación externa: K-EmoCon | ¿Se replica en afecto con muñeca? | 23 participantes, ventanas 60 s | ~5,5k ventanas | AUROC | Mejor 0,609; LLM 0,642 | Negativo documentado | [`p3_kemocon.md`](p3_kemocon.md) |
 | E8 | Validación externa: PhysioNet 2017 | ¿Se replica con otra tarea, sensor y clase `noisy`? | 600 registros (197 dev / 403 test), 5 features ECG | 403 respuestas | balanced accuracy, abstención | 0,250 vs 0,552; 0/103 abstenciones | Firme (análisis) | [`p3_physionet.md`](p3_physionet.md) |
+| E9 | **Modelos × tarea bajo degradación** | ¿Resiste mejor el modelo grande? ¿Cambia la tarea la abstención? | 2 modelos × {4 clases, binario} × C0,C1,C2,C4,C5; 12 sujetos eval. | 11.340 respuestas | balanced, cobertura, claims, certeza | En limpio empatan (Δ +0,014 [−0,012; +0,040]); con EDA a cero fallan en direcciones opuestas (7b: bal 0,63 sobrerreclamando estrés; 14b: bal 0,50 diciendo non-stress) | **Firme** | [`resultados_binario.md`](resultados_binario.md) |
 
 ### Ejecución y comparación por modelo
 

@@ -36,7 +36,7 @@ ACL2027 no se conforma con medir el acierto. Mide **cómo cambia todo lo anterio
 | **H3** Efecto de la representación | ✅ Apoyada | El texto acierta menos que el numérico (−0,09) pero degrada menos (+0,065 de interacción); en degradación severa se vuelve **más asertivo** (+1,36 de certeza). |
 | **H4** Adecuación de la abstención | ❌ Refutada (forma fuerte) | Infra-abstención en degradación (falla 74 %, se abstiene 16 %) y sobre-abstención en limpio (12,5 % con tarea resoluble). |
 | **H5** Respaldo de afirmaciones | ✅ Hallazgo principal | El respaldo de claims *sube* a 0,83 mientras la accuracy cae a 0,29: el modelo cita bien los valores pero falla al combinarlos. |
-| **H6** Indicador externo de calidad | ⚠️ Apoyado (SQI) | El SQI añade AUROC incremental (+0,05 a +0,09); el gate de consistencia no añade (Δ≈0). |
+| **H6** Indicador externo de calidad | ⚠️ Apoyado (SQI) | El SQI añade AUROC incremental (+0,05 a +0,09 en el 7b; hasta **+0,24** con prompt binario) y ~0 en el 14b: **sustituye a una confianza que no informa**, no mejora a un modelo que ya la tiene. El gate de consistencia no añade (Δ≈0). |
 
 Detalle y tablas completas: [`docs/experimentos.md`](docs/experimentos.md) (resumen, inventario y detalle de todos los experimentos) y [`docs/resultados_degradacion.md`](docs/resultados_degradacion.md) (experimento principal).
 

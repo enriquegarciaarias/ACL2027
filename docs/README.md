@@ -53,6 +53,7 @@ Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 | [`experimentos.md`](experimentos.md) | **Resumen ejecutivo, inventario (E0–E8) y detalle de todos los experimentos** (WESAD, K-EmoCon, PhysioNet); punto de entrada único | Firme |
 | [`evolucion.md`](evolucion.md) | **Sinopsis de la evolución**: cómo cambió el experimento con cada resultado, reorientaciones y registro por sesión | Firme (memoria) |
 | [`resultados_degradacion.md`](resultados_degradacion.md) | H1–H6 y H3: corrección, abstención, claims, certeza, indicadores de calidad | **Final** |
+| [`resultados_binario.md`](resultados_binario.md) | Matriz 2 modelos × 2 tareas × 5 condiciones: empate en limpio, fallos opuestos bajo destrucción, trampa accuracy/balanced, H2b dependiente de modelo×tarea y H6 como sustituto de la confianza | **Final** |
 | [`consistencia.md`](consistencia.md) | Compuerta de consistencia fisiológica: 0 % de falsos vetos en limpio, 100 % en datos incoherentes, robustez | Firme |
 | [`claims_h5.md`](claims_h5.md) | Verificador de claims y certeza lingüística: definiciones y resultados | Firme (método) |
 | [`p2_binario.md`](p2_binario.md) | Prompt binario stress/no-stress: resultados | **Exploratorio** |
@@ -72,6 +73,8 @@ Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 | Documento | Contenido |
 |---|---|
 | [`literatura_slip.md`](literatura_slip.md) | Análisis del corpus SLIP y 14 oportunidades experimentales (E1–E14) |
+| [`analisisDatasets.md`](analisisDatasets.md) | **Compendio consolidado de datasets** (117 papers), WESAD primero, competidores por hipótesis, papel de PhysioNet/K-EmoCon y justificación de WESAD frente a alternativas |
+| [`lecturas.md`](lecturas.md) | **Lecturas prioritarias** (10 papers): por qué importan y versión en español por secciones; PDF en [`lecturas.pdf`](lecturas.pdf) |
 | [`SLIP/`](SLIP/) | Índices de literatura (`papers_zoned.json`, `papers_text.json`) |
 | [`DimensionesAnalisis.md`](DimensionesAnalisis.md) | Dimensiones de análisis del proyecto (`.pdf` adjunto) |
 | [`UsoJSON.md`](UsoJSON.md) | Guía de salidas estructuradas JSON (`.pdf` adjunto) |

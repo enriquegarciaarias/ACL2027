@@ -1,0 +1,32 @@
+{
+  "notebooks_generated": 3,
+  "papers_exported": 130,
+  "total_selected": 130,
+  "max_papers_per_notebook": 50,
+  "max_notebooks": 50,
+  "max_file_bytes": 209715200,
+  "max_words_per_paper": 300000,
+  "files": [
+    {
+      "file": "gemini_notebook_01.md",
+      "path": "/mnt/data/egarcia/proyectos/SLIP/results/output/SensoresACL/notebook/gemini_notebook_01.md",
+      "papers": 50,
+      "size_mb": 3.24,
+      "words": 464654
+    },
+    {
+      "file": "gemini_notebook_02.md",
+      "path": "/mnt/data/egarcia/proyectos/SLIP/results/output/SensoresACL/notebook/gemini_notebook_02.md",
+      "papers": 50,
+      "size_mb": 3.45,
+      "words": 522723
+    },
+    {
+      "file": "gemini_notebook_03.md",
+      "path": "/mnt/data/egarcia/proyectos/SLIP/results/output/SensoresACL/notebook/gemini_notebook_03.md",
+      "papers": 30,
+      "size_mb": 2.05,
+      "words": 299573
+    }
+  ]
+}

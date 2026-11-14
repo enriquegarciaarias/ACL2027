@@ -269,3 +269,39 @@ def test_print_per_class_table_silent_without_per_class(capsys):
     print_per_class_table(report, ["C0_clean"])
     out = capsys.readouterr().out
     assert out == ""   # nada: sin per_class no hay tabla que imprimir
+
+
+def test_existing_pairs_retries_timeouts(tmp_path):
+    """Un timeout no es una respuesta: se reintenta al relanzar."""
+    import json
+
+    import run_degradation_sweep as sweep
+
+    path = tmp_path / "S5.responses.jsonl"
+    rows = [
+        {"window_id": "w1", "condition_id": "C0_clean", "status": "valid_response"},
+        {"window_id": "w2", "condition_id": "C0_clean", "status": "timeout"},
+        {"window_id": "w3", "condition_id": "C0_clean", "status": "valid_abstention"},
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+    existing, n_retry = sweep.existing_pairs(path)
+
+    assert existing == {("w1", "C0_clean"), ("w3", "C0_clean")}
+    assert n_retry == 1
+
+
+def test_ensure_model_available_aborts_when_missing(monkeypatch):
+    import run_degradation_sweep as sweep
+
+    monkeypatch.setattr(sweep, "check_model_available", lambda model: False)
+    with pytest.raises(SystemExit) as exc:
+        sweep.ensure_model_available("qwen2.5:7b")
+    assert "ollama pull qwen2.5:7b" in str(exc.value)
+
+
+def test_ensure_model_available_passes_when_present(monkeypatch):
+    import run_degradation_sweep as sweep
+
+    monkeypatch.setattr(sweep, "check_model_available", lambda model: True)
+    sweep.ensure_model_available("qwen2.5:7b")      # no lanza

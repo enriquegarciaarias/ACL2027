@@ -1,4 +1,10 @@
-A continuación se listan **solo los papers que aparecen en `gemini_notebook_01.md`**. No incluyo papers del JSON que no estén en ese documento. En revisiones o simulaciones sin dataset primario lo indico explícitamente. `N/A` = no hay señal fisiológica (texto clínico, texto online, benchmarking de LLM, etc.).
+# Datasets estudios sensores fisiológicos
+
+
+## Tabla datasets1
+**Notas de alcance:**  
+- `ieee_196`, `wos_403`, `acl_anthology_148`, `acl_anthology_231`, `acl_anthology_286`, `acl_anthology_169`, `pubmed_157`/`wos_327` y `wos_262` **no tratan una señal fisiológica** como ECG/EEG/EMG; trabajan con texto clínico, benchmarks, notas o revisiones.  
+- `ieee_598`, `scopus_293`, `scopus_50`, `pubmed_157`, `wos_327` y `wos_262` son **revisiones/surveys**; los datasets listados son los mencionados/analizados en el texto, no datasets primarios únicos. 
 
 | Paper ID | Título | Dataset(s) | Señal fisiológica | Objetivo | Resultado |
 |---|---|---|---|---|---|
@@ -53,7 +59,7 @@ A continuación se listan **solo los papers que aparecen en `gemini_notebook_01.
 | `ieee_401` | The impact of generative AI and large language models on telemedicine diagnostics: a systematic review | Revisión sistemática; no dataset primario | Texto, imagen, señal multimodal en telemedicina | Revisar evidencia de GenAI/LLM en diagnóstico telemedicine | Evidencia preliminar; alta accuracy en contextos estructurados y reducción de documentación; retos de alucinación, sesgo, interpretabilidad y regulación |
 | `pubmed_187` | MedTsLLM: Medical Time Series Analysis Using Multimodal LLMs | No se nombran datasets en el extracto; tareas de ECG, monitoreo respiratorio y arritmias | ECG, señales respiratorias, series temporales fisiológicas | Integrar señales fisiológicas con contexto clínico textual mediante patch reprogramming y prompting contextual | Supera baselines en segmentación semántica, detección de límites, anomalías y clasificación; encoder-decoder y decoder-only tienen ventajas según tarea |
 
-He revisado **exclusivamente `gemini_notebook_02.md`**. La tabla siguiente recoge los **37 papers** que aparecen en ese archivo. Cuando el paper es una **revisión/survey**, la columna “Dataset(s)” indica los datasets **mencionados/analizados** en el texto, no necesariamente un dataset primario propio. No incluyo papers del JSON que no estén en `gemini_notebook_02.md`.
+## Tabla datasets2
 
 | Paper ID | Título | Dataset(s) | Señal fisiológica | Objetivo | Resultado |
 |---|---|---|---|---|---|
@@ -95,10 +101,8 @@ He revisado **exclusivamente `gemini_notebook_02.md`**. La tabla siguiente recog
 | `wos_327` | Integrating NLP into radiation oncology: a practical guide to transformer architecture and LLMs | No dataset primario; duplicado de `pubmed_157` | No fisiológica; texto clínico | Revisar NLP/LLM en oncología radioterápica | Framework de evaluación clínica; mismos hallazgos que `pubmed_157` |
 | `wos_262` | Large language models in mental health: a systematic review of applications, innovations and ethical challenges | Revisión: **PHQ-9**, datasets de redes sociales, notas clínicas; 92 estudios finales | Texto/social media; no fisiológica única | Revisar aplicaciones LLM en salud mental | Aplicaciones en detección, agentes conversacionales, apoyo terapéutico; retos de datos, sesgo, privacidad, validación clínica |
 
-**Notas de alcance:**  
-- `ieee_196`, `wos_403`, `acl_anthology_148`, `acl_anthology_231`, `acl_anthology_286`, `acl_anthology_169`, `pubmed_157`/`wos_327` y `wos_262` **no tratan una señal fisiológica** como ECG/EEG/EMG; trabajan con texto clínico, benchmarks, notas o revisiones.  
-- `ieee_598`, `scopus_293`, `scopus_50`, `pubmed_157`, `wos_327` y `wos_262` son **revisiones/surveys**; los datasets listados son los mencionados/analizados en el texto, no datasets primarios únicos.  
-- No he incluido papers del JSON que no aparecen en `gemini_notebook_02.md` (p. ej., `manual_2`, `arxiv_288`, `scopus_176`, etc.).
+ 
+
 # Datasets utilizados en los papers de `gemini_notebook_03.md`
 
 A continuación se presenta la extracción estructurada de **todos los datasets** utilizados en los papers contenidos exclusivamente en `gemini_notebook_03.md`. Se organiza por paper, indicando para cada dataset: nombre, tipo de señal fisiológica tratada, objetivo del paper y resultado principal.
@@ -385,7 +389,7 @@ A continuación se presenta la extracción estructurada de **todos los datasets*
 
 ---
 
-## Resumen de cobertura por tipo de señal fisiológica
+# Resumen de cobertura por tipo de señal fisiológica
 
 | Señal fisiológica | Papers que la utilizan |
 |---|---|
@@ -400,6 +404,3 @@ A continuación se presenta la extracción estructurada de **todos los datasets*
 | **Imagen médica** | wos_399 |
 | **Sin señal fisiológica (texto/visión/tabular)** | acl_anthology_73, wos_200, wos_386, acl_anthology_118, wos_230, acl_anthology_72 (parcial), acl_anthology_288, acl_anthology_57, acl_anthology_56, acl_anthology_243, pubmed_123, pubmed_177, scopus_149, scopus_396, acl_anthology_8, scopus_460 |
 
----
-
-**Total: 30 papers, ~60+ datasets/benchmarks identificados** en `gemini_notebook_03.md`. Los papers con señal fisiológica explícita son **13 de 30**; el resto son texto, visión, datos tabulares o revisiones.

@@ -1165,3 +1165,14 @@ def test_prompt_hash_includes_think():
     without_think = LlmExperimentConfig(think=False, **base)
 
     assert _prompt_hash("prompt", with_think) != _prompt_hash("prompt", without_think)
+
+
+def test_cache_usable_rejects_timeout():
+    """Un timeout cacheado no debe reutilizarse (fallo de transporte)."""
+    from sources.phase2.orchestrator import _cache_usable
+
+    assert _cache_usable({"status": "valid_response"}) is True
+    assert _cache_usable({"status": "valid_abstention"}) is True
+    assert _cache_usable({"status": "timeout"}) is False
+    assert _cache_usable(None) is False
+    assert _cache_usable({}) is False

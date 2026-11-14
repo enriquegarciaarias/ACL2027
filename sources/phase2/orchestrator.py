@@ -317,6 +317,15 @@ def _load_cached_response(cache_dir: Path, prompt_hash: str) -> dict[str, Any] |
     return read_json(cache_file)
 
 
+def _cache_usable(cached: dict[str, Any] | None) -> bool:
+    """¿Sirve la respuesta cacheada?
+
+    Un ``timeout`` es un fallo de transporte, no una respuesta del modelo: si se
+    reutilizara, un corte de Ollama quedaría fijado en la caché para siempre.
+    """
+    return bool(cached) and cached.get("status") != "timeout"
+
+
 def _save_cached_response(cache_dir: Path, prompt_hash: str, data: dict[str, Any]) -> None:
     """Guarda una respuesta en caché."""
     ensure_dir(cache_dir)
@@ -854,6 +863,8 @@ def run_orchestrator(
 
             if not force and prompt_hash != "EXCLUDED_TOO_LONG":
                 cached = _load_cached_response(cache_dir, prompt_hash)
+                if not _cache_usable(cached):
+                    cached = None
                 if cached is not None:
                     cached = dict(cached)
                     cached["subject"] = subject

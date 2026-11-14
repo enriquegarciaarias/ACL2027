@@ -79,6 +79,46 @@ from sources.phase3.degradation import (  # noqa: E402
 )
 
 
+def existing_pairs(path: Path) -> tuple[set[tuple[str, str]], int]:
+    """Pares ``(ventana, condición)`` ya respondidos, y cuántos se reintentan.
+
+    Un ``timeout`` es un fallo de transporte, no una respuesta: si se contara
+    como cacheado, un barrido lanzado con el modelo sin instalar quedaría
+    marcado como completo y no se reintentaría nunca.
+    """
+    existing: set[tuple[str, str]] = set()
+    n_retry = 0
+    if not path.is_file():
+        return existing, n_retry
+    for line in path.open(encoding="utf-8"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:      # línea a medio escribir
+            continue
+        if record.get("status") == "timeout":
+            n_retry += 1
+            continue
+        existing.add((record["window_id"], record["condition_id"]))
+    return existing, n_retry
+
+
+def ensure_model_available(model: str) -> None:
+    """Aborta si el modelo no está en Ollama.
+
+    Antes solo se avisaba y el barrido gastaba horas escribiendo timeouts, que
+    además quedaban cacheados (job del 2026-11-14 con el 7b sin instalar).
+    """
+    if check_model_available(model) is False:
+        raise SystemExit(
+            f"[DEG] El modelo {model!r} no está instalado en Ollama.\n"
+            f"      Instálalo con: ollama pull {model}\n"
+            f"      (comprueba también OLLAMA_MODELS: el job usa $HOME/data/.ollama/models)"
+        )
+
+
 def output_directory(
     representation: str, decision_mode: str, model: str
 ) -> Path:
@@ -116,11 +156,12 @@ def run_subject(
     responses_path = output_dir / f"{subject}.responses.jsonl"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    existing: set[tuple[str, str]] = set()
-    if responses_path.is_file():
-        for line in responses_path.open(encoding="utf-8"):
-            record = json.loads(line)
-            existing.add((record["window_id"], record["condition_id"]))
+    existing, n_retry = existing_pairs(responses_path)
+    if n_retry:
+        print(
+            f"[DEG] {subject}: {n_retry} respuestas con timeout se reintentarán "
+            "(no se reutilizan)."
+        )
 
     windows = load_windows(subject)
     if not windows:
@@ -311,11 +352,7 @@ def main(argv: list[str] | None = None) -> None:
             args.representation, decision_mode, config.model
         )
 
-    if check_model_available(config.model) is False:
-        print(
-            f"[DEG] AVISO: {config.model} no está instalado en Ollama "
-            f"(ollama pull {config.model})."
-        )
+    ensure_model_available(config.model)
     print(
         f"Barrido de degradación | sujetos={subjects} | condiciones={conditions} | "
         f"representación={args.representation} | tarea={args.decision_mode} | "

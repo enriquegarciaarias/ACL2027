@@ -240,3 +240,25 @@ def test_base_dir_binary_uses_own_directory(monkeypatch, tmp_path):
     binary = cm._base_dir("degradation", "numeric", "binary")
     assert affective.name == "degradation"
     assert binary.name == "degradation_binary"
+
+
+def test_binary_truth_maps_four_class_labels():
+    assert cm.binary_truth("stress") == "stress"
+    assert cm.binary_truth("baseline") == "non-stress"
+    assert cm.binary_truth("amusement") == "non-stress"
+    assert cm.binary_truth("meditation") == "non-stress"
+    assert cm.binary_truth(None) is None
+
+
+def test_risk_coverage_with_binary_truth():
+    """Con etiquetas mapeadas, un acierto 'non-stress' cuenta como acierto."""
+    rows = {
+        "m": [
+            {"status": "valid_response", "decision": "non-stress", "confidence": 90,
+             "_truth": "non-stress"},
+            {"status": "valid_response", "decision": "stress", "confidence": 80,
+             "_truth": "non-stress"},
+        ]
+    }
+    block = cm.risk_coverage_by_condition(rows, {"m": 1.0})
+    assert block["models"]["m"]["accuracy"] == pytest.approx(0.5)

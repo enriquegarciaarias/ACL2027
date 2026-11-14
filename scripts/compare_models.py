@@ -270,6 +270,17 @@ def summarize(metrics: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def binary_truth(label: str | None) -> str | None:
+    """Etiqueta real en el espacio binario (``stress`` / ``non-stress``).
+
+    Sin esta conversión, el bloque de riesgo–cobertura comparaba decisiones
+    binarias con etiquetas de 4 clases y solo podía acertar los ``stress``.
+    """
+    if not label:
+        return None
+    return "stress" if label == "stress" else "non-stress"
+
+
 def _decided_pairs(rows: Iterable[Mapping[str, Any]]) -> tuple[list[tuple[float, float]], int]:
     """Pares (confianza, acierto) de las ventanas decididas, y total de ventanas.
 
@@ -374,7 +385,10 @@ def compare(
             rows = [r for r in records if r.get("condition_id") == condition]
             labels = load_labels()
             for row in rows:
-                row["_truth"] = labels.get(row.get("window_id"))
+                truth = labels.get(row.get("window_id"))
+                row["_truth"] = (
+                    binary_truth(truth) if decision_mode == "binary" else truth
+                )
             if not rows:
                 continue
             entry = {"model": model, **summarize(evaluator(rows))}

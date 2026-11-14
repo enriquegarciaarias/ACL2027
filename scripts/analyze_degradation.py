@@ -39,6 +39,10 @@ from sources.ingestion.represent import _opaque_window_id
 from sources.phase2.llm_config import model_slug
 from sources.phase3.certainty import linguistic_certainty
 from sources.phase3.claims import summarize_verdicts, verify_claims
+from sources.phase2.response_schema import (
+    DECISION_MODE_AFFECTIVE,
+    DECISION_MODE_STRESS_BINARY,
+)
 from sources.phase3.records import evaluate_binary_records, evaluate_records
 from sources.phase3.recovery import apply_recovery
 
@@ -443,7 +447,9 @@ def main(argv: list[str] | None = None) -> None:
             f"no a {args.model}. Ejecuta primero el barrido con --model {args.model}."
         )
     if not args.no_recovery:
-        records, n_recovered = apply_recovery(records)
+        records, n_recovered = apply_recovery(
+            records, decision_mode=DECISION_MODE_STRESS_BINARY if binary else DECISION_MODE_AFFECTIVE
+        )
         dropped = sum(int(r.get("dropped_claims") or 0) for r in records if r.get("recovered"))
         print(
             f"Respuestas cargadas: {n_loaded} (split={args.split}); "
@@ -645,7 +651,10 @@ def main(argv: list[str] | None = None) -> None:
         other_dir = Path(args.compare_with)
         other_records = load_records(other_dir, set(conditions), split)
         if not args.no_recovery:
-            other_records, _ = apply_recovery(other_records)
+            other_records, _ = apply_recovery(
+                other_records,
+                decision_mode=DECISION_MODE_STRESS_BINARY if binary else DECISION_MODE_AFFECTIVE,
+            )
         other_by_condition: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for record in other_records:
             other_by_condition[record["condition_id"]].append(record)

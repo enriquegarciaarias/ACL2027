@@ -281,3 +281,39 @@ def test_recovery_rejects_unknown_decision_mode():
             {"status": "invalid_output", "raw_output": raw},
             decision_mode="no-existe",
         )
+
+
+def test_recovery_binary_mode_recovers_missing_magnitude():
+    """Job 2731: 50 inválidas del 7b binario por magnitud ausente."""
+    import json
+
+    from sources.phase3.recovery import recover_llm_record
+
+    payload = {
+        "decision": "stress",
+        "confidence": 85,
+        "claims": [
+            {"metric": "ecg_hr_bpm", "channel": "ecg", "direction": "increase"}
+        ],
+        "reasoning": "HR is high.",
+    }
+    record = {"status": "invalid_output", "raw_output": json.dumps(payload)}
+
+    recovered = recover_llm_record(record, decision_mode="stress_binary")
+
+    assert recovered is not None
+    assert recovered["decision"] == "stress"
+    assert recovered["claims"][0]["magnitude"] == "low"
+
+
+def test_recovery_binary_decision_not_in_affective_mode():
+    """Sin el modo correcto, 'stress'/'non-stress' no se recuperaban."""
+    import json
+
+    from sources.phase3.recovery import recover_llm_record
+
+    payload = {"decision": "non-stress", "confidence": 85, "claims": [], "reasoning": "Calm."}
+    record = {"status": "invalid_output", "raw_output": json.dumps(payload)}
+
+    assert recover_llm_record(record, decision_mode="stress_binary") is not None
+    assert recover_llm_record(record, decision_mode="affective") is None

@@ -133,7 +133,7 @@ def load_degradation(
     records = load_records(directory, conditions, split="evaluation")
     from sources.phase3.recovery import apply_recovery
 
-    records, _ = apply_recovery(records)
+    records, _ = apply_recovery(records, decision_mode=decision_mode)
     evaluator = analyze_group_binary if decision_mode == "binary" else analyze_group
     return records, (lambda rows: evaluator(rows, labels))
 
@@ -461,7 +461,13 @@ def print_report(report: Mapping[str, Any]) -> None:
                 contra = f"{entry['claims_contradicted']:7.3f}"
             else:
                 support, contra = "   n/a", "    n/a"
-            decided = int(round(entry["n"] * (1.0 - entry["abstention_rate"])))
+            # ``n_decided`` es lo correcto; el cálculo por abstención incluía
+            # las respuestas inválidas como si se hubieran decidido.
+            decided = entry.get("n_decided")
+            if decided is None:
+                decided = int(entry.get("n_valid", entry["n"])) - int(
+                    entry.get("n_abstain", 0)
+                )
             print(
                 f"{condition:16s} {entry['model']:16s} {entry['n']:5d} "
                 f"{decided:5d} "

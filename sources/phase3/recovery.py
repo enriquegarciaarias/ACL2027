@@ -154,7 +154,8 @@ def recover_llm_record(
             metric = normalize_metric(str(claim.get("metric", "")))
             channel = _normalize_channel(str(claim.get("channel", "")))
             direction = _normalize_direction(str(claim.get("direction", "")))
-            magnitude = _normalize_magnitude(str(claim.get("magnitude", "")))
+            # Magnitud ausente: el validador la asume "low"; aquí igual.
+            magnitude = _normalize_magnitude(str(claim.get("magnitude", "low")))
             if metric is None or channel is None or direction is None or magnitude is None:
                 dropped += 1
                 continue

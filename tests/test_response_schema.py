@@ -418,3 +418,27 @@ def test_magnitude_unknown_value_still_invalid():
     resp = validate_llm_output(raw)
     assert resp.status == "invalid_output"
     assert "no permitido" in resp.error_message
+
+
+def test_claim_without_magnitude_is_accepted():
+    """50 de las 52 inválidas del job 2731 eran por magnitud ausente."""
+    raw = (
+        '{"decision": "stress", "confidence": 80, "claims": '
+        '[{"metric": "ecg_hr_bpm", "channel": "ecg", "direction": "increase"}], '
+        '"reasoning": "HR is elevated."}'
+    )
+    resp = validate_llm_output(raw)
+    assert resp.status == "valid_response"
+    assert resp.claims[0].magnitude == "low"
+
+
+def test_magnitude_zero_and_negligible_are_normalized():
+    for word in ("zero", "negligible", "minimal", "trace"):
+        raw = (
+            '{"decision": "stress", "confidence": 80, "claims": '
+            '[{"metric": "ecg_hr_bpm", "channel": "ecg", "direction": "increase", '
+            f'"magnitude": "{word}"}}], "reasoning": "HR."}}'
+        )
+        resp = validate_llm_output(raw)
+        assert resp.status == "valid_response", (word, resp.error_message)
+        assert resp.claims[0].magnitude == "low"

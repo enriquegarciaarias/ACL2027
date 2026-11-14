@@ -134,6 +134,12 @@ MAGNITUDE_ALIASES: dict[str, str] = {
     "slightly high": "high",
     "strong": "high",
     "severe": "high",
+    # Magnitudes de "casi nada" que el modelo usa como nivel propio.
+    "zero": "low",
+    "negligible": "low",
+    "minimal": "low",
+    "trace": "low",
+    "tiny": "low",
 }
 
 # Palabras de estabilidad que el modelo escribe a veces como **magnitud**
@@ -236,14 +242,18 @@ def _validate_claim(claim: Any, index: int) -> tuple[Claim | None, str | None]:
     if not isinstance(claim, dict):
         return None, f"claim[{index}] no es un objeto"
 
-    for required in ("metric", "channel", "direction", "magnitude"):
+    for required in ("metric", "channel", "direction"):
         if required not in claim:
             return None, f"claim[{index}] falta campo '{required}'"
 
     metric = claim["metric"]
     channel = claim["channel"]
     direction = claim["direction"]
-    magnitude = claim["magnitude"]
+    # La magnitud es secundaria: si falta, se asume el nivel menos específico en
+    # lugar de invalidar la respuesta completa (el job 2731 perdió 50 respuestas
+    # por `claim[3] falta campo 'magnitude'`). El verificador de claims tolera
+    # ±1 nivel, así que el coste es un posible desacuerdo de magnitud.
+    magnitude = claim.get("magnitude", "low")
 
     if not isinstance(metric, str) or not metric:
         return None, f"claim[{index}].metric debe ser string no vacío"

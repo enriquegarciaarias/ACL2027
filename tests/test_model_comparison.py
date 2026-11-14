@@ -164,6 +164,8 @@ def _report_stub(abstention: float, accuracy: float, n: int = 100) -> dict:
                 {
                     "model": "b",
                     "n": n,
+                    "n_valid": n,
+                    "n_abstain": int(round(n * abstention)),
                     "abstention_rate": abstention,
                     "accuracy": accuracy,
                     "balanced_accuracy": accuracy,
@@ -262,3 +264,13 @@ def test_risk_coverage_with_binary_truth():
     }
     block = cm.risk_coverage_by_condition(rows, {"m": 1.0})
     assert block["models"]["m"]["accuracy"] == pytest.approx(0.5)
+
+
+def test_print_report_decided_excludes_invalid(capsys):
+    """La columna 'dec' no debe contar las respuestas inválidas."""
+    report = _report_stub(abstention=0.0, accuracy=0.9, n=100)
+    report["tables"]["C0_clean"][0].update({"n_valid": 90, "n_abstain": 0, "n_invalid": 10})
+    cm.print_report(report)
+    out = capsys.readouterr().out
+    line = [l for l in out.splitlines() if l.startswith("C0_clean")][0]
+    assert " 90 " in line

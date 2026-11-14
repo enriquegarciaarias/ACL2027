@@ -317,3 +317,17 @@ def test_recovery_binary_decision_not_in_affective_mode():
 
     assert recover_llm_record(record, decision_mode="stress_binary") is not None
     assert recover_llm_record(record, decision_mode="affective") is None
+
+
+def test_recovery_accepts_cli_binary_alias():
+    """El CLI pasa 'binary'; el vocabulario interno es 'stress_binary'."""
+    import json
+
+    from sources.phase3.recovery import recover_llm_record
+
+    payload = {"decision": "non-stress", "confidence": 80, "claims": [], "reasoning": "Calm."}
+    record = {"status": "invalid_output", "raw_output": json.dumps(payload)}
+
+    recovered = recover_llm_record(record, decision_mode="binary")
+
+    assert recovered is not None and recovered["decision"] == "non-stress"

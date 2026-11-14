@@ -47,6 +47,9 @@ _EXTRA_DIRECTION_ALIASES = {
 _EXTRA_MAGNITUDE_ALIASES = {"none": "low", "no change": "low", "negligible": "low"}
 _INVALID_CHANNEL_VALUES = {"not available", "missing", "none", "n/a", "na", ""}
 
+#: Alias del CLI (``--decision-mode binary``) al vocabulario interno.
+_DECISION_MODE_ALIASES = {"binary": "stress_binary"}
+
 
 def _normalize_channel(raw: str) -> str | None:
     key = raw.strip().lower()
@@ -123,6 +126,8 @@ def recover_llm_record(
     """
     if record.get("status") not in ("invalid_output", "timeout"):
         return None
+    # El CLI usa ``binary``; el vocabulario interno, ``stress_binary``.
+    decision_mode = _DECISION_MODE_ALIASES.get(decision_mode, decision_mode)
     allowed_decisions = DECISION_MODES.get(decision_mode)
     if allowed_decisions is None:
         raise ValueError(

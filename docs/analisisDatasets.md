@@ -8,17 +8,162 @@ relevancia bibliográfica y similitud con esta tesis.
 
 ---
 
-## 0. Cómo se construyó
+## WESAD: descripción del dataset, señales y uso en el experimento
 
-| Paso | Detalle |
-|---|---|
-| Fuentes | Tabla 1 (50 papers), tabla 2 (37) y fichas 1–30 de `gemini_notebook_03.md` |
-| Deduplicación | Por `paper_id`. Dos entradas son el mismo trabajo con distinto identificador (`arxiv_288` y `manual_2`) |
-| Universo | **117 papers** con ficha; `docs/SLIP/papers_metadata.json` tiene 126 |
-| Citas | `citation_count` de la metadata (OpenAlex/Scopus vía SLIP) |
-| Relevancia | `relevance_score` de SLIP (0–1), redondeado a 2 decimales |
-| WESAD | Detectado en dataset, título, objetivo, resultado, abstract y keywords; `wos_386` lo menciona en una revisión |
-| Similitud | Clasificación por reglas sobre la columna «Señal» y el objetivo/resultado, con revisión manual de casos límite |
+### WESAD
+
+WESAD (*Wearable Stress and Affect Detection*) es un dataset público recogido en laboratorio con **15 participantes** (S2–S17, sin S12) durante una **única sesión** por persona. Cada sesión sigue un protocolo secuencial con **dos versiones (A y B)** que contrabalancean el orden de las condiciones para mitigar efectos de orden:
+
+- **baseline** (reposo, lectura neutral),
+- **stress** (inducción tipo Trier / Trier Social Stress Test adaptada),
+- **amusement** (videos divertidos),
+- **meditación 1** y **meditación 2** (respiración guiada, dos fases, para "de-excitar" al sujeto),
+- **rest** (periodo de descanso de 10 min tras el stress, solo en versión B).
+
+
+Las etiquetas provienen de la **condición de protocolo**, no de los autoinformes, y se alinean a **ventanas de 60 s sin solape**. El dataset suma unas **12,9 GB** de señales crudas y es el vehículo principal de esta tesis (H1–H6): permite degradar canales de forma controlada y comparar la respuesta del LLM contra una referencia de estado conocida.
+
+### Duración del protocolo y tiempos por condición
+
+El estudio completo dura aproximadamente **dos horas** por sujeto (sin incluir preparación y recuperación). Cada sesión sigue un protocolo secuencial con **dos versiones (A y B)** que contrabalancean el orden de *stress* y *amusement* para mitigar efectos de orden.
+
+| Condición | Duración en paper | Duración media en datos | Rango entre sujetos | Contenido |
+|---|---|---|---|---|
+| Baseline (L1)| 20 minutos | 19,6 min | 19,0 – 20,0 min | Lectura neutral en escritorio, sentado o de pie junto a una mesa |
+| Stress (TSST modificado) (L2) | ~10 minutos | 11,1 min | 10,2 – 12,1 min | Exposición oral y cuenta atrás desde 2023 de 17 en 17 |
+| Amusement (L3)| ~6,5 min (392 s) | 6,2 min | 6,0 – 6,4 min | 11 videos humorísticos con pausas neutras de 5 s entre ellos |
+| Meditación 1 (L4)| ~7 min | ~6,6 min | 6,1 – 6,8 min | Respiración guiada vía audio |
+| Meditación 2 (L4)| ~7 min | ~6,5 min | 6,1 – 6,8 min | Respiración guiada vía audio |
+| Rest | 10 min | – | – | Descanso tras el stress (solo en versión B) |
+| Label 5 | – | 0,9 min | 0,8 – 1,2 min | No definido explícitamente en el paper (no presente en S2) |
+| Label 6 | – | 0,9 min | 0,7 – 1,1 min | No definido explícitamente en el paper |
+| Label 7 | – | 0,9 min | 0,3 – 1,2 min | No definido explícitamente en el paper |
+
+Datos afectivos por sujeto: unos **37 minutos** en total (baseline + stress + amusement + meditaciones).
+
+> **Nota sobre las etiquetas 5, 6 y 7:** el paper de Schmidt et al. (2018) no define explícitamente qué representan las etiquetas numéricas 5, 6 y 7. En los datos `.pkl` aparecen como segmentos muy cortos (~0,9 min cada uno) entre las condiciones principales. Dado que el protocolo incluye autoinformes (PANAS, STAI, SAM, SSSQ) entre condiciones —marcados como "red/dark boxes" en Figure 2 del paper— es plausible que estas etiquetas correspondan a esos periodos de cuestionario o a transiciones breves no clasificadas como ninguna de las 4 condiciones afectivas principales.
+
+> **Nota:** las duraciones en la columna «Duración en paper» se refieren al protocolo descrito en Schmidt et al. (2018), *Introducing WESAD, a Multimodal Dataset for Wearable Stress and Affect Detection*.
+
+#### Orden de las fases
+
+Existen dos versiones del protocolo, contrabalanceadas entre sujetos para mitigar efectos de orden:
+
+- **Versión A:** baseline → amusement → meditación 1 → stress → **rest** → meditación 2  
+- **Versión B:** baseline → stress → **rest** → meditación 1 → amusement → meditación 2
+
+En ambas versiones hay dos meditaciones (Medi I y Medi II). En la versión B, el periodo de **rest** (10 min) se sitúa justo después del stress; en la versión A, el rest se sitúa entre el stress y la meditación 2. Según el paper de Schmidt et al. (2018), las meditaciones se introdujeron explícitamente para "de-excite the subjects and bring them back to a close to neutral affective state".
+
+Esa estructura de contrabalanceo es relevante para el análisis: el estrés puede venir justo después del baseline o tras amusement más una meditación.
+
+#### Qué ocurre entre condiciones
+
+El paper de Schmidt et al. (2018) documenta un periodo de **rest** de 10 minutos tras el stress (solo en versión B). Además, entre condiciones se llenan autoinformes (PANAS, STAI, SAM, SSSQ — marcados como "red/dark boxes" en Figure 2 del paper). Al final del protocolo hay un **recovery** (retirada de sensores y desvelo del engaño del TSST), pero **no es una condición experimental**: no se recogen datos etiquetados durante él y no influye en las ventanas de 60 s que el LLM ve.
+
+Los huecos entre fases que no corresponden a una condición afectiva definida quedan registrados como **etiqueta 0 (transitoria)** en las señales. Se ha verificado empíricamente en los 15 sujetos (S2–S17, sin S12):
+
+| Métrica de etiqueta 0 | Valor | Rango entre sujetos |
+|---|---|---|
+| % del registro en etiqueta 0 | **45,0 %** (media) | 39,3 % – 55,2 % |
+| Número de gaps por sujeto | **8,9** (media) | 8 – 9 |
+| Tiempo total en gaps por sujeto | **43,9 min** (media) | 34,2 – 65,1 min |
+| Duración media de cada gap | **4,9 min** (media) | – |
+| Gap más corto observado | – | 26 s |
+| Gap más largo observado | – | 19,0 min (S4) |
+
+**Detalle por sujeto (duración de cada gap en minutos):**
+
+| Subj | n_gaps | Gap 1 | Gap 2 | Gap 3 | Gap 4 | Gap 5 | Gap 6 | Gap 7 | Gap 8 | Gap 9 | Total |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| S2 | 8 | 2.4 | 6.4 | 6.4 | 4.6 | 14.5 | 11.5 | 10.2 | 3.0 | – | 51.0 |
+| S3 | 9 | 0.7 | 17.3 | 5.1 | 5.1 | 6.2 | 4.8 | 6.2 | 5.1 | 5.1 | 55.8 |
+| S4 | 9 | 0.8 | 19.0 | 4.8 | 4.8 | 6.2 | 4.8 | 5.1 | 4.8 | 5.1 | 55.1 |
+| S5 | 9 | 0.7 | 16.1 | 4.5 | 4.5 | 5.7 | 4.5 | 6.1 | 4.5 | 5.1 | 51.0 |
+| S6 | 9 | 0.6 | 18.9 | 5.3 | 5.3 | 7.2 | 5.3 | 6.2 | 5.3 | 5.3 | 65.1 |
+| S7 | 9 | 0.6 | 10.8 | 3.0 | 3.0 | 3.9 | 3.0 | 5.1 | 3.0 | 5.1 | 35.0 |
+| S8 | 9 | 0.8 | 11.2 | 3.0 | 3.0 | 4.3 | 3.0 | 5.1 | 3.0 | 5.1 | 38.5 |
+| S9 | 9 | 0.8 | 11.2 | 2.3 | 2.3 | 3.8 | 2.3 | 5.1 | 2.3 | 5.1 | 34.2 |
+| S10 | 9 | 0.9 | 11.2 | 3.0 | 3.0 | 4.2 | 3.0 | 5.1 | 3.0 | 5.1 | 37.8 |
+| S11 | 9 | 0.9 | 11.6 | 2.4 | 2.4 | 3.8 | 2.4 | 5.1 | 2.4 | 5.1 | 34.4 |
+| S13 | 9 | 0.8 | 11.2 | 3.5 | 3.5 | 4.4 | 3.5 | 5.1 | 3.5 | 5.1 | 40.0 |
+| S14 | 9 | 0.4 | 11.7 | 3.0 | 3.0 | 4.4 | 3.0 | 5.1 | 3.0 | 5.1 | 39.2 |
+| S15 | 9 | 0.8 | 11.1 | 3.0 | 3.0 | 3.9 | 3.0 | 5.1 | 3.0 | 5.1 | 34.7 |
+| S16 | 9 | 0.8 | 11.7 | 3.5 | 3.5 | 4.5 | 3.5 | 5.1 | 3.5 | 5.1 | 40.9 |
+| S17 | 9 | 0.9 | 11.1 | 4.9 | 4.9 | 5.1 | 4.9 | 5.1 | 4.9 | 5.1 | 45.7 |
+
+> **Nota:** S2 es un caso especial: solo tiene 8 gaps (no 9) y no presenta label 5. Sus gaps son más largos (media 6,4 min vs ~4–5 min del resto).
+
+Tras cada fase se recogieron autoinformes que son son la "opinión subjetiva" del participante sobre su estado afectivo, (entre ellos **PANAS**, y en la descripción original también aparecen STAI, SAM y SSSQ).
+
+> **Nota metodológica:** el lapso entre condiciones **no es un tiempo fijo**; varía por sujeto y queda capturado como etiqueta 0 transitoria. Las duraciones de cada condición arriba son las reportadas por el paper original (Schmidt et al., 2018) y confirmadas en los datos etiquetados.
+
+### Señales que recoge WESAD
+
+| Canal | Ubicación | Tasa aprox. | Unidades | Uso en esta tesis |
+|---|---|---|---|---|
+| ECG | pecho | 700 Hz | mV | Sí (HR, HRV) |
+| EDA (electrodermal) | pecho | 4 Hz | µS | Sí (tonic, phasic, SCR) |
+| Respiración | pecho | 700 Hz | — | Sí (rate, ciclos) |
+| Temperatura | pecho | 700 Hz | °C | No (confusor del orden del protocolo verificado empíricamente: r=0,801 posición vs temperatura) |
+| ACC | muñeca | 700 Hz | g | No (confusor de movimiento; excluido de la vista LLM) |
+| EMG | muñeca | 700 Hz | — | No (confusor de movimiento; excluido) |
+| BVP | muñeca | 64 Hz | — | No (canal de muñeca; excluido de la vista LLM principal) |
+| EDA | muñeca | 4 Hz | µS | No (vista LLM usa solo pecho) |
+| TEMP | muñeca | 4 Hz | °C | No |
+
+### Señales utilizadas en el experimento
+
+Usamos exclusivamente los canales de **pecho**: ECG, EDA y respiración. De ellos, la representación LLM se construye sobre **23 features** (`LLM_ALLOWED_FEATURES`) de ECG, EDA y respiración. 
+
+### Exclusión de confusores
+
+Se excluyen las siguientes señales:
+- ACC/EMG: ACC (acelerómetro de muñeca): mide aceleración en 3 ejes → detecta movimiento físico del brazo. EMG (electromiograma de muñeca): mide actividad eléctrica muscular → detecta contracción muscular. Si ACC o EMG se incluyen en la representación que ve el LLM, el modelo podría predecir "estrés" basándose únicamente en el movimiento físico, no en la evidencia fisiológica afectiva (EDA, ECG, respiración)
+- orden del protocolo (balanced 0,857 en 4 clases usando solo la fase, sin fisiología);
+
+- Temperatura de pecho como confusor del orden del protocolo. La temperatura de pecho aumenta sistemáticamente a lo largo del protocolo (r = 0,801 de media), independientemente de la condición afectiva. Como el protocolo es secuencial (no aleatorio por ventana), la temperatura está correlacionada con **cuándo** aparece cada condición, no solo con **qué** condición es. Versiones A y B del protocolo: El orden de las condiciones varía entre sujetos (versión A: baseline→amusement→med1→stress→rest→med2; versión B: baseline→stress→rest→med1→amusement→med2). Este contrabalanceo mitiga pero no elimina el confusor de orden, ya que el stress aparece en posición 2 (versión B) o posición 4 (versión A), y la temperatura difiere sistemáticamente entre esas posiciones.
+
+### Por qué se utilizan estas señales
+
+1. **Canales separables para degradación controlada (H1).** EDA y respiración del pecho pueden anularse o degradarse independientemente sin destruir todo el registro, lo que permite medir el coste de cada modalidad por separado.
+2. **EDA y ECG son las más informativas para el estrés.** La referencia features-only con las mismas 23 features separa stress vs baseline con balanced ≈ 0,87–0,92, de modo que cualquier error en la respuesta del LLM se debe a su interpretación de la evidencia y no a la falta de señal en los datos de entrada.
+3. **Etiquetas de protocolo conocidas.** Cada ventana tiene *ground truth* (baseline / stress / amusement / meditation), lo que permite evaluar corrección, abstención y respaldo de claims sin depender de anotación subjetiva continua.
+4. **Tamaño manejable y reproducible.** 15 sujetos y 705 ventanas permiten ejecutar la matriz completa de experimentos en horas, y reconstruir el corpus en minutos mediante fingerprints de contenido.
+
+
+
+### Relevancia bibliográfica de WESAD
+
+A continuación se recogen las declaraciones de relevancia del dataset WESAD tanto en el paper original de Schmidt et al. (2018) como en los papers secundarios del corpus SLIP que lo utilizan como dataset primario o secundario.
+
+#### Schmidt et al. (2018) — paper original de WESAD
+
+> "In this paper we present a novel dataset for stress and affect detection. The subjects (n = 15) were exposed to different affective stimuli (stress and amusement). In addition, a baseline and two meditation periods (introduced to de-excite the participants after a stimulus) were recorded. The dataset contains high resolution physiological (ECG, EDA, EMG, RESP, and TEMP) and motion (ACC) data sampled at 700 Hz from a chest-worn device, and lower resolution data from a wrist-worn device. Finally, the data of each subject is linked to several self-reports, which represent the subjective experience during an affective stimulus. The dataset is well-suited to benchmark (personalised) stress and affect detection algorithms, a first evaluation is presented in this paper."
+>
+> — *Schmidt et al. (2018), Introducing WESAD, ICMI'18*
+
+> "(1) A new multimodal, publicly available dataset is presented. The data has been recorded using two different devices (one chest-based and one wrist-based), each including high-resolution physiological (BVP, ECG, EDA, EMG, RESP, and TEMP) and motion (ACC) modalities.
+> (2) The dataset bridges the gap between previous lab studies on stress and emotions, by containing three different affective states (neutral, stress, amusement). In addition, the dataset features self-reported values on the perceived affective state of the subjects, which were obtained using several established questionnaires. These self-reports can be used to train personalised classifiers.
+> (3) A benchmark is created using a large amount of well-known features (extracted from physiological and motion signals)"
+
+#### Papers que usan WESAD como dataset primario
+
+| Paper | Año | Qué dice de la relevancia de WESAD |
+|---|---|---|
+| `ieee_88` | 2026 | "An empirical study for effective LLM based human state prediction from physiological data." Usa WESAD junto con HHAR y DREAMT para evaluar combinaciones de representación de entrada, uso de LLM y forma de salida en predicción de estados humanos. Concluye que feature input + few-shot + label-with-explanation fue la configuración efectiva. |
+| `scopus_111` | 2025 | "StressLLM: Large Language Models for Stress Prediction via Wearable Sensor Data." Usa WESAD (junto con PMData) para identificar biomarcadores óptimos para predicción de estrés con LLM y ablación de características. Evalúa zero-shot, few-shot y Chain-of-Thought prompting sobre WESAD. |
+| `pubmed_150` | 2026 | "Seamless monitoring of stress levels leveraging a foundational model for time sequences." Usa WESAD (junto con DREAMER, MAHNOB-HCI y @HOME) para detección de estrés como anomalía personalizada con UniTS y explicaciones LLM. Reporta resultados para WESAD (ECG y BVP) por separado. |
+| `arxiv_51` | 2026 | "Beyond Latent Personalization: Integrating HRV-Conditioned Personalization via LLM for Interpretable Stress Detection." Usa WESAD (junto con TILES-2018) para validar la generalización de su framework de personalización por HRV. Declara que "its performance on WESAD supports its generalizability across datasets". |
+
+#### Papers que mencionan WESAD en surveys y reviews
+
+| Paper | Tipo | Mención de WESAD |
+|---|---|---|
+| `scopus_293` | Survey | "A survey on large language models for medical time series." Incluye WESAD entre los datasets de series temporales médicas revisados (ECG, PPG/BVP, signos vitales, wearables). |
+| `wos_386` | Scoping review | "A scoping review of large language models in personal wellness." Menciona WESAD entre los 21 estudios revisados en bienestar personal y sueño. |
+
+
+## 1. Papers que usan WESAD
 
 **Escala de similitud** (`Sim.`):
 
@@ -29,13 +174,6 @@ relevancia bibliográfica y similitud con esta tesis.
   incertidumbre/calibración/abstención en texto (transferibles).
 - **B** — sin señal fisiológica ni ejes de incertidumbre.
 
-> La similitud es una **priorización de lectura**, no un juicio de calidad. Las
-> citas favorecen a los papers antiguos; la relevancia SLIP mide ajuste al
-> *corpus* de búsqueda, no a esta tesis.
-
----
-
-## 1. Papers que usan WESAD
 
 | Paper | Título | Dataset(s) | Señal | Objetivo | Resultado | Citas | Rel. | Sim. |
 |---|---|---|---|---|---|---:|---:|:--:|
@@ -46,13 +184,13 @@ relevancia bibliográfica y similitud con esta tesis.
 | `ieee_88` | An empirical study for effective LLM based human state prediction from physiological data | WESAD; HHAR; DREAMT | ECG, datos de sensores fisiológicos/wearables | Evaluar combinaciones de representación de entrada, uso de LLM y forma de salida en predicción de estados humanos | Feature input + few-shot + label-with-explanation fue la configuración efectiva; diferencias individuales y temporales afectan el rendimiento | 0 | 0.77 | A1 |
 | `arxiv_51` | Beyond Latent Personalization: Integrating HRV-Conditioned Personalization via LLM for Interpretable Stress Detection | TILES-2018; WESAD | HRV | Integrar HRV y atributos personales mediante interpretación semántica LLM para detección de estrés | MCC 0.261 en TILES-2018; +29.9% frente a baseline más fuerte; ablation confirma HRV, atributos y embeddings | — | 0.75 | A1 |
 
-Lectura: **cuatro** papers usan WESAD como dataset primario (`ieee_88`,
+**Cuatro** papers usan WESAD como dataset primario (`ieee_88`,
 `scopus_111`, `pubmed_150`, `arxiv_51`), uno lo incluye en una revisión de
 series temporales médicas (`scopus_293`) y otro lo menciona entre los estudios
 de una revisión scoping (`wos_386`). Ninguno evalúa el efecto de la degradación
 de la señal de forma controlada: ese hueco es el de esta tesis.
 
-### 1.1 Qué leer primero (orden sugerido)
+### 1.1 Papers prioritarios
 
 1. `ieee_88` — WESAD + HHAR + DREAMT: qué representación de entrada y qué
    configuración de few-shot funcionan para predecir estados humanos.
@@ -76,7 +214,7 @@ de la señal de forma controlada: ese hueco es el de esta tesis.
 
 ---
 
-## 2. Resto de papers (tabla consolidada)
+## 2. Resto de papers
 
 Orden: similitud (A2 → M → B) y, dentro de cada grupo, citas descendentes.
 
@@ -262,14 +400,14 @@ Tres fichas no tienen entrada en la metadata (sin citas ni `relevance_score`):
 
 ## 5. Competidores: qué dataset usa cada uno y a qué hipótesis compiten
 
-Fuentes: [`analisis_competidores_fidelidad_situacional_WESAD_DREAMT.md`](analisis_competidores_fidelidad_situacional_WESAD_DREAMT.md)
-(competencia por hipótesis), [`literatura_slip.md`](literatura_slip.md)
-(§4–§5: papers de ingesta y evaluación) y [`hipotesis.md`](hipotesis.md).
-
-Hipótesis: **H1** corrección bajo degradación · **H2a** confianza numérica vs
-acierto · **H2b** certeza lingüística (hedges/boosters) · **H3** representación ·
-**H4** adecuación de la abstención · **H5** respaldo de las afirmaciones ·
-**H6** indicador externo de calidad (secundario).
+Hipótesis: 
+- **H1** corrección bajo degradación
+- **H2a** confianza numérica vs acierto
+- **H2b** certeza lingüística (hedges/boosters)
+- **H3** representación
+- **H4** adecuación de la abstención
+- **H5** respaldo de las afirmaciones
+- **H6** indicador externo de calidad (secundario).
 
 | Paper | Dataset(s) | Compite en | Nivel | Qué hace | Coincidencias con esta tesis |
 |---|---|:--:|:--:|---|---|
@@ -302,10 +440,7 @@ acierto · **H2b** certeza lingüística (hedges/boosters) · **H3** representac
   experimental es real; lo que no es novedad por sí solo es «que los LLM son
   sobreconfiados» o «que la degradación reduce la accuracy» (ya documentado en
   `manual_5` y `scopus_355`).
-- Recomendación de posicionamiento (tomada del análisis de competidores): la
-  contribución es **medir conjuntamente** cómo se adapta el comportamiento
-  lingüístico a cambios conocidos de evidencia, separando degradación de
-  resolubilidad y tratando la representación como factor.
+- La contribución es **medir conjuntamente** cómo se adapta el comportamiento lingüístico a cambios conocidos de evidencia, separando degradación de resolubilidad y tratando la representación como factor.
 
 ---
 
@@ -344,19 +479,24 @@ como limitación declarada.
 
 ## 7. Por qué WESAD: ventajas, alternativas y debilidades
 
-### 7.1 Comparación de los candidatos
+### 7.1 Comparación con los datasets alternativos analizados (sección 7.4)
 
-| Criterio | **WESAD** | DREAMT | K-EmoCon | PhysioNet 2017 |
-|---|---|---|---|---|
-| Fenómeno | Estrés/afecto inducido (TSST, amusement, meditación) | Sueño y transiciones de estadio | Afecto en debate | Ritmo cardiaco |
-| Etiquetas | Condición de protocolo (4 clases) + autoinformes | Estadio PSG (referencia técnica) | Arousal/valencia (parciales) | Ritmo (N/A/O) + `noisy` |
-| Referencia externa | Limitada | **PSG sincronizada** | Auto y observador | Experto (aritmias) |
-| Modalidades | Pecho (ECG, EDA, resp, temp) + muñeca (BVP, EDA, temp, ACC, EMG) | Wearable + PSG | Solo muñeca (BVP, EDA, temp, IBI, ACC) | ECG 1 derivación |
-| Participantes | 15 | 100 | 23 | 8.528 registros |
-| Ventanas usadas | 60 s | 30 s (resolución PSG) | 5 s → agregadas a 60 s | 9–61 s |
-| Acceso | Público (licencia de investigación) | **Restringido** (acuerdo PhysioNet) | Público | Público |
-| Confusor principal | Orden del protocolo (secuencial); `stress` = inducción, `amusement` también activa | Nocturno y ordenado por sueño | Orden `pre`→`debate`; etiquetas escasas | Registros cortos; sin contexto del paciente |
-| Papel aquí | **Vehículo principal** (H1–H6) | Mejor complemento para fidelidad situacional | Resultado negativo | Control de generalidad |
+La comparación relevante para justificar WESAD se hace frente a los demás
+datasets fisiológicos que se han revisado en este documento (sección 7.4), no
+frente a los controles externos de sección 7.5, que responden a una pregunta
+distinta.
+
+| Criterio | **WESAD** | DREAMT | TILES-2018 | PMData | PPG-DaLiA | HHAR | UBFC-Phys / SWELL-KW |
+|---|---|---|---|---|---|---|---|
+| Fenómeno | Estrés/afecto inducido (TSST, amusement, meditación) | Sueño y transiciones de estadio | Estrés ecológico/longitudinal | Estrés vitalicio (Fitbit) | Actividad física | Actividad (teléfono/reloj) | Estrés inducido (candidatos) |
+| Etiquetas | Condición de protocolo (4 clases) | Estadio PSG (referencia técnica) | Autoinformes (encuesta) | Autoinforme (Fitbit) | Etiqueta de actividad | Etiqueta de actividad | No verificados aún |
+| Referencia externa | Limitada | **PSG sincronizada** | No | No | No | No | No |
+| Modalidades | Pecho (ECG, EDA, resp, temp) + muñeca | Wearable + PSG | Muñeca (EDA/HR) | Fitbit (HR, sueño, pasos) | Muñeca + pecho (PPG, EDA, temp, ACC) | Teléfono/reloj (IMU) | EDA/ECG (pendiente verificar) |
+| Participantes | 15 | 100 | Trabajadores sanitarios | 16 sujetos, 5 meses | 15 sujetos | Múltiples | Pendiente |
+| Ventanas usadas | 60 s | 30 s (PSG) | Ventanas continuas | Continuo | Continuo | Continuo | Pendiente |
+| Acceso | Público (licencia investigación) | **Restringido** (PhysioNet) | Pendiente de verificación | Público | Público | Público | Pendiente |
+| Confusor principal | Orden del protocolo (secuencial) | Nocturno/ordenado por sueño | Etiquetas escasas; deriva temporal | Etiquetas escasas | Tarea de actividad, no afecto | Sin fisiología afectiva | Pendiente |
+| Papel en la tesis | **Vehículo principal** (H1–H6) | Complemento para fidelidad situacional | Segunda validación del endpoint | Complemento para personalización | Control de representación PPG/calidad | Eje representación/ruido | Validación externa (pendiente) |
 
 ### 7.2 Ventajas de elegir WESAD
 
@@ -365,8 +505,7 @@ como limitación declarada.
    respiración y temperatura. La degradación controlada necesita canales
    separables; el análisis de evidencia necesita una referencia de estado.
 2. **Etiquetas por condición de protocolo**, alineadas con ventanas de 60 s, sin
-   depender de anotación subjetiva continua (que es justo lo que hace inviable
-   K-EmoCon para este diseño).
+   depender de anotación subjetiva continua.
 3. **Cuatro clases con dificultad desigual**: `baseline` y `stress` separables,
    `amusement` fisiológicamente próxima a `baseline` y `meditation` distinguible
    por respiración. Esa gradación es útil: permite separar «no acierta porque no
@@ -379,7 +518,8 @@ como limitación declarada.
    matriz completa (2 modelos × 2 tareas × 5 condiciones) en horas, no semanas.
 6. **Ya está resuelto el problema de la referencia**: la referencia features-only
    con las mismas 23 features da 0,64–0,68 en 4 clases y 0,92 en binario, de modo
-   que el fallo del LLM se puede atribuir al lector y no a la falta de señal.
+   que el error en la respuesta del LLM se debe a su interpretación de la
+   evidencia y no a la falta de señal en los datos de entrada.
 
 ### 7.3 Debilidades que hay que declarar
 
@@ -412,7 +552,46 @@ como limitación declarada.
 | **UBFC-Phys**, **SWELL-KW** | Inducción de estrés con EDA/ECG (candidatos) | No incorporados; hay que verificar canales, licencia y calidad | **Validación externa del endpoint** (pendiente) |
 | **WearableQA**, **PhysioBench** | Benchmarks listos para comparar | No son datos crudos; tareas ya definidas | Comparabilidad, no experimento propio |
 
-### 7.5 Conclusión
+### 7.5 Datasets externos ya probados: PhysioNet 2017 y K-EmoCon (controles externos, no alternativas a WESAD)
+
+PhysioNet/CinC 2017 y K-EmoCon **no son alternativas a WESAD**: responden a una
+pregunta distinta y fueron analizados inicialmente dentro del estudio PSRI, de
+donde proviene su posible relevancia para esta tesis. No se fuerzan como
+validación externa del endpoint de estrés porque su fenómeno es distinto; su
+valor está en poner a prueba la generalidad de los mecanismos (H4, H5, H6) con
+otra tarea y otro sensor.
+
+| Dataset | Tarea | n evaluado | Resultado observado | Papel en la tesis | Contribución | Limitaciones |
+|---|---|---:|---|---|---|---|
+| **PhysioNet/CinC 2017** | Ritmo en ECG de una derivación (N/A/O/`noisy`) | 403 registros (de 8.528; 400 llamadas) | LLM en el **azar exacto** (0,243 acc / 0,250 bal) frente a 0,548/0,552 de la referencia; **0/103 abstenciones** en `noisy`; 47,6 % de claims contradichos; certeza **mayor** en `noisy` (−0,64 vs −1,36; p=0,0008, Cliff δ=+0,60); calidad detectable (AUROC multivariante **0,873**) | Control de generalidad con **evidencia no interpretable etiquetada por experto** (`noisy`) | Alta para H4/H5/H6: muestra que la certeza lingüística sigue la *forma* del dato, no su calidad; y que la calidad **sí** deja rastro cuando las features son buenas | Concepto diferente: ritmo cardiaco, no afecto/estrés inducido |
+| **K-EmoCon** | Afecto (arousal/valencia) en habla espontánea con muñeca | 44 ventanas (piloto LLM); 5.528 ventanas de 5 s en la tabla de referencia | Referencia features-only: mejor AUROC **0,609** (`external_arousal`), 0,527 auto-arousal, 0,417 auto-valencia (bajo azar); LLM 0,614 balanced / 0,642 AUROC; el contraste `pre`/`debate` (0,708 bal / 0,785 AUROC) mide **tarea/actividad**, no afecto | Intento de validación externa del componente afectivo | Baja: delimita qué no se puede afirmar con datos de muñeca; muestra el confusor de orden del protocolo; justifica no repetir la ingesta | No hay etiqueta de estrés; etiquetas afectivas dispersas; referencia con EDA/HR de muñeca no pasa de AUROC 0,61 |
+
+**Qué aporta cada uno:**
+
+- **PhysioNet** es el mejor banco de pruebas para H4/H5 que hemos tenido: contiene
+  la clase que un experto declara ilegible (`noisy`) y el modelo **no se abstiene ni una
+  vez** y además **sube** su certeza. Refuerza la lectura de que la certeza
+  lingüística sigue la *forma* del dato, no su calidad. También muestra que la
+  calidad **sí** deja rastro cuando las features son buenas (AUROC 0,873), lo que
+  sostiene H6.
+- **K-EmoCon** se cerró como **resultado negativo documentado**: no hay etiqueta
+  de estrés, las etiquetas afectivas son dispersas y la referencia con EDA/HR de
+  muñeca no pasa de AUROC 0,61. Su valor es metodológico: (i) delimita qué no se
+  puede afirmar con datos de muñeca, (ii) muestra el confusor de orden del
+  protocolo y (iii) justifica no repetir la ingesta.
+
+**Qué falta para una validación externa del endpoint.** Un dataset con
+**inducción de estrés** y canales de pecho o EDA fiables. Candidatos no
+incorporados aún (pendientes de verificar acceso y canales): **UBFC-Phys** y
+**SWELL-KW**. Sin uno de ellos, la validez externa del endpoint de estrés queda
+como limitación declarada.
+
+**Nota sobre no forzar inclusión:** ni PhysioNet ni K-EmoCon se incluyen como
+alternativas válidas para el endpoint de estrés porque su fenómeno es distinto.
+Su inclusión en la tesis está justificada únicamente como controles externos de
+generalidad de mecanismos, no como sustitutos de WESAD.
+
+### 7.6 Conclusión
 
 WESAD es la elección correcta **para esta tesis** porque el objeto de estudio es
 la sensibilidad del lector a la evidencia, no el fenómeno del estrés: se necesita
@@ -422,11 +601,12 @@ afectan a la comparación interna entre condiciones, que es donde viven H1–H6,
 están cuantificadas.
 
 Las alternativas no lo desplazan: **DREAMT** mejora la referencia externa pero
-cambia de fenómeno; **K-EmoCon** no tiene etiqueta de estrés ni canales de pecho;
-**PhysioNet 2017** aporta una clase `noisy` real que WESAD no tiene. El diseño
+cambia de fenómeno; **K-EmoCon** y **PhysioNet 2017** son controles externos de
+concepto diferente (no validan el endpoint de estrés); **DREAMT (o un dataset
+con inducción de estrés)** como extensión para validez externa. El diseño
 más defendible es el que ya está en marcha: **WESAD como experimento principal,
-PhysioNet como control de generalidad y DREAMT (o un dataset con inducción de
-estrés) como extensión para validez externa.**
+PhysioNet como control de generalidad (H4/H5/H6) y DREAMT o un dataset con
+inducción de estrés como extensión para validez externa del endpoint.**
 
 ---
 

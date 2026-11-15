@@ -147,8 +147,8 @@ Relevancia SLIP: 0,76; 14 citas.
 **Por qué es relevante.** Es el competidor más directo en WESAD. Confirma tres
 cosas que hemos observado: el *few-shot* cambia el resultado, el tamaño del
 modelo no garantiza acierto, y en zero-shot los modelos **colapsan a «estrés»**.
-Su conversión de WESAD a binario (estrés / no estrés) con remuestreo a 20 Hz es
-un precedente directo de nuestro brazo binario. No mide degradación, confianza,
+Su conversión de WESAD a binario (estrés / no estrés) con remuestreo a 20 Hz **es
+un precedente directo de nuestro brazo binario**. No mide degradación, confianza,
 claims ni abstención.
 
 ### Texto
@@ -178,9 +178,9 @@ limitados.
 
 **Datasets.** *PMData*: se construye una ventana deslizante de **14 días** y se
 usa la valoración diaria de estrés como etiqueta; el modelo debe responder en una
-escala **1–5** a partir de la historia de salud y actividad. *WESAD*: se
+escala **1–5** a partir de la historia de salud y actividad. *WESAD*: <span style="color: red;">se
 convierten las clases originales (**Baseline, Amusement, Stress, Meditation y
-Recovery**) en **binario estrés / no estrés**; se seleccionan biomarcadores de
+Recovery**) en **binario estrés / no estrés**</span>; se seleccionan biomarcadores de
 pecho y muñeca; se remuestrean todas las señales (originalmente entre **4 y 700
 Hz**) a **20 Hz** para homogeneizar; se generan **500 prompts** tomando muestras
 equilibradas por participante; la etiqueta de cada ventana se asigna por **valor
@@ -432,7 +432,7 @@ texto es una vista útil pero no superior en todas las condiciones.
 
 **Ficha.** Datasets revisados: **MIMIC-III/IV, eICU-CRD, HiRID, AmsterdamUMCdb,
 OhioT1DM, VitalDB, WESAD, PPG-DaLiA, TROIKA, QT Database, MIT-BIH Arrhythmia,
-Apnea-ECG, Sleep-EDF, CHB-MIT** y el *benchmark* PhysioNet. Señal: ECG, EEG,
+Apnea-ECG, Sleep-EDF, CHB-MIT** y el *benchmark* <span style="color: red;">PhysioNet</span>. Señal: ECG, EEG,
 PPG/BVP, signos vitales y wearables. Tamaño del texto: 14.409 palabras.
 Relevancia SLIP: 0,75.
 

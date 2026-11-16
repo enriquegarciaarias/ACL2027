@@ -608,16 +608,110 @@ más defendible es el que ya está en marcha: **WESAD como experimento principal
 PhysioNet como control de generalidad (H4/H5/H6) y DREAMT o un dataset con
 inducción de estrés como extensión para validez externa del endpoint.**
 
+### 7.7 Ranking de datasets en papers con alta similitud a esta tesis (sim. A1/A2/M)
+
+El corpus SLIP contiene 117 papers con ficha. De ellos, **94 papers** tienen similitud **A1** (usa WESAD), **A2** (señal fisiológica + ejes de la tesis: degradación, ruido, calidad, incertidumbre, calibración, abstención, claims, fiabilidad) o **M** (señal fisiológica con LLM en otra tarea, o métodos de incertidumbre/calibración/abstención en texto). A continuación se presenta el ranking de los **20 datasets más utilizados** en esos 94 papers, ordenados por número de apariciones. WESAD aparece en 4 de ellos; el resto son datasets alternativos que abordan problemas similares (degradación de señal, fisiología wearable, inferencia con LLM sobre datos fisiológicos, confianza/abstención en LLM).
+
+| Rank | Dataset | N papers | Papers |
+|------|---------|----------|--------|
+| 1 | **WESAD** | 4 | scopus_111, pubmed_150, ieee_88, arxiv_51 |
+| 2 | **MIMIC-III Matched Waveform Database v1.0** | 4 | arxiv_288, manual_2, arxiv_70, scopus_396 |
+| 3 | **ZuCo 1.0** | 2 | pubmed_168, scopus_484 |
+| 4 | **PH-LLM / Google Digital Wellbeing Study** | 2 | wos_308, arxiv_190 |
+| 5 | PMData | 1 | scopus_111 |
+| 6 | DREAMER | 1 | pubmed_150 |
+| 7 | MAHNOB-HCI | 1 | pubmed_150 |
+| 8 | @HOME | 1 | pubmed_150 |
+| 9 | PhysioNet benchmark | 1 | scopus_293 |
+| 10 | HHAR | 1 | ieee_88 |
+| 11 | DREAMT | 1 | ieee_88 |
+| 12 | TILES-2018 | 1 | arxiv_51 |
+| 13 | PhysioBench | 1 | manual_3 |
+| 14 | AI-tennis coaching case study | 1 | manual_5 |
+| 15 | UK Biobank | 1 | scopus_198 |
+| 16 | PH-LLM case studies | 1 | wos_308 |
+| 17 | 99 fitness (MCQs) | 1 | wos_308 |
+| 18 | Google DWB/PROMIS | 1 | wos_308 |
+| 19 | 833 survey responses | 1 | wos_308 |
+| 20 | ZuCo 1.0 Task 3 | 1 | pubmed_168 |
+
+**Total datasets únicos en papers con similitud A1/A2/M:** 218  
+**Total papers con similitud A1/A2/M:** 94  
+**Papeles que usan WESAD como dataset primario:** 4 (scopus_111, pubmed_150, ieee_88, arxiv_51)
+
+**Observaciones:**
+
+1. **WESAD y MIMIC-III son los únicos datasets con 4 apariciones** en papers de alta similitud, lo que los sitúa como los dos recursos de referencia más utilizados en este campo.
+2. **ZuCo 1.0 y PH-LLM / Google Digital Wellbeing Study** aparecen en 2 papers cada uno, mostrando uso emergente pero limitado.
+3. La gran mayoría de datasets (203 de 218) aparecen en **solo 1 paper**, lo que indica una fuerte fragmentación: no existe un estándar dominante fuera de WESAD y MIMIC-III para este tipo de investigación.
+4. Muchos papers usan **datasets propios o sintéticos** (AI-tennis coaching case study, WearableQA benchmark, PPG–ECG dataset, etc.), lo que dificulta la comparabilidad entre estudios.
+5. WESAD es el **único dataset** entre los 20 primeros que combina señal fisiológica de pecho (ECG, EDA, respiración), etiquetas de protocolo conocidas (4 clases afectivas), degradación controlada posible y uso por múltiples papers de alta similitud.
+
+### 7.8 Papers de ACL Anthology con mayor relevancia y sus datasets
+
+Solo los papers con prefijo `acl_anthology_*` pertenecen a **ACL Anthology**
+(Association for Computational Linguistics). Los papers `ieee_*`, `scopus_*`,
+`pubmed_*`, `arxiv_*`, `wos_*` y `manual_*` provienen de otros repositorios y
+**no son de ACL**.
+
+De los **94 papers con similitud A1/A2/M** del corpus SLIP, **14 son de ACL
+Anthology** (todos con similitud **M**: métodos de incertidumbre, calibración,
+abstención o fiabilidad en texto, transferibles a esta tesis). A ellos se suman
+**3 papers ACL con similitud B**. En total, 17 papers ACL en la franja alta de
+relevancia; **ninguno usa WESAD**. La tabla los ordena por relevancia conceptual
+para la tesis (degradación de la entrada, confianza/certeza, respaldo de
+afirmaciones, abstención y representación).
+
+| # | Paper | Título | Dataset(s) | Sim. | Relevancia (hipótesis) |
+|---|-------|--------|------------|:----:|------------------------|
+| 1 | `acl_anthology_65` | LENS: LLM-Enabled Narrative Synthesis for Mental Health by Aligning Multimodal Sensing with Language Models | **LENS**: 258 participantes; 50.957 EMAs; >100.000 pares sensor-texto; Garmin vivoactive 3 + Android (GPS, pasos, ACC, HR, sueño, estrés) | 0.77 M | Señal wearable → lenguaje; el más cercano al puente sensor-texto de H3/H5 |
+| 2 | `acl_anthology_34` | Can LLMs understand unvoiced speech? Exploring EMG-to-text conversion with LLMs | **Gaddy & Klein unvoiced EMG**: 1 hablante, 8 canales, 67 palabras, ~26 min, 500 utterances; **CSL-EMG_Array** | 0.76 M | Señal fisiológica → texto (EMG): representación de señal para el LLM (H3) |
+| 3 | `acl_anthology_245` | Speech disfluencies and LLM confidence: length bias and pragmatic insensitivity in Brazilian Portuguese | **Roda Viva corpus**: 344 turnos | 0.76 M | Confianza del LLM frente a incertidumbre pragmática; sesgo de longitud (H2b) |
+| 4 | `acl_anthology_148` | Do language models mirror human confidence? Exploring psychological insights to address overconfidence in LLMs | **MMLU** (high school/college) y **GPQA** (expert) | 0.75 M | Sobreconfianza y calibración de la confianza (H2a) |
+| 5 | `acl_anthology_118` | Calibrating Verbal Uncertainty as a Linear Feature to Reduce Hallucinations | **TriviaQA**; **NQ-Open**; **PopQA** | 0.75 M | Incertidumbre verbal como rasgo lineal; hedges/boosters frente a alucinación (H2b, H5) |
+| 6 | `acl_anthology_231` | ClinDet-Bench: Beyond abstention, evaluating judgment determinability of LLMs in clinical decision-making | **ClinDet-Bench**: 16 sistemas de scoring; 188 casos; 8 LLMs | 0.75 M | Determinabilidad y abstención con información incompleta (H4) |
+| 7 | `acl_anthology_286` | Vulnerability of LLMs' stated belief? LLMs belief resistance check through strategic persuasive conversation interventions | **BoolQ**; **PubMedQA**; **LatentHatred** | 0.75 M | Confianza verbalizada y vulnerabilidad a la persuasión (H2b) |
+| 8 | `acl_anthology_303` | Can a remedy find a researcher? Exploring semantic knowledge in Italian BabyLMs | **Benchmark italiano de pares mínimos**: 272 AI, 332 AA, 282 AA-rev; validación con 232 participantes; BAMBI y LMs italianos | 0.75 M | Competencia semántica y calibración (ECE) de LMs pequeños (H3) |
+| 9 | `acl_anthology_57` | Teaching LLMs to Abstain across Languages via Multilingual Feedback | **M-MMLU**; **M-Hellaswag**; **Belebele** | 0.74 M | Abstención como comportamiento entrenable, no umbral fijo (H4) |
+| 10 | `acl_anthology_56` | Decompose and Compare Consistency: Measuring VLMs' Answer Reliability via Task-Decomposition Consistency Comparison | **SNLI-VE**; **VCR**; **A-OKVQA**; **Winoground**; **MMMU**; **MathVista** | 0.74 M | Fiabilidad/consistencia de respuestas; Brier y Effective Reliability (H2, H5) |
+| 11 | `acl_anthology_8` | Evaluating Subjective Cognitive Appraisals of Emotions from Large Language Models | **COVIDET-APPRAISALS**: 241 posts de Reddit; 21 dimensiones de appraisal | 0.74 M | Appraisal cognitivo desde texto; rationales y acuerdo con humanos (H5) |
+| 12 | `acl_anthology_2` | Psycholinguistic Diagnosis of Language Models' Commonsense Reasoning | **Singh et al. (2016)**; **Nieuwland et al. (2010)**; **ImpPress** | 0.74 M | Razonamiento pragmático de LMs (evaluación de la representación textual) |
+| 13 | `acl_anthology_288` | When LLMs Disagree with Human Experts: Understanding LLM Annotation Failures in Nutrition Misinformation | **169 posts de Instagram sobre seed oils** (3 nutricionistas; Fleiss' κ=0.813) | 0.74 M | Fallos de anotación y sobreconfianza sistemática (H2a, H5) |
+| 14 | `acl_anthology_72` | Multimodal Affective Modeling in an LLM-based Intelligent Tutoring System for Foreign Language Learning | **EmoBot** proof-of-concept (sin dataset público nombrado; HR, SpO₂, HRV de smartwatch) | 0.74 M | Afecto multimodal con señal de wearable (H3) |
+| 15 | `acl_anthology_169` | Vers une évaluation rigoureuse des systèmes RAG : le défi de la due diligence | **Dataset RAG due diligence**: 300 documentos DataCorp; 121 preguntas; 20 respuestas/pregunta | 0.75 B | Rigor de evaluación con jueces LLM (H5) |
+| 16 | `acl_anthology_243` | Beyond Toxic Positivity: Interpersonal Affect Regulation in LLM-Based Dialogue Agents using Discourse Politeness Theory | **Simulación longitudinal de 8 semanas** (18 observadores terceros) | 0.74 B | Regulación afectiva en diálogo (sin señal fisiológica) |
+| 17 | `acl_anthology_73` | Gladiator at MEDIQA-SYNUR 2026: Contextual Clinical Extraction Integrating Foundation Models with Domain-Specific Validation Rules | **MEDIQA-SYNUR** (122 train, 101 dev, test held-out) | 0.75 B | Extracción clínica guiada por esquema (texto) |
+
+**"Ranking" de datasets usados por papers de ACL.** Ningún dataset se repite
+entre los 17 papers: cada uno usa su propio conjunto. No existe, por tanto, un
+dataset dominante comparable al caso WESAD/MIMIC-III de §7.7. Por tipo de dato:
+
+| Tipo de dato | N papers ACL | Papers |
+|---|---:|---|
+| Texto, QA o diálogo (sin señal fisiológica) | 14 | `acl_anthology_2`, `_8`, `_56`, `_57`, `_73`, `_118`, `_148`, `_169`, `_231`, `_243`, `_245`, `_286`, `_288`, `_303` |
+| Señal fisiológica o wearable → lenguaje | 3 | `acl_anthology_34` (EMG), `acl_anthology_65` (LENS), `acl_anthology_72` (EmoBot) |
+
+**Observaciones clave:**
+
+1. **Ninguno de los 17 papers de ACL usa WESAD.** Los papers que usan WESAD
+   (`scopus_111`, `pubmed_150`, `ieee_88`, `arxiv_51`) tienen prefijo no-ACL
+   (Scopus, PubMed, IEEE, arXiv): son de otros repositorios.
+2. **Fragmentación total**: 17 papers ACL, 17 conjuntos distintos. No hay un
+   dataset de referencia compartido, a diferencia de WESAD/MIMIC-III en §7.7.
+3. **LENS** (`acl_anthology_65`) es el más cercano conceptualmente: alinea
+   sensores wearables (incluye HR, sueño y estrés) con lenguaje para narrativas
+   clínicas de salud mental.
+4. **EMG-to-text** (`acl_anthology_34`) y **EmoBot** (`acl_anthology_72`) aportan
+   señal fisiológica, pero en dominios distintos (comunicación sin voz y
+   aprendizaje de idiomas).
+5. **Implicación para la tesis**: el hueco que ocupa este trabajo —fisiología de
+   pecho con etiquetas de protocolo, degradación controlada de la entrada y
+   evaluación de corrección, confianza, claims y abstención— no lo cubre ningún
+   paper de ACL del corpus. Los papers ACL aportan los **métodos** (calibración,
+   hedges/boosters, abstención, fiabilidad de claims), no el **dato**.
+
+**Conclusión:** WESAD sigue siendo el vehículo adecuado y el vacío de
+investigación es real; la literatura ACL con la que dialoga esta tesis aporta
+los ejes metodológicos (H2, H4, H5), no datasets fisiológicos de pecho.
+
 ---
-
-## 8. Reproducir la consolidación
-
-El compendio se generó con un script de un solo uso (no versionado) que:
-
-1. parsea las tablas y las fichas del documento anterior,
-2. deduplica por `paper_id` y enriquece con `papers_metadata.json`,
-3. clasifica señal y similitud con las reglas de §0.
-
-Para rehacerlo tras añadir papers: actualizar `papers_metadata.json` y repetir
-la extracción; las reglas están descritas arriba para que el resultado sea
-auditable.

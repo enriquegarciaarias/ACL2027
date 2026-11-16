@@ -49,14 +49,27 @@ def load_features(
     ingest_dir: Path,
     condition: str,
     subject: str,
+    include_temperature: bool = True,
 ) -> dict[str, dict[str, float | None]]:
-    """Features canónicas (LLM allowlist) por ventana para una condición."""
+    """Features canónicas (LLM allowlist) por ventana para una condición.
+
+    Args:
+        ingest_dir: raíz de artefactos de ``INGEST``.
+        condition: identificador de condición (``C0_clean``, ``C1_partial_resp``…).
+        subject: sujeto (``S5``…).
+        include_temperature: si False, excluye ``temp`` de la vista del LLM.
+            El experimento primario la excluye porque es un confusor verificado
+            del orden del protocolo y la única modalidad de pecho que no se
+            degrada; las sensibilidades pueden incluirla.
+    """
     path = features_path(ingest_dir, condition, subject)
     rows: dict[str, dict[str, float | None]] = {}
     for line in path.open(encoding="utf-8"):
         record = json.loads(line)
         values: dict[str, float | None] = {}
         for modality in CHEST_MODALITIES:
+            if modality == "temp" and not include_temperature:
+                continue
             for name, meta in record.get("features", {}).get(modality, {}).items():
                 if name not in LLM_ALLOWED_FEATURES:
                     continue
@@ -116,12 +129,20 @@ def build_payload(
     scales: Mapping[str, float],
     duration_s: float,
     clip: float = 3.0,
+    include_temperature: bool = True,
 ) -> dict[str, Any]:
-    """Payload ``numeric_llm`` con z-scores respecto a la referencia C0 del sujeto."""
+    """Payload ``numeric_llm`` con z-scores respecto a la referencia C0 del sujeto.
+
+    ``include_temperature=False`` excluye la modalidad ``temp`` de la evidencia
+    que ve el LLM (experimento primario: confusor de orden del protocolo y única
+    modalidad no degradada). Las features canónicas siguen guardándose.
+    """
     modalities: dict[str, dict[str, Any]] = {}
     for name, value in values.items():
         modality = name.split("_")[0]
         if modality not in CHEST_MODALITIES:
+            continue
+        if modality == "temp" and not include_temperature:
             continue
         if value is None:
             z = None

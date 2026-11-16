@@ -115,3 +115,13 @@ sujetos, normalización y avisos.
    excluye del análisis.
 5. La normalización E12 es **transductiva** (usa la sesión del sujeto); debe
    declararse en el artículo.
+6. La **jerarquía binaria y la exclusión de temperatura** (2026-11-16) son una
+   **segunda desviación post hoc**. Se fijó tras ver los resultados por clase,
+   pero **antes** de re-ejecutar: primario `schmidt` (`baseline` + `amusement`,
+   424 ventanas) **sin temperatura**; sensibilidades `baseline` (355),
+   `no_amusement` (498) y `all` (567). La exclusión de `meditation` se justifica
+   por constructo (Schmidt no la usa como clase afectiva), no por resultado; la
+   de temperatura, por ser confusor de orden y la única modalidad no degradada.
+   Se reportan las cuatro variantes y la comparación con Schmidt es de
+   **composición de clases**, no de rendimiento. Ver
+   [`experimento_binario_jerarquia.md`](experimento_binario_jerarquia.md).

@@ -46,6 +46,11 @@ from sources.phase2.development_split import (
     TEST_SUBJECTS,
     split_warning,
 )
+from sources.phase2.binary_variants import (
+    DEFAULT_NONSTRESS_VARIANT,
+    NONSTRESS_VARIANTS,
+    variant_classes,
+)
 from sources.phase2.llm_config import (
     build_experiment_config,
     create_ollama_chat_client,
@@ -120,16 +125,25 @@ def ensure_model_available(model: str) -> None:
 
 
 def output_directory(
-    representation: str, decision_mode: str, model: str
+    representation: str,
+    decision_mode: str,
+    model: str,
+    nonstress_variant: str = DEFAULT_NONSTRESS_VARIANT,
+    temperature_mode: str = "include",
 ) -> Path:
-    """Directorio de salida: representación × tarea × modelo.
+    """Directorio de salida: representación × tarea × variante × modelo.
 
-    La tarea forma parte del nombre: mezclar respuestas de 4 clases y binarias
-    invalidaría cualquier comparación.
+    La tarea y la variante forman parte del nombre: mezclar respuestas de 4
+    clases, de binario con distintas clases ``non-stress`` o con/sin
+    temperatura invalidaría cualquier comparación. El corpus histórico
+    ``degradation_binary/{modelo}/`` (variante ``all`` con temperatura) se deja
+    intacto; la variante ``schmidt`` escribe en un directorio propio.
     """
     base_name = "degradation" if representation == "numeric" else "degradation_text"
     if decision_mode == DECISION_MODE_STRESS_BINARY:
-        base_name += "_binary"
+        base_name += f"_binary_{nonstress_variant}"
+    if temperature_mode == "exclude":
+        base_name += "_notemp"
     return OUTPUT_DIR.parent / base_name / model_slug(model)
 
 
@@ -152,9 +166,12 @@ def run_subject(
     use_few_shot: bool,
     representation: str,
     decision_mode: str = DECISION_MODE_AFFECTIVE,
+    nonstress_variant: str = DEFAULT_NONSTRESS_VARIANT,
+    include_temperature: bool = True,
 ) -> dict[str, Any]:
     responses_path = output_dir / f"{subject}.responses.jsonl"
     output_dir.mkdir(parents=True, exist_ok=True)
+    classes = variant_classes(nonstress_variant)
 
     existing, n_retry = existing_pairs(responses_path)
     if n_retry:
@@ -167,12 +184,22 @@ def run_subject(
     if not windows:
         return {"subject": subject, "n_calls": 0, "n_cached": 0, "n_errors": 0}
 
-    clean_rows = load_features(INGEST_DIR, "C0_clean", subject)
+    clean_rows = load_features(
+        INGEST_DIR,
+        "C0_clean",
+        subject,
+        include_temperature=include_temperature,
+    )
     feature_names = sorted({name for values in clean_rows.values() for name in values})
     centers, scales = subject_reference(clean_rows, feature_names)
 
     condition_rows = {
-        condition: load_features(INGEST_DIR, condition, subject)
+        condition: load_features(
+            INGEST_DIR,
+            condition,
+            subject,
+            include_temperature=include_temperature,
+        )
         for condition in conditions
     }
     # Ancla de procedencia: hash del fichero exacto de features que se usa para
@@ -205,10 +232,16 @@ def run_subject(
                     use_few_shot=use_few_shot,
                     standardized=True,
                     decision_mode=decision_mode,
+                    nonstress_classes=classes,
                 )
             else:
                 payload = build_payload(
-                    window_id, values, centers, scales, duration_s
+                    window_id,
+                    values,
+                    centers,
+                    scales,
+                    duration_s,
+                    include_temperature=include_temperature,
                 )
                 prompt = build_numeric_prompt(
                     payload=payload,
@@ -219,6 +252,7 @@ def run_subject(
                     include_additional=True,
                     standardized=True,
                     decision_mode=decision_mode,
+                    nonstress_classes=classes,
                 )
             assert_no_leakage(prompt)
             try:
@@ -240,6 +274,9 @@ def run_subject(
                 "condition_id": condition,
                 "representation": representation,
                 "decision_mode": decision_mode,
+                "nonstress_variant": nonstress_variant,
+                "nonstress_classes": list(classes),
+                "include_temperature": include_temperature,
                 "window_id": window_id,
                 "window_id_opaque": _opaque_window_id(window_id),
                 "duration_s": duration_s,
@@ -288,7 +325,13 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Modelo LLM (default: defaults.llm.primary_model de config.json).",
     )
-    parser.add_argument("--temperature", type=float, default=0.3)
+    parser.add_argument(
+        "--llm-temperature",
+        type=float,
+        default=0.3,
+        help="Temperatura de muestreo del LLM (no confundir con --temperature, "
+        "que incluye o excluye la modalidad de temperatura de la evidencia).",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
         "--think",
@@ -309,6 +352,21 @@ def main(argv: list[str] | None = None) -> None:
         default="affective",
         help="Tarea del prompt: 4 clases afectivas (preregistrada) o binario "
         "stress/non-stress (endpoint primario).",
+    )
+    parser.add_argument(
+        "--nonstress-variant",
+        choices=sorted(NONSTRESS_VARIANTS),
+        default=DEFAULT_NONSTRESS_VARIANT,
+        help="Clases de WESAD que forman non-stress en el prompt binario "
+        "(default: schmidt = baseline + amusement). Las demás son sensibilidades.",
+    )
+    parser.add_argument(
+        "--temperature",
+        choices=["include", "exclude"],
+        default="include",
+        help="Incluir o excluir la temperatura de la evidencia del LLM. El "
+        "experimento primario usa 'exclude' (confusor de orden y única "
+        "modalidad de pecho que no se degrada).",
     )
     parser.add_argument("--output-dir", default="")
     args = parser.parse_args(argv)
@@ -336,7 +394,7 @@ def main(argv: list[str] | None = None) -> None:
 
     config = build_experiment_config(
         model=args.model,
-        temperature=args.temperature,
+        temperature=args.llm_temperature,
         seed=args.seed,
         max_retries=3,
         think=True if args.think else None,
@@ -349,13 +407,18 @@ def main(argv: list[str] | None = None) -> None:
         # Un subdirectorio por modelo: comparar modelos no sobrescribe
         # ni reutiliza (por error) las respuestas de otro modelo.
         output_dir = output_directory(
-            args.representation, decision_mode, config.model
+            args.representation,
+            decision_mode,
+            config.model,
+            args.nonstress_variant,
+            args.temperature,
         )
 
     ensure_model_available(config.model)
     print(
         f"Barrido de degradación | sujetos={subjects} | condiciones={conditions} | "
         f"representación={args.representation} | tarea={args.decision_mode} | "
+        f"variante={args.nonstress_variant} | temperatura={args.temperature} | "
         f"modelo={config.model} | "
         f"think={config.think} | few_shot={not args.no_few_shot} | "
         f"salida={output_dir}"
@@ -369,6 +432,10 @@ def main(argv: list[str] | None = None) -> None:
         "model_slug": config.model_slug,
         "representation": args.representation,
         "decision_mode": args.decision_mode,
+        "nonstress_variant": args.nonstress_variant,
+        "nonstress_classes": list(variant_classes(args.nonstress_variant)),
+        "temperature_mode": args.temperature,
+        "include_temperature": args.temperature == "include",
         "config": config.to_dict(),
     }
     for subject in subjects:
@@ -383,6 +450,8 @@ def main(argv: list[str] | None = None) -> None:
             use_few_shot=not args.no_few_shot,
             representation=args.representation,
             decision_mode=decision_mode,
+            nonstress_variant=args.nonstress_variant,
+            include_temperature=args.temperature == "include",
         )
         summary["subjects"][subject] = result
         for key in total:

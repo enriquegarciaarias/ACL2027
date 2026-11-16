@@ -45,6 +45,7 @@ Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 | [`fase2_diseno.md`](fase2_diseno.md) | Diseño de Fase 2: prompts, JSON de salida, configuración del modelo, controles negativos, compuerta | Firme |
 | [`fase3_evaluacion.md`](fase3_evaluacion.md) | Diseño de Fase 3: métricas de corrección, calibración, abstención | Firme |
 | [`degradacion_llm.md`](degradacion_llm.md) | Diseño del barrido de degradación con LLM (condiciones, referencia solo C0, coste) | Firme |
+| [`experimento_binario_jerarquia.md`](experimento_binario_jerarquia.md) | Preregistro de la jerarquía binaria: `schmidt` (baseline+amusement) como primaria, sensibilidades 355/498/567, exclusión de temperatura y bootstrap agrupado por sujeto | Firme (especificación) |
 
 ### Resultados
 
@@ -53,7 +54,7 @@ Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 | [`experimentos.md`](experimentos.md) | **Resumen ejecutivo, inventario (E0–E8) y detalle de todos los experimentos** (WESAD, K-EmoCon, PhysioNet); punto de entrada único | Firme |
 | [`evolucion.md`](evolucion.md) | **Sinopsis de la evolución**: cómo cambió el experimento con cada resultado, reorientaciones y registro por sesión | Firme (memoria) |
 | [`resultados_degradacion.md`](resultados_degradacion.md) | H1–H6 y H3: corrección, abstención, claims, certeza, indicadores de calidad | **Final** |
-| [`resultados_binario.md`](resultados_binario.md) | Matriz 2 modelos × 2 tareas × 5 condiciones: empate en limpio, fallos opuestos bajo destrucción, trampa accuracy/balanced, H2b dependiente de modelo×tarea y H6 como sustituto de la confianza | **Final** |
+| [`resultados_binario.md`](resultados_binario.md) | Matriz 2 modelos × 2 tareas × 5 condiciones (**variante `all` con temperatura**): empate en limpio, fallos opuestos bajo destrucción, trampa accuracy/balanced, H2b dependiente de modelo×tarea y H6 como sustituto de la confianza. El primario `schmidt` sin temperatura se añadirá tras la re-ejecución | **Final (variante `all`)** |
 | [`consistencia.md`](consistencia.md) | Compuerta de consistencia fisiológica: 0 % de falsos vetos en limpio, 100 % en datos incoherentes, robustez | Firme |
 | [`claims_h5.md`](claims_h5.md) | Verificador de claims y certeza lingüística: definiciones y resultados | Firme (método) |
 | [`p2_binario.md`](p2_binario.md) | Prompt binario stress/no-stress: resultados | **Exploratorio** |

@@ -14,6 +14,7 @@ Patrón común heredado de PSRI y SLIP, con mejoras propuestas incorporadas.
 """
 from sources.common.common import processControl, logger, writeLog
 from sources.common.utils import configLoader, dbTimestamp
+from sources.phase2.binary_variants import NONSTRESS_VARIANTS
 
 import argparse
 import os
@@ -146,6 +147,42 @@ def manageArgs():
         help="Tarea del prompt en el experimento de degradación: 4 clases "
              "afectivas (preregistrada) o binario stress/non-stress (endpoint "
              "primario). Se guarda en un directorio distinto por tarea.",
+    )
+    parser.add_argument(
+        '--nonstress-variant',
+        type=str,
+        default=None,
+        choices=list(NONSTRESS_VARIANTS),
+        help="Clases de WESAD que forman non-stress en el prompt binario. "
+             "schmidt (default) = baseline + amusement; baseline, no_amusement "
+             "y all son sensibilidades declaradas.",
+    )
+    parser.add_argument(
+        '--temperature',
+        type=str,
+        default=None,
+        choices=['include', 'exclude'],
+        help="Incluir o excluir la temperatura de la evidencia del LLM. El "
+             "experimento primario usa 'exclude' (confusor de orden del "
+             "protocolo y única modalidad de pecho que no se degrada).",
+    )
+    parser.add_argument(
+        '--hierarchy',
+        action='store_true',
+        help="EVALUATE degradation: analiza la jerarquía binaria (Schmidt + "
+             "sensibilidades) con bootstrap agrupado por sujeto.",
+    )
+    parser.add_argument(
+        '--from-affective',
+        action='store_true',
+        help="EVALUATE --hierarchy: reinterpreta decisiones de 4 clases como "
+             "binarias (baseline/amusement/meditation → non-stress).",
+    )
+    parser.add_argument(
+        '--bootstrap',
+        type=int,
+        default=None,
+        help="EVALUATE --hierarchy: número de remuestras del bootstrap por sujeto.",
     )
     parser.add_argument(
         '--split',

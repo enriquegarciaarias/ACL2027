@@ -142,6 +142,10 @@ def build_generate_argv(
         _append_flag(argv, "--conditions", getattr(args, "conditions", None))
         _append_flag(argv, "--subjects", getattr(args, "subjects", None))
         _append_flag(argv, "--decision-mode", getattr(args, "decision_mode", None))
+        _append_flag(
+            argv, "--nonstress-variant", getattr(args, "nonstress_variant", None)
+        )
+        _append_flag(argv, "--temperature", getattr(args, "temperature", None))
         if getattr(args, "think", False):
             argv.append("--think")
         if getattr(args, "allowDev", False):
@@ -197,6 +201,15 @@ def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
         if getattr(args, "raw_decisions", False):
             argv.append("--raw-decisions")
     elif experiment == "degradation":
+        if getattr(args, "hierarchy", False):
+            _append_flag(argv, "--model", getattr(args, "model", None))
+            _append_flag(argv, "--conditions", getattr(args, "conditions", None))
+            _append_flag(argv, "--bootstrap", getattr(args, "bootstrap", None))
+            _append_flag(argv, "--split", getattr(args, "split", None))
+            _append_flag(argv, "--output", output)
+            if getattr(args, "from_affective", False):
+                argv.append("--from-affective")
+            return argv
         _append_flag(argv, "--model", getattr(args, "model", None))
         _append_flag(argv, "--representation", getattr(args, "representation", None))
         _append_flag(argv, "--conditions", getattr(args, "conditions", None))
@@ -463,6 +476,8 @@ def _plan(phase: str) -> dict[str, Any]:
         "conditions": getattr(args, "conditions", None) or None,
         "split": getattr(args, "split", None),
         "decision_mode": getattr(args, "decision_mode", None) or "affective",
+        "nonstress_variant": getattr(args, "nonstress_variant", None) or "schmidt",
+        "temperature": getattr(args, "temperature", None) or "include",
         "force": bool(getattr(args, "force", False)),
         "allowDev": bool(getattr(args, "allowDev", False)),
     }
@@ -477,12 +492,15 @@ def _plan(phase: str) -> dict[str, Any]:
             plan["runner"] = f"scripts/{_script_for_generate(experiment)}.py"
     else:
         compare = build_compare_argv(args)
-        plan["runner"] = (
-            "scripts/compare_models.py"
-            if compare
-            else f"scripts/{_script_for_evaluate(experiment)}.py"
-        )
+        if compare:
+            plan["runner"] = "scripts/compare_models.py"
+        elif experiment == "degradation" and getattr(args, "hierarchy", False):
+            plan["runner"] = "scripts/analyze_binary_hierarchy.py"
+        else:
+            plan["runner"] = f"scripts/{_script_for_evaluate(experiment)}.py"
         plan["compare_models"] = getattr(args, "compare_models", "") or None
+        plan["hierarchy"] = bool(getattr(args, "hierarchy", False))
+        plan["bootstrap"] = getattr(args, "bootstrap", None)
         if compare:
             # La evaluación de un modelo suelto no aplica: se comparan varios.
             plan["model"] = None
@@ -552,6 +570,8 @@ def run_evaluate() -> None:
         return
 
     script = _script_for_evaluate(experiment)
+    if experiment == "degradation" and getattr(args, "hierarchy", False):
+        script = "analyze_binary_hierarchy"
     argv = build_evaluate_argv(experiment, args)
     writeLog(
         "info",

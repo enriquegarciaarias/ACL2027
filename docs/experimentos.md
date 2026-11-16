@@ -158,6 +158,55 @@ Los resultados del benchmark en el paper original confirman que el espacio binar
 
 **Conclusión.** El endpoint binario `stress` vs `non-stress` es el espacio de decisión **efectivo** del LLM en este experimento. No se elige por falta de separabilidad de los datos, sino porque el LLM no utiliza las cuatro clases de forma significativa. Se justifica de forma pragmática: relevancia clínica del estrés, potencia estadística y espacio de decisión que el modelo realmente utiliza. Además, el propio paper original de WESAD ya define y valida este espacio binario, alcanzando 93 % de accuracy frente al 80 % de la tarea de 3 clases, lo que refuerza que el endpoint binario no es una imposición arbitraria sino una decisión metodológica coherente con el diseño original del dataset.
 
+### 1.2.2 Jerarquía binaria y temperatura (Fase 1, 2026-11-16)
+
+La justificación anterior cita a Schmidt, pero la implementación del prompt binario
+incluía `meditation` en `non-stress`. Eso **no es la tarea de Schmidt**: su
+`non-stress` es `baseline` + `amusement`; `meditation` es una fase de
+de-excitación, no una clase afectiva. Para alinear código y justificación se fija
+una **jerarquía declarada** antes de re-ejecutar:
+
+| Variante | `non-stress` | n (evaluación) | Prevalencia stress | Tasa base (siempre non-stress) | Papel |
+|---|---|---:|---:|---:|---|
+| `baseline` | baseline | 355 | 0,358 | 0,642 | Sensibilidad (constructo homogéneo) |
+| **`schmidt`** | **baseline + amusement** | **424** | **0,300** | **0,700** | **Primario** |
+| `no_amusement` | baseline + meditation | 498 | 0,255 | 0,745 | Sensibilidad (aísla amusement) |
+| `all` | baseline + amusement + meditation | 567 | 0,224 | 0,776 | Sensibilidad (corpus histórico) |
+
+Datos: 12 sujetos de evaluación (S5–S17 salvo S12); 228 `baseline`, 127
+`stress`, 69 `amusement`, 143 `meditation`. Restringido a las tres clases de
+Schmidt, la distribución es **53,8 % / 29,8 % / 16,3 %**, prácticamente la del
+paper (53 / 30 / 17).
+
+**Decisiones asociadas:**
+
+1. **Primario: 424, `schmidt`.** Excluye `meditation` por constructo (no por
+   resultado), conserva `amusement` (parte de Schmidt y contrapeso parcial del
+   orden del protocolo) y reproduce el prior del benchmark.
+2. **Temperatura fuera del primario.** Es un confusor verificado (r = 0,801 con
+   la posición) y la **única modalidad de pecho que no se degrada**: podría
+   amortiguar C1/C2/C4/C5 y atenuar H1. El primario ve `ecg`, `eda` y `resp`;
+   la sensibilidad con temperatura mide cuánto importa.
+3. **Sensibilidades: 355, 498 y 567.** No se eligen por acierto; se reportan
+   todas. Si coinciden en dirección y significación, la conclusión es robusta a
+   la composición de clases; si divergen, la divergencia es un hallazgo sobre la
+   heterogeneidad de `non-stress`.
+4. **Comparabilidad con Schmidt: de composición de clases, no de rendimiento.**
+   Su 93 % es de clasificadores supervisados con LOSO y otras ventanas; el LLM
+   zero-shot no replica ese benchmark.
+5. **Segunda desviación post hoc.** La primera fue el binario (2026-11-09); esta
+   es la jerarquía y la exclusión de temperatura. Se fija ahora, antes de
+   re-ejecutar, y se reportan las cuatro variantes.
+6. **H1–H5 se recalculan en binario 424.** Las cifras de 4 clases quedan como
+   secundarias/exploratorias; no se mezclan con las del primario.
+7. **Las cifras binarias de 567 de `docs/resultados_binario.md` son `all`**
+   (incluyen `meditation` y temperatura), no la tarea de Schmidt. Se renombran
+   como "stress vs all non-stress".
+
+El análisis de la jerarquía se ejecuta sin LLM con
+`scripts/analyze_binary_hierarchy.py` (bootstrap agrupado por sujeto). La
+especificación completa está en [`experimento_binario_jerarquia.md`](experimento_binario_jerarquia.md).
+
 ## 1.3 Resultados en una página (WESAD, experimento principal)
 
 **Las hipótesis a prueba son:**

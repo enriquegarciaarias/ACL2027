@@ -199,17 +199,28 @@ def test_certainty_stats_empty_is_nan():
 # Tarea binaria (stress / non-stress) en el barrido y en el análisis
 # ---------------------------------------------------------------------------
 def test_output_directory_separates_binary_from_affective(tmp_path, monkeypatch):
-    """La tarea va en el nombre del directorio: no se mezclan corpus."""
+    """La tarea, la variante y la temperatura van en el nombre del directorio."""
     import run_degradation_sweep as sweep
 
     monkeypatch.setattr(sweep, "OUTPUT_DIR", tmp_path)
 
     affective = sweep.output_directory("numeric", "affective", "qwen3:14b")
     binary = sweep.output_directory("numeric", "stress_binary", "qwen3:14b")
+    binary_all = sweep.output_directory(
+        "numeric", "stress_binary", "qwen3:14b", "all"
+    )
+    binary_notemp = sweep.output_directory(
+        "numeric", "stress_binary", "qwen3:14b", "schmidt", "exclude"
+    )
 
     assert affective == tmp_path.parent / "degradation" / "qwen3_14b"
-    assert binary == tmp_path.parent / "degradation_binary" / "qwen3_14b"
-    assert affective != binary
+    assert binary == tmp_path.parent / "degradation_binary_schmidt" / "qwen3_14b"
+    assert binary_all == tmp_path.parent / "degradation_binary_all" / "qwen3_14b"
+    assert (
+        binary_notemp
+        == tmp_path.parent / "degradation_binary_schmidt_notemp" / "qwen3_14b"
+    )
+    assert len({affective, binary, binary_all, binary_notemp}) == 4
 
 
 def _binary_records() -> list[dict]:

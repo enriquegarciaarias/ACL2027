@@ -210,6 +210,7 @@ Las sesiones anteriores a la creación de este documento se resumen a partir de
 | 2026-11-14 | ¿Podemos leer los papers en español sin perder el contenido? | El texto íntegro del corpus suma ~124k palabras (arxiv_7: 44k); una versión ampliada cubre ~4,5 % y 40 % en el paper corto | Documento de lecturas por lotes (2 papers/turno) o texto íntegro en inglés como alternativa |
 | 2026-11-13 | ¿Desde dónde se lanzan los scripts? | Se documentaban como `./scripts/launch_lsi.sh`, pero en el servidor el despliegue vive en `~/data` y esa ruta no existe en el repo | Regla permanente (`AGENTS.md` §0.8): repo = fuente, `~/data` = despliegue; todos los comandos usan `~/data/launch_lsi.sh` |
 | 2026-11-13 | ¿Se puede ejecutar `python main.py` directamente en el servidor? | No por defecto: el trabajo va por Slurm (GPU, Ollama, cola); solo lo pequeño (sin GPU/Ollama, minutos) cabe en la terminal SSH | Regla `AGENTS.md` §0.9 + tabla «qué se lanza y qué se corre a mano» en `docs/ejecucion_slurm.md` |
+| 2026-11-16 | ¿La tarea binaria es la de Schmidt y qué papel juega la temperatura? | El prompt incluía `meditation` en `non-stress` (567) y la temperatura entraba en la evidencia (r=0,801 con la posición); restringido a las 3 clases de Schmidt, la distribución es 53,8/29,8/16,3 (paper: 53/30/17) | Fijar `schmidt` (424) sin temperatura como primario y 355/498/567 + con-temperatura como sensibilidades; bootstrap agrupado por sujeto; segunda desviación post hoc |
 
 ### Plantilla para la próxima sesión
 

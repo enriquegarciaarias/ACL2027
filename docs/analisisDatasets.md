@@ -104,7 +104,7 @@ Tras cada fase se recogieron autoinformes que son son la "opinión subjetiva" de
 | ECG | pecho | 700 Hz | mV | Sí (HR, HRV) |
 | EDA (electrodermal) | pecho | 4 Hz | µS | Sí (tonic, phasic, SCR) |
 | Respiración | pecho | 700 Hz | — | Sí (rate, ciclos) |
-| Temperatura | pecho | 700 Hz | °C | No (confusor del orden del protocolo verificado empíricamente: r=0,801 posición vs temperatura) |
+| Temperatura | pecho | 700 Hz | °C | **Canónica: sí; primario LLM: no.** Es un confusor del orden del protocolo verificado empíricamente (r=0,801 posición vs temperatura) y la única modalidad de pecho que no se degrada; el experimento primario la excluye de la evidencia del LLM. El few-shot nunca la incluye. |
 | ACC | muñeca | 700 Hz | g | No (confusor de movimiento; excluido de la vista LLM) |
 | EMG | muñeca | 700 Hz | — | No (confusor de movimiento; excluido) |
 | BVP | muñeca | 64 Hz | — | No (canal de muñeca; excluido de la vista LLM principal) |
@@ -113,7 +113,7 @@ Tras cada fase se recogieron autoinformes que son son la "opinión subjetiva" de
 
 ### Señales utilizadas en el experimento
 
-Usamos exclusivamente los canales de **pecho**: ECG, EDA y respiración. De ellos, la representación LLM se construye sobre **23 features** (`LLM_ALLOWED_FEATURES`) de ECG, EDA y respiración. 
+Usamos exclusivamente los canales de **pecho**. La representación **canónica** conserva **23 features** (`LLM_ALLOWED_FEATURES`) de ECG, EDA, respiración y temperatura. El **experimento primario** excluye la temperatura de la evidencia del LLM y trabaja con **19 features** de ECG, EDA y respiración (`--temperature exclude`); las sensibilidades declaradas pueden incluirla. El few-shot nunca incluye temperatura.
 
 ### Exclusión de confusores
 
@@ -121,7 +121,7 @@ Se excluyen las siguientes señales:
 - ACC/EMG: ACC (acelerómetro de muñeca): mide aceleración en 3 ejes → detecta movimiento físico del brazo. EMG (electromiograma de muñeca): mide actividad eléctrica muscular → detecta contracción muscular. Si ACC o EMG se incluyen en la representación que ve el LLM, el modelo podría predecir "estrés" basándose únicamente en el movimiento físico, no en la evidencia fisiológica afectiva (EDA, ECG, respiración)
 - orden del protocolo (balanced 0,857 en 4 clases usando solo la fase, sin fisiología);
 
-- Temperatura de pecho como confusor del orden del protocolo. La temperatura de pecho aumenta sistemáticamente a lo largo del protocolo (r = 0,801 de media), independientemente de la condición afectiva. Como el protocolo es secuencial (no aleatorio por ventana), la temperatura está correlacionada con **cuándo** aparece cada condición, no solo con **qué** condición es. Versiones A y B del protocolo: El orden de las condiciones varía entre sujetos (versión A: baseline→amusement→med1→stress→rest→med2; versión B: baseline→stress→rest→med1→amusement→med2). Este contrabalanceo mitiga pero no elimina el confusor de orden, ya que el stress aparece en posición 2 (versión B) o posición 4 (versión A), y la temperatura difiere sistemáticamente entre esas posiciones.
+- Temperatura de pecho como confusor del orden del protocolo. La temperatura de pecho aumenta sistemáticamente a lo largo del protocolo (r = 0,801 de media), independientemente de la condición afectiva. Como el protocolo es secuencial (no aleatorio por ventana), la temperatura está correlacionada con **cuándo** aparece cada condición, no solo con **qué** condición es. Versiones A y B del protocolo: El orden de las condiciones varía entre sujetos (versión A: baseline→amusement→med1→stress→rest→med2; versión B: baseline→stress→rest→med1→amusement→med2). Este contrabalanceo mitiga pero no elimina el confusor de orden, ya que el stress aparece en posición 2 (versión B) o posición 4 (versión A), y la temperatura difiere sistemáticamente entre esas posiciones. **En la práctica:** el corpus exploratorio (4 clases y E12) se generó con temperatura en la evidencia; el **experimento primario la excluye** (`--temperature exclude`) porque, además de confusor, es la única modalidad de pecho que **no** se degrada y podría amortiguar el efecto de C1/C2/C4/C5. La omisión en el few-shot no elimina el confusor: el modelo podía usar la temperatura en la evidencia. La separación limpia es: el LLM primario ve `ecg`, `eda` y `resp`; el análisis de resolubilidad conserva `temp` en el corpus canónico para **cuantificar** el confusor.
 
 ### Por qué se utilizan estas señales
 

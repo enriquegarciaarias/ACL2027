@@ -35,6 +35,11 @@ def _args(**overrides) -> SimpleNamespace:
         output=None,
         compare_models="",
         noGate=False,
+        nonstress_variant=None,
+        temperature=None,
+        hierarchy=False,
+        from_affective=False,
+        bootstrap=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -200,6 +205,50 @@ def test_dry_run_plan_evaluate_uses_compare_runner(monkeypatch):
     )
     plan = pipelines._plan("evaluate")
     assert plan["runner"] == "scripts/compare_models.py"
+
+
+def test_generate_degradation_passes_binary_variant_and_temperature():
+    argv = pipelines.build_generate_argv(
+        "degradation",
+        _args(
+            decision_mode="binary",
+            nonstress_variant="schmidt",
+            temperature="exclude",
+        ),
+    )
+    assert "--decision-mode" in argv and "binary" in argv
+    assert "--nonstress-variant" in argv and "schmidt" in argv
+    assert "--temperature" in argv and "exclude" in argv
+
+
+def test_evaluate_hierarchy_argv_does_not_leak_other_flags():
+    args = _args(
+        proc="EVALUATE",
+        experiment="degradation",
+        hierarchy=True,
+        bootstrap=500,
+        conditions="C0_clean",
+        representation="text",
+        decision_mode="binary",
+    )
+    argv = pipelines.build_evaluate_argv("degradation", args)
+    assert "--bootstrap" in argv and "500" in argv
+    assert "--conditions" in argv and "C0_clean" in argv
+    # El analizador de jerarquía no acepta estos flags.
+    assert "--representation" not in argv
+    assert "--decision-mode" not in argv
+
+
+def test_dry_run_plan_evaluate_hierarchy_uses_hierarchy_runner(monkeypatch):
+    monkeypatch.setattr(
+        processControl,
+        "args",
+        _args(proc="EVALUATE", experiment="degradation", hierarchy=True),
+        raising=False,
+    )
+    plan = pipelines._plan("evaluate")
+    assert plan["runner"] == "scripts/analyze_binary_hierarchy.py"
+    assert plan["hierarchy"] is True
 
 
 def test_process_registry_has_three_phases():

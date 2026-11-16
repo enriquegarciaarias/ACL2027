@@ -18,6 +18,13 @@ import re
 from typing import Any, Mapping
 
 from sources.ingestion.represent import LLM_ALLOWED_FEATURES
+from sources.phase2.binary_variants import (
+    DEFAULT_NONSTRESS_VARIANT,
+    heading_for,
+    render_rules,
+    render_task_note,
+    variant_classes,
+)
 from sources.phase2.response_schema import (
     DECISION_MODE_AFFECTIVE,
     DECISION_MODE_STRESS_BINARY,
@@ -291,12 +298,12 @@ If any of these pairs differs by more than about 1.5 scale units, the window is 
 
 
 # Variante binaria (P2): endpoint primario ``stress`` vs ``non-stress``.
-# ``non-stress`` agrupa baseline, amusement y meditation del protocolo WESAD.
-BINARY_TASK_NOTE: str = (
-    "Task: decide whether this 60-second window shows an acute stress response "
-    "(decision \"stress\") or not (decision \"non-stress\"). The \"non-stress\" "
-    "class covers calm baseline, amusement and meditative states."
-)
+# Por defecto se reproduce la tarea de Schmidt et al. (2018): ``non-stress``
+# agrupa ``baseline`` y ``amusement``. ``meditation`` se excluye porque en el
+# diseño original es una fase de de-excitación, no una clase afectiva. Las
+# variantes alternativas son sensibilidades declaradas (``binary_variants.py``).
+_DEFAULT_NONSTRESS_CLASSES = variant_classes(DEFAULT_NONSTRESS_VARIANT)
+BINARY_TASK_NOTE: str = render_task_note(_DEFAULT_NONSTRESS_CLASSES)
 
 #: Razonamientos para el prompt binario (coherentes con los valores de dev).
 BINARY_FEW_SHOT_REASONING: dict[str, str] = {
@@ -308,6 +315,10 @@ BINARY_FEW_SHOT_REASONING: dict[str, str] = {
         "Resting heart rate with high HRV and a low SCR count, plus a normal "
         "waking respiratory rate, indicates no stress response."
     ),
+    "amusement": (
+        "Heart rate, HRV and SCR are close to the baseline pattern, so this "
+        "window does not indicate an acute stress response."
+    ),
     "meditation": (
         "High HRV together with a markedly lower respiratory rate and minimal "
         "SCR reflects a relaxed state, not stress."
@@ -318,19 +329,27 @@ BINARY_FEW_SHOT_REASONING: dict[str, str] = {
 def render_binary_few_shot_examples(
     exemplars: dict[str, dict[str, float]],
     standardized: bool = False,
+    classes: tuple[str, ...] | None = None,
 ) -> str:
-    """Renderiza los ejemplos few-shot del prompt binario (solo dev)."""
+    """Renderiza los ejemplos few-shot del prompt binario (solo dev).
+
+    Args:
+        exemplars: medianas por clase de los sujetos de desarrollo.
+        standardized: si True, formatea los valores como z-scores.
+        classes: estados ``non-stress`` que se muestran. Por defecto, la
+            variante ``schmidt`` (``baseline`` + ``amusement``); ``meditation``
+            queda fuera.
+    """
+    classes = tuple(classes) if classes is not None else _DEFAULT_NONSTRESS_CLASSES
     unit = "SD" if standardized else ""
     title = (
         "Examples (illustrative within-subject standardized patterns, not fixed thresholds):"
         if standardized
         else "Examples (illustrative patterns, not fixed thresholds):"
     )
-    layout = (
-        ("stress", "Stress"),
-        ("baseline", "Non-stress (calm baseline)"),
-        ("meditation", "Non-stress (meditation)"),
-    )
+    layout = [("stress", "Stress")] + [
+        (label, heading_for(label)) for label in classes
+    ]
     lines = [title, ""]
     for index, (label, heading) in enumerate(layout, start=1):
         values = exemplars[label]
@@ -354,10 +373,7 @@ BINARY_FEW_SHOT_EXAMPLES_STANDARDIZED: str = render_binary_few_shot_examples(
 
 BINARY_SCHEMA_DECISION: str = '"stress" | "non-stress" | "abstain"'
 
-BINARY_RULES: tuple[str, ...] = (
-    '- Use "stress" only when the pattern indicates an acute stress response.',
-    '- Use "non-stress" for calm baseline, amusement or meditative states.',
-)
+BINARY_RULES: tuple[str, ...] = render_rules(_DEFAULT_NONSTRESS_CLASSES)
 
 # Validación externa (P3) con K-EmoCon: arousal y valencia alta vs baja.
 AROUSAL_TASK_NOTE: str = (
@@ -597,6 +613,7 @@ def build_numeric_prompt(
     decision_mode: str = "affective",
     graded_confidence: bool = False,
     dataset_note: str | None = None,
+    nonstress_classes: tuple[str, ...] | None = None,
 ) -> str:
     """Construye un prompt en inglés a partir de una representación ``numeric_llm``.
 
@@ -626,6 +643,9 @@ def build_numeric_prompt(
         dataset_note: nota opcional (sin etiquetas) sobre los canales
             disponibles; se usa en datasets externos (P3) cuando faltan
             modalidades respecto a WESAD.
+        nonstress_classes: clases de WESAD que forman ``non-stress`` en el
+            prompt binario. Por defecto, la variante ``schmidt``
+            (``baseline`` + ``amusement``); ``meditation`` queda fuera.
 
     Returns:
         string del prompt listo para enviar al LLM.
@@ -644,12 +664,21 @@ def build_numeric_prompt(
             f"Valores permitidos: {sorted(DECISION_MODES)}"
         )
     binary = decision_mode in BINARY_TASKS
+    classes = (
+        tuple(nonstress_classes)
+        if nonstress_classes is not None
+        else _DEFAULT_NONSTRESS_CLASSES
+    )
 
     lines: list[str] = []
     lines.append("You are a physiological signal analysis assistant.")
     lines.append("")
     if binary:
-        lines.append(BINARY_TASKS[decision_mode])
+        lines.append(
+            render_task_note(classes)
+            if decision_mode == DECISION_MODE_STRESS_BINARY
+            else BINARY_TASKS[decision_mode]
+        )
         features_header = (
             "Input features (within-subject z-scores; 0 = subject mean, "
             "±1 = 1 standard deviation):"
@@ -690,9 +719,13 @@ def build_numeric_prompt(
     if use_few_shot:
         if binary and decision_mode == DECISION_MODE_STRESS_BINARY:
             lines.append(
-                BINARY_FEW_SHOT_EXAMPLES_STANDARDIZED
-                if standardized
-                else BINARY_FEW_SHOT_EXAMPLES
+                render_binary_few_shot_examples(
+                    FEW_SHOT_EXEMPLARS_STANDARDIZED
+                    if standardized
+                    else FEW_SHOT_EXEMPLARS,
+                    standardized=standardized,
+                    classes=classes,
+                )
             )
         else:
             lines.append(
@@ -748,7 +781,12 @@ def build_numeric_prompt(
     lines.append("- confidence must be an integer between 0 and 100.")
     lines.append("- Each claim must reference a real feature from the input.")
     if binary:
-        for rule in BINARY_RULE_SETS[decision_mode]:
+        rules = (
+            render_rules(classes)
+            if decision_mode == DECISION_MODE_STRESS_BINARY
+            else BINARY_RULE_SETS[decision_mode]
+        )
+        for rule in rules:
             lines.append(rule)
     else:
         lines.append("- Consider all four classes equally; do not bias toward any particular state.")
@@ -778,6 +816,7 @@ def build_text_prompt(
     consistency_check: bool = False,
     decision_mode: str = "affective",
     graded_confidence: bool = False,
+    nonstress_classes: tuple[str, ...] | None = None,
 ) -> str:
     """Construye un prompt en inglés a partir de una representación ``text_llm``.
 
@@ -793,6 +832,8 @@ def build_text_prompt(
         consistency_check: si True, añade la comprobación de consistencia.
         decision_mode: ``"affective"`` (4 clases) o ``"stress_binary"``.
         graded_confidence: si True, añade la rúbrica de confianza graduada (P4).
+        nonstress_classes: clases de WESAD que forman ``non-stress`` en el
+            prompt binario (por defecto, ``baseline`` + ``amusement``).
 
     Returns:
         string del prompt listo para enviar al LLM.
@@ -806,12 +847,21 @@ def build_text_prompt(
             f"Valores permitidos: {sorted(DECISION_MODES)}"
         )
     binary = decision_mode in BINARY_TASKS
+    classes = (
+        tuple(nonstress_classes)
+        if nonstress_classes is not None
+        else _DEFAULT_NONSTRESS_CLASSES
+    )
 
     lines: list[str] = []
     lines.append("You are a physiological signal analysis assistant.")
     lines.append("")
     if binary:
-        lines.append(BINARY_TASKS[decision_mode])
+        lines.append(
+            render_task_note(classes)
+            if decision_mode == DECISION_MODE_STRESS_BINARY
+            else BINARY_TASKS[decision_mode]
+        )
     else:
         lines.append("Task: Classify the affective state of a 60-second window "
                      "based on the physiological signal summary below.")
@@ -825,9 +875,13 @@ def build_text_prompt(
             use_few_shot = False
         elif binary:
             lines.append(
-                BINARY_FEW_SHOT_EXAMPLES_STANDARDIZED
-                if standardized
-                else BINARY_FEW_SHOT_EXAMPLES
+                render_binary_few_shot_examples(
+                    FEW_SHOT_EXEMPLARS_STANDARDIZED
+                    if standardized
+                    else FEW_SHOT_EXEMPLARS,
+                    standardized=standardized,
+                    classes=classes,
+                )
             )
         else:
             lines.append(
@@ -886,7 +940,12 @@ def build_text_prompt(
     lines.append("- confidence must be an integer between 0 and 100.")
     lines.append("- Each claim must reference a real feature from the input.")
     if binary:
-        for rule in BINARY_RULE_SETS[decision_mode]:
+        rules = (
+            render_rules(classes)
+            if decision_mode == DECISION_MODE_STRESS_BINARY
+            else BINARY_RULE_SETS[decision_mode]
+        )
+        for rule in rules:
             lines.append(rule)
     else:
         lines.append("- Consider all four classes equally; do not bias toward any particular state.")

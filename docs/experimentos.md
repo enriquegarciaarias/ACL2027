@@ -607,7 +607,7 @@ de desarrollo).
 | E7 | Validación externa: K-EmoCon | ¿Se replica en afecto con muñeca? | 23 participantes, ventanas 60 s | ~5,5k ventanas | AUROC | Mejor 0,609; LLM 0,642 | Negativo documentado | [`p3_kemocon.md`](p3_kemocon.md) |
 | E8 | Validación externa: PhysioNet 2017 | ¿Se replica con otra tarea, sensor y clase `noisy`? | 600 registros (197 dev / 403 test), 5 features ECG | 403 respuestas | balanced accuracy, abstención | 0,250 vs 0,552; 0/103 abstenciones | Firme (análisis) | [`p3_physionet.md`](p3_physionet.md) |
 | E9 | **Modelos × tarea bajo degradación** | ¿Resiste mejor el modelo grande? ¿Cambia la tarea la abstención? | 2 modelos × {4 clases, binario} × C0,C1,C2,C4,C5; 12 sujetos eval. | 11.340 respuestas | balanced, cobertura, claims, certeza | En limpio empatan en binario (Δ +0,014 [−0,012; +0,040]); 14b en 4 clases tiene mejor acc (0,703 vs 0,611) pero por abstención (100 % en C5), no discriminación. Con EDA a cero fallan en direcciones opuestas (7b: bal 0,63 sobrerreclamando estrés; 14b: bal 0,50 diciendo non-stress) | **Firme** | [`resultados_binario.md`](resultados_binario.md) |
-| **E10** | **Jerarquía binaria Schmidt sin temperatura (diseño primario)** | ¿Se sostiene el binario al alinear la tarea con el paper y quitar el confusor térmico? | 2 modelos × 5 condiciones × 424 ventanas (12 sujetos eval.) | 5.670 respuestas | accuracy, acc*, cobertura, balanced, AUROC, H1–H6 | Empate en limpio (0,908 vs 0,915) e **igualdad con la referencia supervisada** (0,905); exceso de coste **+0,32/+0,21** (H1); el 14b se abstiene 22 % en C2 y predice estrés 1–3 veces en C4/C5 (balanced ≈0,51; `acc*` 0,70); respaldo de claims **sube** 0,768→0,811 y 0,876→0,915 (H5); H6 no se replica (ΔSQI inestable) | **Firme** | [`resultados_jerarquia.md`](resultados_jerarquia.md) |
+| **E10** | **Jerarquía binaria Schmidt sin temperatura (diseño primario)** | ¿Se sostiene el binario al alinear la tarea con el paper y quitar el confusor térmico? | 2 modelos × 5 condiciones × 424 ventanas (12 sujetos eval.) | 5.670 respuestas | accuracy, acc*, cobertura, balanced, AUROC, H1–H6 | Empate en limpio (0,908 vs 0,915) e **igualdad con la referencia supervisada** (0,905); exceso de coste **+0,32/+0,21** (H1); el 14b se abstiene 22 % en C2 y predice estrés 1–3 veces en C4/C5 (balanced ≈0,51; `acc*` 0,70); respaldo de claims **sube** 0,768→0,811 y 0,876→0,915 (H5); H6 no se replica (ΔSQI inestable); la comparación entre modelos depende de la métrica (Δ acc +0,277 en C4 con Δ balanced −0,114) | **Firme** | [`resultados_jerarquia.md`](resultados_jerarquia.md) |
 
 ### Ejecución y comparación por modelo
 
@@ -973,6 +973,14 @@ En limpio **el LLM iguala a la referencia supervisada** (0,908 / 0,915 frente a
 0,905): el fallo bajo degradación no es falta de información. H1, H4 y H5 se
 sostienen; H2a, H2b y H6 dependen del modelo, y el «SQI sustituye a la
 confianza» **no se replica** en este corpus.
+
+**Comparación pareada 7b vs 14b** (bootstrap por sujeto): Δ accuracy +0,007
+[−0,024; +0,042] en C0 y +0,002 [−0,019; +0,021] en C1 (empate); en C2
++0,059 [+0,023; +0,101] pero **−0,151** si la abstención cuenta como error; en
+C4/C5 las accuracy suben a favor del 14b (+0,277 y +0,145) mientras el
+**balanced** cae (−0,114 y −0,215) y `acc*` casi se anula en C5 (+0,014).
+La elección de modelo **depende de la métrica**: accuracy bruta → 14b; balanced
+y calibración → 7b; respaldo de claims y ranking de confianza → 14b.
 
 ---
 

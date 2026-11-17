@@ -21,7 +21,7 @@ recortadas a **424** (se descartan 143 de `meditation`) × 5 condiciones =
 | Barrido `GENERATE` (dos modelos) | **Completo**: 2.835/2.835 cada uno; 0 errores de llamada; 3 respuestas inválidas en el 7b (0,11 %), recuperadas en el análisis |
 | Clasificación por condición (§2–§4) | **Completo** |
 | H1, H2a, H2b, H4, H5 y H6 (§5) | **Completo** (`degradation_report_schmidt_{qwen2_5_7b,qwen3_14b}.json`) |
-| Comparación pareada de modelos | Pendiente (comando en §7) |
+| Comparación pareada de modelos (§6) | **Completo** (`model_comparison_schmidt.json`); deltas de `acc*`/`balanced` con IC al re-ejecutar el comparador actualizado |
 
 Este documento es el informe del **diseño primario**. Las cifras proceden de
 `scripts/analyze_degradation.py` sobre las 2.835 respuestas de cada modelo; la
@@ -298,9 +298,56 @@ La referencia es una regresión logística con CV agrupada por sujeto sobre las
 | H6 | ΔSQI hasta +0,24 (7b) | **ΔSQI inestable en 7b; +0,11 máximo en 14b**; Δgate = 0 |
 
 La conclusión robusta es **H1, H4 y H5**; **H2a, H2b y H6 dependen del modelo**
-y del corpus, y así hay que declararlo.
+y del corpus, y así hay que declararlo. La comparación entre modelos (§6)
+añade un tercer eje: **quién gana depende de la métrica** (accuracy bruta →
+14b; balanced → 7b; calibración → 7b; respaldo de claims y ranking de
+confianza → 14b).
 
-## 6. Amenazas a la validez
+## 6. Comparación pareada `qwen2.5:7b` vs `qwen3:14b`
+
+Bootstrap agrupado por **sujeto** (2.000 remuestras, 12 sujetos) sobre las mismas
+ventanas. `accuracy` se mide sobre decididas; `acc*` cuenta la abstención como
+error; `balanced` es la media de recall y especificidad (independiente de la
+prevalencia). Informe: `model_comparison_schmidt.json`.
+
+| Condición | Δ accuracy (decididas) [IC 95 %] | Δ acc* | Δ balanced | Cobertura 7b → 14b |
+|---|---:|---:|---:|---:|
+| `C0_clean` | +0,007 [−0,024; +0,042] | +0,007 | −0,019 | 1,000 → 1,000 |
+| `C1_partial_resp` | +0,002 [−0,019; +0,021] | +0,002 | −0,014 | 1,000 → 1,000 |
+| `C2_partial_eda` | +0,059 [+0,023; +0,101] | **−0,151** | −0,050 | 1,000 → 0,778 |
+| `C4_total_eda` | +0,277 [+0,197; +0,348] | +0,158 | **−0,114** | 1,000 → 0,856 |
+| `C5_total_both` | +0,145 [+0,084; +0,211] | +0,014 | **−0,215** | 1,000 → 0,842 |
+
+Las Δ de accuracy llevan IC del bootstrap pareado. Las de `acc*` y `balanced`
+son la diferencia exacta de las tablas de §2/§5 (mismo conjunto de ventanas); su
+IC sale del comparador actualizado
+(`paired_bootstrap_all_metrics`, tres métricas por condición).
+
+**Lectura.**
+
+1. **En limpio y con pérdida de respiración no hay diferencia**: +0,007
+   [−0,024; +0,042] y +0,002 [−0,019; +0,021]. El empate no es falta de datos:
+   los intervalos excluyen cualquier ventaja relevante.
+2. **En C2 el signo cambia con la regla de coste**: +0,059 [+0,023; +0,101] si la
+   abstención es gratis, **−0,151** si cuesta. El 14b compra accuracy retirándose
+   del 22 % de las ventanas.
+3. **En C4/C5 la accuracy premia al clasificador degenerado**: +0,277 y +0,145 a
+   favor del 14b, que predice estrés 3 y 1 veces de 424. El **balanced** dice lo
+   contrario (−0,114 y −0,215) y `acc*` casi se anula en C5 (+0,014).
+4. **«Accuracy a cobertura comparable» no rescata la comparación**: en C4 el 7b
+   baja a 0,540 y el 14b se queda en 0,824 a la misma cobertura (0,856), pero esa
+   métrica mide **selectividad** (qué tan bien la confianza ordena los aciertos),
+   no discriminación de clase; el 14b tiene confianza informativa (§5.4) y el 7b
+   no (dos valores). Con prevalencia 0,30, una accuracy de 0,82 es compatible con
+   balanced ≈ 0,51.
+5. **Conclusión operativa**: la elección de modelo **depende de la métrica y del
+   coste declarado**. Si el criterio es detección de estrés con prevalencia 0,30
+   → **7b** (balanced). Si es ranking por confianza o respaldo de claims → **14b**
+   (0,92–0,95 de dirección). Si es accuracy bruta → 14b, pero por el artefacto de
+   abstenerse en la clase positiva. La tesis debe fijar la regla de decisión antes
+   de comparar modelos; reportar solo accuracy es indefendible con estos datos.
+
+## 7. Amenazas a la validez
 
 - **424 ventanas de 12 sujetos**: la unidad de generalización es el sujeto
   (n efectivo ≈ 12); los IC por ventana serían demasiado estrechos. Los IC de §2
@@ -327,7 +374,7 @@ y del corpus, y así hay que declararlo.
 
 ---
 
-## 7. Reproducción
+## 8. Reproducción
 
 ```bash
 # 1) Barrido (servidor; regla 8 de AGENTS.md: lanzador desde ~/data)

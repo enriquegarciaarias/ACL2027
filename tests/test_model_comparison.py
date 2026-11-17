@@ -126,9 +126,22 @@ def test_load_degradation_filters_variant_and_infers_task(tmp_path, monkeypatch)
     assert block["n"] == 3
 
 
+def _counts(hits: int, decided: int, total: int | None = None) -> dict[str, int]:
+    """Entrada de ``per_subject_counts`` para tests."""
+    return {
+        "hits": hits,
+        "decided": decided,
+        "total": decided if total is None else total,
+        "pos": 0,
+        "pos_tp": 0,
+        "neg": 0,
+        "neg_tn": 0,
+    }
+
+
 def test_paired_bootstrap_delta_zero_for_identical():
     """Dos modelos idénticos dan delta 0 con IC degenerado en 0."""
-    counts = {"S5": (10, 20), "S6": (12, 20), "S7": (8, 20)}
+    counts = {"S5": _counts(10, 20), "S6": _counts(12, 20), "S7": _counts(8, 20)}
     stats = cm.paired_bootstrap_delta(counts, counts, n_boot=200, seed=42)
 
     assert stats["delta"] == pytest.approx(0.0)
@@ -139,8 +152,8 @@ def test_paired_bootstrap_delta_zero_for_identical():
 
 def test_paired_bootstrap_delta_detects_improvement():
     """Un modelo que acierta más da delta positivo y fuera de 0."""
-    base = {"S5": (5, 20), "S6": (6, 20), "S7": (4, 20), "S8": (5, 20)}
-    better = {"S5": (15, 20), "S6": (14, 20), "S7": (16, 20), "S8": (13, 20)}
+    base = {s: _counts(h, 20) for s, h in (("S5", 5), ("S6", 6), ("S7", 4), ("S8", 5))}
+    better = {s: _counts(h, 20) for s, h in (("S5", 15), ("S6", 14), ("S7", 16), ("S8", 13))}
     stats = cm.paired_bootstrap_delta(base, better, n_boot=500, seed=42)
 
     assert stats["delta"] > 0.35
@@ -149,8 +162,53 @@ def test_paired_bootstrap_delta_detects_improvement():
 
 def test_paired_bootstrap_delta_without_shared_subjects():
     """Sin sujetos comunes no hay comparación posible."""
-    stats = cm.paired_bootstrap_delta({"S5": (1, 2)}, {"S6": (1, 2)})
+    stats = cm.paired_bootstrap_delta({"S5": _counts(1, 2)}, {"S6": _counts(1, 2)})
     assert stats["n_subjects"] == 0
+
+
+def test_per_subject_counts_separates_decided_abstain_and_classes():
+    """``acc*`` cuenta las abstenciones; ``pos``/``neg`` habilitan balanced."""
+    records = [
+        {"subject": "S5", "_truth": "stress", "decision": "stress"},
+        {"subject": "S5", "_truth": "stress", "decision": "abstain"},
+        {"subject": "S5", "_truth": "non-stress", "decision": "non-stress"},
+        {"subject": "S5", "_truth": "non-stress", "decision": "stress"},
+    ]
+
+    counts = cm.per_subject_counts(records)["S5"]
+
+    assert counts["decided"] == 3
+    assert counts["hits"] == 2
+    assert counts["total"] == 4
+    assert counts["pos"] == 2 and counts["pos_tp"] == 1
+    assert counts["neg"] == 2 and counts["neg_tn"] == 1
+
+
+def test_paired_deltas_expose_the_degenerate_classifier():
+    """Accuracy puede subir mientras balanced baja (el caso del 14b en C4)."""
+    # Modelo A (7b): acierta estrés y no-estrés; 424 ventanas, 127 de estrés.
+    base = {
+        "S5": {"hits": 60, "decided": 100, "total": 100,
+               "pos": 30, "pos_tp": 15, "neg": 70, "neg_tn": 66},
+    }
+    # Modelo B (14b): casi nunca dice estrés, pero se abstiene en el estrés.
+    better = {
+        "S5": {"hits": 75, "decided": 85, "total": 100,
+               "pos": 30, "pos_tp": 2, "neg": 70, "neg_tn": 69},
+    }
+
+    deltas = cm.paired_bootstrap_all_metrics(base, better, n_boot=50, seed=42)
+
+    assert deltas["accuracy"]["delta"] > 0
+    assert deltas["balanced_accuracy"]["delta"] < 0
+
+
+def test_paired_bootstrap_all_metrics_skips_unavailable_balanced():
+    """En 4 clases no hay balanced binaria: se omite en lugar de dar nan."""
+    base = {"S5": _counts(5, 10)}
+    stats = cm.paired_bootstrap_all_metrics(base, base, n_boot=20, seed=42)
+    assert "balanced_accuracy" not in stats
+    assert "accuracy" in stats and "accuracy_incl_abstain" in stats
 
 
 def test_summarize_handles_missing_claims():
@@ -280,20 +338,26 @@ def test_print_report_shows_decided_count(capsys):
 
 def test_print_report_warns_about_deltas_with_one_subject(capsys):
     report = _report_stub(abstention=0.998, accuracy=1.0)
+    stats = {
+        "delta": 0.457,
+        "ci_low": 0.457,
+        "ci_high": 0.457,
+        "n_subjects": 1,
+    }
     report["deltas"] = {
         "C2_partial_eda": {
             "b - a": {
-                "delta": 0.457,
-                "ci_low": 0.457,
-                "ci_high": 0.457,
-                "n_subjects": 1,
+                "accuracy": dict(stats),
+                "balanced_accuracy": {**stats, "delta": -0.2},
             }
         }
     }
     cm.print_report(report)
     out = capsys.readouterr().out
     assert "+0.457" in out
-    assert "no es inferencia" in out
+    assert "accuracy (decididas)" in out
+    assert "balanced" in out
+    assert "remuestrea sujetos" in out
 
 
 def test_accuracy_at_coverage_uses_most_confident():

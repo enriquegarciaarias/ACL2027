@@ -257,54 +257,129 @@ def _truth_pred(record: Mapping[str, Any]) -> tuple[str, str] | None:
 
 def per_subject_counts(
     records: Sequence[Mapping[str, Any]],
-) -> dict[str, tuple[int, int]]:
-    """Aciertos y decididas por sujeto (para bootstrap agrupado)."""
-    counts: dict[str, list[int]] = {}
+) -> dict[str, dict[str, int]]:
+    """Recuentos por sujeto para el bootstrap agrupado.
+
+    Por sujeto: ``hits``/``decided`` (accuracy sobre decididas), ``total`` (todas
+    las ventanas con verdad, incluidas abstenciones e inválidas, para ``acc*``),
+    y ``pos``/``pos_tp`` y ``neg``/``neg_tn`` (clases reales ``stress`` y
+    ``non-stress``, para balanced accuracy). En tareas de 4 clases ``_truth`` es
+    la etiqueta real y ``pos``/``neg`` quedan a 0: solo se usa accuracy.
+    """
+    counts: dict[str, dict[str, int]] = {}
+
+    def entry_for(subject: str) -> dict[str, int]:
+        return counts.setdefault(
+            subject,
+            {
+                "hits": 0,
+                "decided": 0,
+                "total": 0,
+                "pos": 0,
+                "pos_tp": 0,
+                "neg": 0,
+                "neg_tn": 0,
+            },
+        )
+
     for record in records:
         pair = _truth_pred(record)
         if pair is None:
             continue
         truth, predicted = pair
+        entry = entry_for(str(record.get("subject")))
+        entry["total"] += 1
+        if truth == "stress":
+            entry["pos"] += 1
+        elif truth == "non-stress":
+            entry["neg"] += 1
         if predicted == "abstain":
             continue
-        entry = counts.setdefault(str(record.get("subject")), [0, 0])
-        entry[1] += 1
-        entry[0] += int(predicted == truth)
-    return {k: (v[0], v[1]) for k, v in counts.items()}
+        entry["decided"] += 1
+        correct = int(predicted == truth)
+        entry["hits"] += correct
+        if correct and truth == "stress":
+            entry["pos_tp"] += 1
+        elif correct and truth == "non-stress":
+            entry["neg_tn"] += 1
+    return counts
 
 
-def paired_bootstrap_delta(
-    counts_a: Mapping[str, tuple[int, int]],
-    counts_b: Mapping[str, tuple[int, int]],
+#: Métricas con delta pareada que reporta el comparador.
+PAIRED_METRICS: tuple[str, ...] = (
+    "accuracy",
+    "accuracy_incl_abstain",
+    "balanced_accuracy",
+)
+
+
+def metric_value(
+    counts: Mapping[str, Mapping[str, Any]], sample: Sequence[str], metric: str
+) -> float:
+    """Valor pooled de una métrica sobre una muestra de sujetos.
+
+    ``accuracy`` divide por decididas; ``accuracy_incl_abstain`` por todas las
+    ventanas con verdad; ``balanced_accuracy`` es la media de recall y
+    especificidad sobre las ventanas de ``stress`` y ``non-stress`` (devuelve
+    ``nan`` en tareas de 4 clases).
+    """
+    if metric == "balanced_accuracy":
+        pos = sum(counts[s]["pos"] for s in sample)
+        pos_hits = sum(counts[s]["pos_tp"] for s in sample)
+        neg = sum(counts[s]["neg"] for s in sample)
+        neg_hits = sum(counts[s]["neg_tn"] for s in sample)
+        if not pos or not neg:
+            return float("nan")
+        return 0.5 * (pos_hits / pos + neg_hits / neg)
+    hits = sum(counts[s]["hits"] for s in sample)
+    if metric == "accuracy":
+        total = sum(counts[s]["decided"] for s in sample)
+    elif metric == "accuracy_incl_abstain":
+        total = sum(counts[s]["total"] for s in sample)
+    else:
+        raise ValueError(f"métrica desconocida: {metric!r}")
+    return hits / total if total else float("nan")
+
+
+def paired_bootstrap_metric(
+    counts_a: Mapping[str, Mapping[str, Any]],
+    counts_b: Mapping[str, Mapping[str, Any]],
+    metric: str = "accuracy",
     n_boot: int = 2000,
     seed: int = 42,
 ) -> dict[str, float]:
-    """Diferencia de accuracy (B − A) con IC bootstrap por sujeto.
+    """Diferencia (B − A) de una métrica con bootstrap agrupado por sujeto.
 
-    Se remuestrean **sujetos** con reemplazo y se recalcula la accuracy pooled
-    de cada modelo sobre la misma muestra (diseño pareado por sujeto).
+    Se remuestrean **sujetos** con reemplazo y se recalcula la métrica pooled de
+    cada modelo sobre la misma muestra (diseño pareado).
     """
     subjects = sorted(set(counts_a) & set(counts_b))
     if not subjects:
-        return {"delta": float("nan"), "ci_low": float("nan"),
-                "ci_high": float("nan"), "n_subjects": 0}
-
-    def accuracy(counts: Mapping[str, tuple[int, int]], sample: Sequence[str]) -> float:
-        hits = sum(counts[s][0] for s in sample)
-        total = sum(counts[s][1] for s in sample)
-        return hits / total if total else float("nan")
-
-    delta = accuracy(counts_b, subjects) - accuracy(counts_a, subjects)
+        return {
+            "delta": float("nan"),
+            "ci_low": float("nan"),
+            "ci_high": float("nan"),
+            "n_subjects": 0,
+        }
+    delta = metric_value(counts_b, subjects, metric) - metric_value(
+        counts_a, subjects, metric
+    )
     rng = np.random.default_rng(seed)
     samples = []
     for _ in range(n_boot):
         sample = [subjects[i] for i in rng.integers(0, len(subjects), len(subjects))]
-        value = accuracy(counts_b, sample) - accuracy(counts_a, sample)
+        value = metric_value(counts_b, sample, metric) - metric_value(
+            counts_a, sample, metric
+        )
         if not np.isnan(value):
             samples.append(value)
     if not samples:
-        return {"delta": delta, "ci_low": float("nan"),
-                "ci_high": float("nan"), "n_subjects": len(subjects)}
+        return {
+            "delta": delta,
+            "ci_low": float("nan"),
+            "ci_high": float("nan"),
+            "n_subjects": len(subjects),
+        }
     low, high = np.percentile(samples, [2.5, 97.5])
     return {
         "delta": float(delta),
@@ -312,6 +387,34 @@ def paired_bootstrap_delta(
         "ci_high": float(high),
         "n_subjects": len(subjects),
     }
+
+
+def paired_bootstrap_delta(
+    counts_a: Mapping[str, Mapping[str, Any]],
+    counts_b: Mapping[str, Mapping[str, Any]],
+    n_boot: int = 2000,
+    seed: int = 42,
+) -> dict[str, float]:
+    """Diferencia de accuracy sobre decididas (B − A), bootstrap por sujeto."""
+    return paired_bootstrap_metric(counts_a, counts_b, "accuracy", n_boot, seed)
+
+
+def paired_bootstrap_all_metrics(
+    counts_a: Mapping[str, Mapping[str, Any]],
+    counts_b: Mapping[str, Mapping[str, Any]],
+    n_boot: int = 2000,
+    seed: int = 42,
+) -> dict[str, dict[str, float]]:
+    """Deltas pareadas de las tres métricas de ``PAIRED_METRICS``.
+
+    Se omiten las que no se pueden calcular (balanced en tareas de 4 clases).
+    """
+    out: dict[str, dict[str, float]] = {}
+    for metric in PAIRED_METRICS:
+        stats = paired_bootstrap_metric(counts_a, counts_b, metric, n_boot, seed)
+        if not np.isnan(stats["delta"]):
+            out[metric] = stats
+    return out
 
 
 def summarize(metrics: Mapping[str, Any]) -> dict[str, Any]:
@@ -502,8 +605,8 @@ def compare(
             key_b = (model, condition)
             if key_a not in counts or key_b not in counts:
                 continue
-            deltas[condition][f"{model} - {baseline}"] = paired_bootstrap_delta(
-                counts[key_a], counts[key_b]
+            deltas[condition][f"{model} - {baseline}"] = (
+                paired_bootstrap_all_metrics(counts[key_a], counts[key_b])
             )
 
     # Accuracy a cobertura comparable: la comparación justa cuando un modelo se
@@ -610,18 +713,30 @@ def print_report(report: Mapping[str, Any]) -> None:
     )
 
     if report["deltas"]:
-        print("\nDiferencias de accuracy (bootstrap por sujeto, IC 95 %):")
-        for condition, entries in report["deltas"].items():
-            for label, stats in entries.items():
-                print(
-                    f"  {condition:16s} {label:34s} "
-                    f"{stats['delta']:+.3f} "
-                    f"[{stats['ci_low']:+.3f}; {stats['ci_high']:+.3f}] "
-                    f"({stats['n_subjects']} sujetos)"
-                )
+        print("\nDiferencias pareadas (bootstrap por sujeto, IC 95 %):")
         print(
-            "  Solo se remuestrean los sujetos con ventanas decididas en ambos "
-            "modelos: con 1 sujeto (o 0) el intervalo no es inferencia."
+            f"  {'condición':16s} {'comparación':30s} {'métrica':22s} "
+            f"{'delta':>7s} [IC]"
+        )
+        for condition, entries in report["deltas"].items():
+            for label, metrics in entries.items():
+                for metric, stats in metrics.items():
+                    name = {
+                        "accuracy": "accuracy (decididas)",
+                        "accuracy_incl_abstain": "accuracy (abst.=error)",
+                        "balanced_accuracy": "balanced",
+                    }.get(metric, metric)
+                    print(
+                        f"  {condition:16s} {label:30s} {name:22s} "
+                        f"{stats['delta']:+.3f} "
+                        f"[{stats['ci_low']:+.3f}; {stats['ci_high']:+.3f}] "
+                        f"({stats['n_subjects']} sujetos)"
+                    )
+        print(
+            "  La accuracy sobre decididas premia abstenerse cuando la abstención "
+            "se concentra en una clase:\n"
+            "  mirar siempre balanced y accuracy con la abstención como error. "
+            "El bootstrap remuestrea sujetos, no ventanas."
         )
 
     risk = report.get("risk_coverage") or {}

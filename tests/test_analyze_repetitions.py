@@ -284,3 +284,15 @@ def test_infer_metadata_reads_provenance():
 def test_infer_metadata_rejects_unknown_mode():
     with pytest.raises(SystemExit):
         ar.infer_metadata([_record("w", "stress", 85, 0)], "rhythm4", None)
+
+
+def test_analyzer_avoids_the_heavy_ingestion_import_chain():
+    """No debe importar ``represent``: arrastra ``neurokit2``.
+
+    En nodos de login con una CPU distinta al nodo de cálculo, importar
+    ``sources.ingestion.represent`` aborta con ``Illegal instruction``. El
+    analizador solo necesita el ID opaco, que vive en ``provenance``.
+    """
+    source = Path(ar.__file__).read_text(encoding="utf-8")
+    assert "sources.ingestion.represent" not in source
+    assert "neurokit" not in source

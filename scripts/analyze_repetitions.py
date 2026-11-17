@@ -48,8 +48,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sources.common.provenance import utc_now
-from sources.ingestion.represent import _opaque_window_id
+from sources.common.provenance import opaque_window_id, utc_now
 from sources.phase2.binary_variants import (
     DEFAULT_NONSTRESS_VARIANT,
     NONSTRESS_VARIANTS,
@@ -82,7 +81,7 @@ def load_labels() -> dict[str, str]:
         label = record.get("label")
         if isinstance(label, dict):
             label = label.get("name")
-        labels[_opaque_window_id(record["window_id"])] = label
+        labels[opaque_window_id(record["window_id"])] = label
     return labels
 
 

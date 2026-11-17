@@ -203,6 +203,10 @@ def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
         if getattr(args, "raw_decisions", False):
             argv.append("--raw-decisions")
     elif experiment == "degradation":
+        if int(getattr(args, "repetitions", None) or 1) > 1:
+            # La varianza de muestreo se analiza con otro runner y sobre otro
+            # corpus (``..._rep{R}``), no con el analizador del barrido.
+            return build_repetitions_argv(args, int(getattr(args, "repetitions")))
         if getattr(args, "hierarchy", False):
             _append_flag(argv, "--model", getattr(args, "model", None))
             _append_flag(argv, "--conditions", getattr(args, "conditions", None))
@@ -243,6 +247,44 @@ def _script_for_evaluate(experiment: str) -> str:
         "physionet": "analyze_p3_physionet",
         "kemocon": "run_p3_kemocon",
     }[experiment]
+
+
+def repetitions_dir(args: Any, repetitions: int) -> Path:
+    """Directorio del corpus de repeticiones (``..._rep{R}/{modelo}``).
+
+    Se resuelve con el mismo helper que el barrido para que la evaluación no
+    pueda leer un corpus distinto del que se generó.
+    """
+    env = processControl.env or {}
+    output = env.get("output")
+    subject = str(getattr(args, "subject", None) or "default")
+    phase2 = Path(output or "results/output") / subject / "PHASE2"
+    decision_mode = getattr(args, "decision_mode", None)
+    if decision_mode not in ("binary", "affective"):
+        decision_mode = None
+    from sources.phase3.degradation import resolve_repetitions_dir
+
+    return resolve_repetitions_dir(
+        phase2,
+        model=str(getattr(args, "model", None) or ""),
+        representation=str(getattr(args, "representation", None) or "numeric"),
+        decision_mode=decision_mode,
+        nonstress_variant=getattr(args, "nonstress_variant", None),
+        temperature_mode=getattr(args, "temperature", None),
+        repetitions=repetitions,
+    )
+
+
+def build_repetitions_argv(args: Any, repetitions: int) -> list[str]:
+    """``argv`` del análisis de varianza de muestreo."""
+    directory = repetitions_dir(args, repetitions)
+    output = getattr(args, "output", None) or str(
+        directory / "repetitions_report.json"
+    )
+    argv: list[str] = ["--dir", str(directory), "--output", output]
+    _append_flag(argv, "--decision-mode", getattr(args, "decision_mode", None))
+    _append_flag(argv, "--nonstress-variant", getattr(args, "nonstress_variant", None))
+    return argv
 
 
 def build_compare_argv(args: Any) -> list[str] | None:
@@ -507,8 +549,16 @@ def _plan(phase: str) -> dict[str, Any]:
             plan["runner"] = f"scripts/{_script_for_generate(experiment)}.py"
     else:
         compare = build_compare_argv(args)
+        repetitions = max(int(getattr(args, "repetitions", None) or 1), 1)
         if compare:
             plan["runner"] = "scripts/compare_models.py"
+        elif experiment == "degradation" and repetitions > 1:
+            plan["runner"] = "scripts/analyze_repetitions.py"
+            try:
+                plan["dir"] = str(repetitions_dir(args, repetitions))
+            except FileNotFoundError as exc:
+                plan["dir"] = None
+                plan["paths"]["warnings"].append(str(exc).splitlines()[0])
         elif experiment == "degradation" and getattr(args, "hierarchy", False):
             plan["runner"] = "scripts/analyze_binary_hierarchy.py"
         else:
@@ -578,6 +628,13 @@ def run_evaluate() -> None:
         return
 
     compare = build_compare_argv(args)
+    repetitions = max(int(getattr(args, "repetitions", None) or 1), 1)
+    if repetitions > 1 and compare is not None:
+        raise SystemExit(
+            "[EVALUATE] --compare-models no se combina con --repetitions: "
+            "la comparación entre modelos del corpus de repeticiones aún no "
+            "está implementada."
+        )
     if compare is not None:
         writeLog(
             "info",
@@ -589,7 +646,9 @@ def run_evaluate() -> None:
         return
 
     script = _script_for_evaluate(experiment)
-    if experiment == "degradation" and getattr(args, "hierarchy", False):
+    if experiment == "degradation" and repetitions > 1:
+        script = "analyze_repetitions"
+    elif experiment == "degradation" and getattr(args, "hierarchy", False):
         script = "analyze_binary_hierarchy"
     argv = build_evaluate_argv(experiment, args)
     writeLog(

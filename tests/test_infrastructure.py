@@ -7,7 +7,13 @@ from pathlib import Path
 import numpy as np
 
 from sources.common import paths
-from sources.common.provenance import build_fingerprint, canonical_json, sha256_file, sha256_json
+from sources.common.provenance import (
+    build_fingerprint,
+    canonical_json,
+    opaque_window_id,
+    sha256_file,
+    sha256_json,
+)
 
 
 def test_corpus_dir_resolves_subject_and_proc(workspace):
@@ -71,3 +77,19 @@ def test_manage_env_creates_input_and_output_dirs(tmp_path, monkeypatch):
     assert (tmp_path / "results" / "input").is_dir()
     assert (tmp_path / "results" / "output").is_dir()
     assert env["input"].endswith("results/input")
+
+
+def test_opaque_window_id_is_stable_and_matches_ingestion_alias():
+    """El ID opaco vive en ``provenance``; ingesta debe devolver lo mismo.
+
+    Si divergieran, las etiquetas dejarían de emparejarse con las respuestas en
+    silencio (la etiqueta se busca por ID opaco).
+    """
+    from sources.ingestion.represent import _opaque_window_id
+
+    window = "WESAD:S5:w00001"
+    assert opaque_window_id(window) == _opaque_window_id(window)
+    assert opaque_window_id(window).startswith("win_")
+    assert len(opaque_window_id(window)) == 12
+    assert opaque_window_id(window) == opaque_window_id(window)
+    assert opaque_window_id(window) != opaque_window_id("WESAD:S5:w00002")

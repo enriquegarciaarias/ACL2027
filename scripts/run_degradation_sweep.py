@@ -188,8 +188,9 @@ def output_directory(
     model: str,
     nonstress_variant: str = DEFAULT_NONSTRESS_VARIANT,
     temperature_mode: str = "include",
+    repetitions: int = 1,
 ) -> Path:
-    """Directorio de salida: representación × tarea × variante × modelo.
+    """Directorio de salida: representación × tarea × variante × modelo × R.
 
     Delega en :func:`sources.phase3.degradation.degradation_output_dir` para que
     el barrido y los analizadores resuelvan **exactamente** las mismas rutas
@@ -197,9 +198,9 @@ def output_directory(
 
     La tarea y la variante forman parte del nombre: mezclar respuestas de 4
     clases, de binario con distintas clases ``non-stress`` o con/sin
-    temperatura invalidaría cualquier comparación. El corpus histórico
-    ``degradation_binary/{modelo}/`` (variante ``all`` con temperatura) se deja
-    intacto; la variante ``schmidt`` escribe en un directorio propio.
+    temperatura invalidaría cualquier comparación. Las repeticiones añaden
+    ``_rep{R}``: el corpus de una sola pasada es el que sostiene las cifras
+    publicadas y no debe mezclarse con el de repeticiones.
     """
     return degradation_output_dir(
         OUTPUT_DIR.parent,
@@ -208,6 +209,7 @@ def output_directory(
         decision_mode=decision_mode,
         nonstress_variant=nonstress_variant,
         temperature_mode=temperature_mode,
+        repetitions=repetitions,
     )
 
 
@@ -508,22 +510,16 @@ def main(argv: list[str] | None = None) -> None:
         output_dir = Path(args.output_dir)
     else:
         # Un subdirectorio por modelo: comparar modelos no sobrescribe
-        # ni reutiliza (por error) las respuestas de otro modelo.
+        # ni reutiliza (por error) las respuestas de otro modelo. Las
+        # repeticiones llevan sufijo _rep{R} (ver degradation_dir_name).
         output_dir = output_directory(
             args.representation,
             decision_mode,
             config.model,
             args.nonstress_variant,
             args.temperature,
+            repetitions=len(seeds),
         )
-        if len(seeds) > 1:
-            # Las repeticiones son otro corpus (mismo prompt, varias muestras):
-            # no deben mezclarse con el barrido de una sola pasada, que es el
-            # que sostiene las cifras publicadas.
-            output_dir = (
-                output_dir.parent.with_name(f"{output_dir.parent.name}_rep{len(seeds)}")
-                / output_dir.name
-            )
 
     ensure_model_available(config.model)
     print(

@@ -23,7 +23,6 @@ La unión con la etiqueta se hará en la fase de evaluación.
 """
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -39,6 +38,7 @@ from sources.common.paths import (
 from sources.common.provenance import (
     build_fingerprint,
     code_fingerprint,
+    opaque_window_id,
     sha256_json,
     utc_now,
 )
@@ -279,11 +279,11 @@ def _window_meta(window_row: Mapping[str, Any]) -> dict:
 def _opaque_window_id(window_id: str) -> str:
     """Devuelve un identificador opaco de 8 caracteres para la vista del LLM.
 
-    Evita fuga indirecta de etiqueta mediante IDs reales (w00001) o nombres
-    de sujeto que permiten memorización o correlación con el protocolo fijo
-    de WESAD.
+    Alias de :func:`sources.common.provenance.opaque_window_id`, que mantiene la
+    compatibilidad con el código y los tests de ingesta. Los analizadores
+    importan la versión de ``provenance`` para no arrastrar ``neurokit2``.
     """
-    return "win_" + hashlib.sha256(window_id.encode()).hexdigest()[:8]
+    return opaque_window_id(window_id)
 
 
 def _round(value: Any, digits: int) -> Any:

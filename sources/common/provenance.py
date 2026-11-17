@@ -170,6 +170,21 @@ def environment_snapshot() -> dict:
     }
 
 
+def opaque_window_id(window_id: str) -> str:
+    """Identificador opaco de 8 caracteres para la vista del LLM.
+
+    Evita fuga indirecta de etiqueta mediante IDs reales (``w00001``) o nombres
+    de sujeto que permiten memorización o correlación con el protocolo fijo de
+    WESAD.
+
+    Vive en ``provenance`` (solo stdlib) y no en ``ingestion.represent`` porque
+    también lo usan los analizadores: importarlo desde ``represent`` arrastra
+    ``features`` → ``neurokit2``, que en nodos de login con otra CPU puede
+    abortar con ``Illegal instruction``.
+    """
+    return "win_" + hashlib.sha256(window_id.encode()).hexdigest()[:8]
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)

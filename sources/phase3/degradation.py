@@ -331,18 +331,23 @@ def degradation_dir_name(
     decision_mode: str = "affective",
     nonstress_variant: str | None = None,
     temperature_mode: str = "include",
+    repetitions: int = 1,
 ) -> str:
     """Nombre del directorio de respuestas de un barrido.
 
     La tarea, la variante de ``non-stress`` y la presencia de temperatura forman
     parte del nombre: mezclar corpus de 4 clases, de binario con distintas
     clases negativas o con/sin temperatura invalidaría cualquier comparación.
+    Las repeticiones añaden ``_rep{R}`` a partir de dos pasadas, para no
+    mezclarse con el corpus de una sola pasada.
 
     Examples:
         >>> degradation_dir_name("numeric", "binary", "schmidt", "exclude")
         'degradation_binary_schmidt_notemp'
         >>> degradation_dir_name("text", "affective")
         'degradation_text'
+        >>> degradation_dir_name("numeric", "binary", "schmidt", "exclude", 5)
+        'degradation_binary_schmidt_notemp_rep5'
     """
     if representation not in REPRESENTATION_PREFIXES:
         raise ValueError(
@@ -356,6 +361,8 @@ def degradation_dir_name(
         name += f"_binary_{variant}"
     if temperature_mode == "exclude":
         name += "_notemp"
+    if int(repetitions) > 1:
+        name += f"_rep{int(repetitions)}"
     return name
 
 
@@ -366,12 +373,17 @@ def degradation_output_dir(
     decision_mode: str = "affective",
     nonstress_variant: str | None = None,
     temperature_mode: str = "include",
+    repetitions: int = 1,
 ) -> Path:
     """Directorio de salida de un modelo: ``{phase2}/{nombre}/{slug}``."""
     return (
         Path(phase2_dir)
         / degradation_dir_name(
-            representation, decision_mode, nonstress_variant, temperature_mode
+            representation,
+            decision_mode,
+            nonstress_variant,
+            temperature_mode,
+            repetitions,
         )
         / model_slug(model)
     )
@@ -472,4 +484,64 @@ def resolve_degradation_dir(
         "      --nonstress-variant "
         f"{nonstress_variant or DEFAULT_NONSTRESS_VARIANT} "
         f"--temperature {temperature_mode or 'exclude'}"
+    )
+
+
+def resolve_repetitions_dir(
+    phase2_dir: Path,
+    model: str = "",
+    representation: str = "numeric",
+    decision_mode: str | None = None,
+    nonstress_variant: str | None = None,
+    temperature_mode: str | None = None,
+    repetitions: int | None = None,
+) -> Path:
+    """Localiza el corpus de repeticiones (``..._rep{R}/{slug}``).
+
+    Con ``repetitions`` explícito busca exactamente ese corpus; sin él recorre
+    los directorios ``*_rep*`` y devuelve el primero con respuestas. Se separa
+    del resolutor del barrido porque el sufijo ``_rep{R}`` no debe caer nunca al
+    corpus de una sola pasada: analizar repeticiones sobre un corpus de una
+    pasada daría «varianza cero» por construcción.
+
+    Raises:
+        FileNotFoundError: con las rutas probadas y el comando que genera el
+            corpus.
+    """
+    root = Path(phase2_dir)
+    mode = decision_mode or "binary"
+    variant = (
+        nonstress_variant if nonstress_variant is not None else DEFAULT_NONSTRESS_VARIANT
+    )
+    temperature = temperature_mode or "exclude"
+
+    if repetitions:
+        candidates = [
+            root
+            / degradation_dir_name(
+                representation, mode, variant, temperature, repetitions
+            )
+        ]
+    else:
+        candidates = (
+            sorted(p for p in root.iterdir() if p.is_dir() and "_rep" in p.name)
+            if root.is_dir()
+            else []
+        )
+
+    tried: list[Path] = []
+    for base in candidates:
+        ordered = ([base / model_slug(model)] if model else []) + [base]
+        for directory in ordered:
+            tried.append(directory)
+            if directory.is_dir() and any(directory.glob("*.responses.jsonl")):
+                return directory
+
+    suffix = f" --repetitions {repetitions}" if repetitions else ""
+    raise FileNotFoundError(
+        "No se encontraron respuestas del corpus de repeticiones.\n"
+        f"  Rutas probadas: {', '.join(str(p) for p in tried) or '(ninguna)'}\n"
+        "  Genera primero el corpus con:\n"
+        "    --proc GENERATE --experiment degradation --decision-mode "
+        f"{mode} --nonstress-variant {variant} --temperature {temperature}{suffix}"
     )

@@ -31,6 +31,7 @@ results/
 out/
 
 # Logs del proceso
+logs/
 ProcessLog.txt
 Process.txt
 *.log

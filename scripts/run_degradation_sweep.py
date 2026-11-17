@@ -54,8 +54,8 @@ from sources.phase2.binary_variants import (
 from sources.phase2.llm_config import (
     build_experiment_config,
     create_ollama_chat_client,
-    model_slug,
 )
+from sources.phase3.degradation import degradation_output_dir
 from sources.phase2.orchestrator import _call_ollama_chat
 from sources.phase2.prompt_builder import (
     assert_no_leakage,
@@ -133,18 +133,24 @@ def output_directory(
 ) -> Path:
     """Directorio de salida: representación × tarea × variante × modelo.
 
+    Delega en :func:`sources.phase3.degradation.degradation_output_dir` para que
+    el barrido y los analizadores resuelvan **exactamente** las mismas rutas
+    (evita que un cambio de nombre en un lado deje huérfano al otro).
+
     La tarea y la variante forman parte del nombre: mezclar respuestas de 4
     clases, de binario con distintas clases ``non-stress`` o con/sin
     temperatura invalidaría cualquier comparación. El corpus histórico
     ``degradation_binary/{modelo}/`` (variante ``all`` con temperatura) se deja
     intacto; la variante ``schmidt`` escribe en un directorio propio.
     """
-    base_name = "degradation" if representation == "numeric" else "degradation_text"
-    if decision_mode == DECISION_MODE_STRESS_BINARY:
-        base_name += f"_binary_{nonstress_variant}"
-    if temperature_mode == "exclude":
-        base_name += "_notemp"
-    return OUTPUT_DIR.parent / base_name / model_slug(model)
+    return degradation_output_dir(
+        OUTPUT_DIR.parent,
+        model,
+        representation=representation,
+        decision_mode=decision_mode,
+        nonstress_variant=nonstress_variant,
+        temperature_mode=temperature_mode,
+    )
 
 
 def load_windows(subject: str) -> dict[str, dict[str, Any]]:

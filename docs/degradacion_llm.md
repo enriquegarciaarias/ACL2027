@@ -1,9 +1,11 @@
 # Barrido de degradación con LLM (H1/H3) — diseño
 
-**Fecha:** 2026-11-09
+**Fecha:** 2026-11-09 (actualizado 2026-11-17 con variante y temperatura)
 **Script:** `scripts/run_degradation_sweep.py`
-**Salidas:** `results/output/WESAD/PHASE2/degradation/{modelo}/{subject}.responses.jsonl`
-y `degradation_summary.json`
+**Salidas:**
+`results/output/WESAD/PHASE2/degradation[_binary_<variante>][_notemp]/{modelo}/{subject}.responses.jsonl`
+y `degradation_summary.json` (el nombre exacto lo fija
+`degradation_dir_name`: representación × tarea × variante × temperatura)
 
 ---
 
@@ -105,9 +107,23 @@ python scripts/run_degradation_sweep.py --model qwen3:14b \
 python scripts/analyze_degradation.py --model qwen3:14b --decision-mode binary
 ```
 
-- **Directorios separados por tarea**: `degradation_binary/{modelo}/` (y
-  `degradation_text_binary/{modelo}/` para el brazo textual). Mezclar respuestas
-  de 4 clases y binarias invalidaría la comparación, igual que mezclar modelos.
+- **Directorios separados por tarea, variante y temperatura**:
+  `degradation_binary[_<variante>][_notemp]/{modelo}/` (y su equivalente
+  `degradation_text_...`). El corpus histórico `degradation_binary/{modelo}/`
+  corresponde a la variante `all` **con** temperatura. Mezclar respuestas de
+  4 clases, de binario con distintas clases `non-stress` o con/sin temperatura
+  invalidaría la comparación, igual que mezclar modelos.
+- **Un solo resolutor de rutas**:
+  `sources.phase3.degradation.resolve_degradation_dir` decide qué directorio se
+  lee, y lo usan el barrido, `analyze_degradation.py`, `compare_models.py` y
+  `analyze_binary_hierarchy.py`. Sin variante ni temperatura explícitas prefiere
+  el primario (`schmidt`, sin temperatura) y solo cae al histórico si no existe.
+- **El análisis deduce el diseño del corpus**: si el registro declara
+  `decision_mode = stress_binary`, `analyze_degradation.py` usa el evaluador
+  binario, descarta las ventanas de las clases que la variante no cubre
+  (`meditation` en `schmidt`) y calcula la referencia features-only **sin
+  temperatura**. Así la referencia y el LLM ven las mismas features sobre las
+  mismas ventanas.
 - El registro de cada respuesta guarda `decision_mode`; el resumen también.
 - El prompt binario incluye su propia nota de tarea (`BINARY_TASK_NOTE`), sus
   ejemplares few-shot (desarrollo S2–S4) y su esquema de decisión

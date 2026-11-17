@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -52,6 +53,77 @@ def test_models_found():
         {},
     ]
     assert cm._models_found(records) == {"qwen3:14b", "qwen2.5:7b"}
+
+
+def test_summarize_reports_coverage_and_accuracy_including_abstention():
+    """La tabla del comparador debe exponer la cobertura y la acc* (H4)."""
+    metrics = {
+        "n": 10,
+        "n_valid": 10,
+        "n_invalid": 0,
+        "n_decided": 8,
+        "abstention_rate": 0.2,
+        "coverage": 0.8,
+        "accuracy": 0.875,
+        "accuracy_incl_abstain": 0.7,
+        "balanced_accuracy": 0.8,
+        "ece": 0.1,
+        "claims": {},
+        "certainty": {},
+        "confidence_mean": 80.0,
+    }
+
+    summary = cm.summarize(metrics)
+
+    assert summary["coverage"] == pytest.approx(0.8)
+    assert summary["accuracy_incl_abstain"] == pytest.approx(0.7)
+    assert summary["accuracy"] == pytest.approx(0.875)
+
+
+def test_load_degradation_filters_variant_and_infers_task(tmp_path, monkeypatch):
+    """Sin banderas: deduce la tarea del corpus y descarta ``meditation``."""
+    import analyze_degradation as ad
+
+    labels = {"w1": "stress", "w2": "baseline", "w3": "amusement", "w4": "meditation"}
+    records = [
+        {
+            "window_id": window_id,
+            "condition_id": "C0_clean",
+            "subject": "S5",
+            "split": "evaluation",
+            "decision": "non-stress",
+            "confidence": 80,
+            "status": "valid_response",
+            "claims": [],
+            "reasoning": "",
+            "prompt": "",
+            "decision_mode": "stress_binary",
+            "nonstress_variant": "schmidt",
+            "include_temperature": False,
+            "model": "qwen2.5:7b",
+        }
+        for window_id in labels
+    ]
+    directory = tmp_path / "corpus"
+    directory.mkdir()
+    with (directory / "S5.responses.jsonl").open("w", encoding="utf-8") as fh:
+        for record in records:
+            fh.write(json.dumps(record) + "\n")
+
+    monkeypatch.setattr(cm, "_degradation_dir", lambda *a, **k: directory)
+    monkeypatch.setattr(ad, "load_labels", lambda: labels)
+
+    kept, evaluator, info = cm.load_degradation(
+        "qwen2.5:7b", "numeric", {"C0_clean"}, decision_mode=""
+    )
+
+    assert info["decision_mode"] == "binary"
+    assert info["nonstress_variant"] == "schmidt"
+    assert info["include_temperature"] is False
+    assert info["n_dropped_variant"] == 1
+    assert {record["window_id"] for record in kept} == {"w1", "w2", "w3"}
+    block = evaluator(kept)
+    assert block["n"] == 3
 
 
 def test_paired_bootstrap_delta_zero_for_identical():
@@ -136,13 +208,29 @@ def test_check_distinct_models_rejects_shared_directory(tmp_path, monkeypatch):
 
 def test_check_distinct_models_accepts_separate_directories(tmp_path, monkeypatch):
     """Con los dos subdirectorios por modelo no hay colisión."""
-    _write(tmp_path / "qwen2_5_7b" / "S5.responses.jsonl", "")
-    _write(tmp_path / "qwen3_14b" / "S5.responses.jsonl", "")
-    monkeypatch.setattr(cm, "_base_dir", lambda *args, **kwargs: tmp_path)
+    dirs = {
+        "qwen2.5:7b": tmp_path / "qwen2_5_7b",
+        "qwen3:14b": tmp_path / "qwen3_14b",
+    }
+    for directory in dirs.values():
+        _write(directory / "S5.responses.jsonl", "")
+    monkeypatch.setattr(cm, "_degradation_dir", lambda model, *a, **k: dirs[model])
 
     cm.check_distinct_models(
         ["qwen2.5:7b", "qwen3:14b"], "degradation", "numeric"
     )
+
+
+def test_check_distinct_models_rejects_shared_legacy(tmp_path, monkeypatch):
+    """Dos modelos en la misma carpeta histórica se rechazan."""
+    legacy = tmp_path / "degradation"
+    _write(legacy / "S5.responses.jsonl", "")
+    monkeypatch.setattr(cm, "_degradation_dir", lambda *a, **k: legacy)
+
+    with pytest.raises(SystemExit):
+        cm.check_distinct_models(
+            ["qwen2.5:7b", "qwen3:14b"], "degradation", "numeric"
+        )
 
 
 def test_model_dir_quiet_suppresses_legacy_warning(tmp_path, capsys):

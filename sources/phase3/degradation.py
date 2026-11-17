@@ -16,6 +16,8 @@ from typing import Any, Mapping
 import numpy as np
 
 from sources.ingestion.represent import LLM_ALLOWED_FEATURES, _opaque_window_id
+from sources.phase2.binary_variants import DEFAULT_NONSTRESS_VARIANT, variant_classes
+from sources.phase2.llm_config import model_slug
 
 CHEST_MODALITIES = ("ecg", "eda", "resp", "temp")
 
@@ -175,20 +177,29 @@ def condition_matrix(
     condition: str,
     subjects: list[str],
     feature_names: list[str],
+    include_temperature: bool = True,
 ) -> tuple[np.ndarray, list[str], list[str]]:
     """Matriz de z-scores (referencia C0), sujetos y ventanas de una condición.
 
     Devuelve ``(X, groups, window_ids)``; las etiquetas se unen aparte desde el
     ground truth. Los valores ausentes se devuelven como ``nan`` para que el
     modelo de referencia los impute.
+
+    ``include_temperature=False`` replica la vista del experimento primario: la
+    referencia features-only debe ver **exactamente** las mismas features que el
+    LLM, o la comparación H1 mezclaría un canal que el modelo no recibió.
     """
     matrix: list[list[float]] = []
     groups: list[str] = []
     window_ids: list[str] = []
     for subject in subjects:
-        clean = load_features(ingest_dir, "C0_clean", subject)
+        clean = load_features(
+            ingest_dir, "C0_clean", subject, include_temperature=include_temperature
+        )
         centers, scales = subject_reference(clean, feature_names)
-        rows = load_features(ingest_dir, condition, subject)
+        rows = load_features(
+            ingest_dir, condition, subject, include_temperature=include_temperature
+        )
         for window_id in sorted(rows):
             values = rows[window_id]
             row = []
@@ -295,3 +306,170 @@ def render_text_summary(values: Mapping[str, float | None]) -> str:
                 lines.append(f"  {label}: {value:+.2f} SD")
         lines.append("")
     return "\n".join(lines).rstrip()
+
+
+# ---------------------------------------------------------------------------
+# Rutas de artefactos: representación × tarea × variante × temperatura × modelo
+# ---------------------------------------------------------------------------
+#: Modos que corresponden al endpoint binario (CLI e interno).
+BINARY_DECISION_MODES: tuple[str, ...] = ("binary", "stress_binary")
+
+#: Prefijo de directorio por representación.
+REPRESENTATION_PREFIXES: dict[str, str] = {
+    "numeric": "degradation",
+    "text": "degradation_text",
+}
+
+
+def is_binary_mode(decision_mode: str | None) -> bool:
+    """True si ``decision_mode`` es el endpoint binario ``stress``/``non-stress``."""
+    return str(decision_mode or "") in BINARY_DECISION_MODES
+
+
+def degradation_dir_name(
+    representation: str = "numeric",
+    decision_mode: str = "affective",
+    nonstress_variant: str | None = None,
+    temperature_mode: str = "include",
+) -> str:
+    """Nombre del directorio de respuestas de un barrido.
+
+    La tarea, la variante de ``non-stress`` y la presencia de temperatura forman
+    parte del nombre: mezclar corpus de 4 clases, de binario con distintas
+    clases negativas o con/sin temperatura invalidaría cualquier comparación.
+
+    Examples:
+        >>> degradation_dir_name("numeric", "binary", "schmidt", "exclude")
+        'degradation_binary_schmidt_notemp'
+        >>> degradation_dir_name("text", "affective")
+        'degradation_text'
+    """
+    if representation not in REPRESENTATION_PREFIXES:
+        raise ValueError(
+            f"representación desconocida: {representation!r}. "
+            f"Disponibles: {sorted(REPRESENTATION_PREFIXES)}"
+        )
+    name = REPRESENTATION_PREFIXES[representation]
+    if is_binary_mode(decision_mode):
+        variant = nonstress_variant or DEFAULT_NONSTRESS_VARIANT
+        variant_classes(variant)  # valida la variante
+        name += f"_binary_{variant}"
+    if temperature_mode == "exclude":
+        name += "_notemp"
+    return name
+
+
+def degradation_output_dir(
+    phase2_dir: Path,
+    model: str,
+    representation: str = "numeric",
+    decision_mode: str = "affective",
+    nonstress_variant: str | None = None,
+    temperature_mode: str = "include",
+) -> Path:
+    """Directorio de salida de un modelo: ``{phase2}/{nombre}/{slug}``."""
+    return (
+        Path(phase2_dir)
+        / degradation_dir_name(
+            representation, decision_mode, nonstress_variant, temperature_mode
+        )
+        / model_slug(model)
+    )
+
+
+def degradation_candidate_dirs(
+    phase2_dir: Path,
+    representation: str = "numeric",
+    decision_mode: str = "affective",
+    nonstress_variant: str | None = None,
+    temperature_mode: str | None = None,
+) -> list[str]:
+    """Nombres de directorio candidatos, en orden de preferencia.
+
+    Sin variante ni temperatura explícitas se prefiere el **primario**
+    (``schmidt`` sin temperatura) y se cae al histórico (``all`` con
+    temperatura) solo si no existe. ``None`` significa "lo que haya".
+    """
+    if not is_binary_mode(decision_mode):
+        return [
+            degradation_dir_name(
+                representation, "affective", None, temperature_mode or "include"
+            )
+        ]
+    variants = (
+        [nonstress_variant]
+        if nonstress_variant
+        else [DEFAULT_NONSTRESS_VARIANT, "all"]
+    )
+    temperatures = (
+        [temperature_mode]
+        if temperature_mode in ("exclude", "include")
+        else ["exclude", "include"]
+    )
+    names: list[str] = []
+    for variant in variants:
+        for temperature in temperatures:
+            name = degradation_dir_name(
+                representation, "binary", variant, temperature
+            )
+            if name not in names:
+                names.append(name)
+    if not nonstress_variant and temperature_mode not in ("exclude", "include"):
+        # Corpus anteriores al diseño por variantes: ``degradation_binary``
+        # (``all`` con temperatura) sin sufijos. Solo en modo automático: una
+        # petición explícita de variante/temperatura no debe caer aquí.
+        legacy = f"{REPRESENTATION_PREFIXES[representation]}_binary"
+        if legacy not in names:
+            names.append(legacy)
+    return names
+
+
+def resolve_degradation_dir(
+    phase2_dir: Path,
+    model: str = "",
+    representation: str = "numeric",
+    decision_mode: str | None = None,
+    nonstress_variant: str | None = None,
+    temperature_mode: str | None = None,
+) -> Path:
+    """Localiza el directorio de respuestas de un barrido.
+
+    Prueba, por orden, las combinaciones declaradas en
+    :func:`degradation_candidate_dirs` y, si el nombre del modelo no existe,
+    la carpeta histórica plana (ejecuciones anteriores al aislamiento por
+    modelo) siempre que contenga ``*.responses.jsonl``.
+
+    Raises:
+        FileNotFoundError: si no hay respuestas en ninguna ruta candidata. El
+            mensaje incluye las rutas probadas y la pista del barrido.
+    """
+    root = Path(phase2_dir)
+    tried: list[Path] = []
+    # ``decision_mode`` vacío = automático: primero el corpus binario (endpoint
+    # primario) y después el de 4 clases.
+    modes = [decision_mode] if decision_mode else ["binary", "affective"]
+    for mode in modes:
+        for name in degradation_candidate_dirs(
+            root, representation, mode, nonstress_variant, temperature_mode
+        ):
+            base = root / name
+            if model:
+                candidates = [base / model_slug(model), base]  # subdirectorio y plano
+            elif base.is_dir():
+                # Sin modelo: primer subdirectorio (ordenado) con respuestas.
+                candidates = sorted(p for p in base.iterdir() if p.is_dir()) or [base]
+            else:
+                candidates = [base]
+            for candidate in candidates:
+                tried.append(candidate)
+                if candidate.is_dir() and any(candidate.glob("*.responses.jsonl")):
+                    return candidate
+    raise FileNotFoundError(
+        "No se encontraron respuestas del barrido.\n"
+        f"  Rutas probadas: {', '.join(str(p) for p in tried) or '(ninguna)'}\n"
+        "  Genera primero el corpus con:\n"
+        "    --proc GENERATE --experiment degradation --decision-mode binary \\\n"
+        "      --nonstress-variant "
+        f"{nonstress_variant or DEFAULT_NONSTRESS_VARIANT} "
+        f"--temperature {temperature_mode or 'exclude'}"
+    )

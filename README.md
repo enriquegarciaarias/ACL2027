@@ -40,6 +40,13 @@ ACL2027 no se conforma con medir el acierto. Mide **cómo cambia todo lo anterio
 
 Detalle y tablas completas: [`docs/experimentos.md`](docs/experimentos.md) (resumen, inventario y detalle de todos los experimentos) y [`docs/resultados_degradacion.md`](docs/resultados_degradacion.md) (experimento principal).
 
+> **Diseño primario vigente.** El endpoint preregistrado es binario `stress` vs
+> `non-stress` con variante `schmidt` (`baseline` + `amusement`), **sin
+> temperatura** y 424 ventanas de evaluación. Sus resultados (dos modelos,
+> cobertura, tasa base e IC por sujeto) están en
+> [`docs/resultados_jerarquia.md`](docs/resultados_jerarquia.md); las cifras de
+> la tabla anterior corresponden al corpus de 4 clases (567 ventanas).
+
 ---
 
 ## 📚 Documentación — empieza por la hipótesis
@@ -74,7 +81,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip wheel
 pip install -r requirements.txt
 pip install -r requirements-dev.txt   # pytest (opcional, para tests)
-python -m pytest -q                   # 389 tests
+python -m pytest -q                   # 491 tests
 ```
 
 `requirements.txt` incluye `torch` y fija el índice de PyTorch en
@@ -213,14 +220,27 @@ python main.py --proc EVALUATE --experiment degradation --representation numeric
 python main.py --proc EVALUATE --experiment controls
 python main.py --proc EVALUATE --experiment physionet
 
+# Diseño primario: binario schmidt sin temperatura (424 ventanas)
+python main.py --proc EVALUATE --experiment degradation --model qwen3:14b \
+  --hierarchy --bootstrap 2000
+python main.py --proc EVALUATE --experiment degradation --model qwen3:14b \
+  --decision-mode binary --nonstress-variant schmidt --temperature exclude
+
 # Comparar modelos: tabla por condición + diferencia de accuracy (bootstrap por sujeto)
 python main.py --proc EVALUATE --experiment degradation \
-  --compare-models qwen2.5:7b,qwen3:14b
+  --compare-models qwen2.5:7b,qwen3:14b \
+  --decision-mode binary --nonstress-variant schmidt --temperature exclude
 python main.py --proc EVALUATE --experiment controls \
   --compare-models qwen2.5:7b,qwen3:14b
 ```
 
-Salidas: `results/output/WESAD/PHASE2/degradation{,_text}/{modelo}/`, los reportes agregados y `model_comparison.json`.
+Sin `--decision-mode`, `--nonstress-variant` ni `--temperature`, los analizadores
+**deducen el diseño de la procedencia del corpus** y leen el directorio primario
+que exista (`degradation_binary_schmidt_notemp/{modelo}` antes que el histórico
+`degradation_binary/{modelo}`). Resultados del primario en
+[`docs/resultados_jerarquia.md`](docs/resultados_jerarquia.md).
+
+Salidas: `results/output/WESAD/PHASE2/degradation{,_text}{,_binary_<variante>}{,_notemp}/{modelo}/`, los reportes agregados y `model_comparison.json`.
 
 ### 7. Elegir modelo
 
@@ -244,6 +264,9 @@ Cada modelo escribe en su propio subdirectorio (`qwen3:14b` → `qwen3_14b`), as
 | `--model` | Modelo LLM (def. `defaults.llm.primary_model`). Aísla salidas por modelo. |
 | `--think` | Activa el modo *thinking* (solo `qwen3`); desactivado por defecto. |
 | `--compare-models` | `EVALUATE`: modelos a comparar (`a,b`); el primero es la referencia. |
+| `--decision-mode` | `affective` (4 clases) o `binary` (`stress`/`non-stress`). |
+| `--nonstress-variant` | `schmidt` (def.), `baseline`, `no_amusement`, `all`: qué clases forman `non-stress`. |
+| `--temperature` | `include` o `exclude`: temperatura en la evidencia (el primario la excluye). |
 | `--representation` | `numeric` o `text` (experimento `degradation`). |
 | `--conditions` | Condiciones separadas por comas. |
 | `--split` | `evaluation`, `development` o `all` (al evaluar). |
@@ -358,7 +381,7 @@ ACL2027/
 │   ├── phase2/                  # prompts, LLM, esquema de respuesta, controles negativos, gate de consistencia
 │   ├── phase3/                  # evaluación, claims, certeza, calibración, degradación
 │   └── external/                # adaptadores K-EmoCon y PhysioNet 2017
-├── tests/                       # 323 tests (sin dependencia de los datasets reales)
+├── tests/                       # 491 tests (sin dependencia de los datasets reales)
 └── results/                     # NO versionado: input/ y output/ por subject
 ```
 
@@ -370,7 +393,7 @@ ACL2027/
 python -m pytest -q
 ```
 
-**323 tests**: infraestructura, ingesta, features, representaciones, prompts, esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y adaptadores externos. No requieren descargar WESAD ni Ollama.
+**491 tests**: infraestructura, ingesta, features, representaciones, prompts, esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y adaptadores externos. No requieren descargar WESAD ni Ollama.
 
 ---
 

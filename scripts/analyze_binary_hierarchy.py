@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import re
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +40,7 @@ from sources.phase3.binary_hierarchy import (  # noqa: E402
     condition_hierarchy_report,
     provenance,
 )
+from sources.phase3.degradation import resolve_degradation_dir  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PHASE2_DIR = REPO_ROOT / "results" / "output" / "WESAD" / "PHASE2"
@@ -55,12 +55,6 @@ DEFAULT_CONDITIONS = (
     "C5_total_both",
 )
 DEFAULT_OUTPUT = PHASE2_DIR / "evaluation_binary_hierarchy.json"
-
-
-def model_slug(model: str) -> str:
-    """Slug del modelo para localizar su directorio de artefactos."""
-    slug = re.sub(r"[^A-Za-z0-9]+", "_", str(model or "")).strip("_")
-    return slug or "model"
 
 
 def load_labels(path: Path = LABELS_PATH) -> dict[str, str]:
@@ -80,33 +74,22 @@ def load_labels(path: Path = LABELS_PATH) -> dict[str, str]:
 def resolve_directory(directory: str, model: str) -> Path:
     """Localiza el directorio de respuestas binarias.
 
-    Orden de preferencia: primario sin temperatura → primario con temperatura →
-    corpus histórico ``degradation_binary`` (variante ``all`` con temperatura).
+    Orden de preferencia (delegado en
+    :func:`sources.phase3.degradation.resolve_degradation_dir`): primario sin
+    temperatura → primario con temperatura → corpus histórico
+    ``degradation_binary`` (variante ``all`` con temperatura).
     """
     if directory:
         return Path(directory).expanduser()
-    candidates: list[Path] = []
-    names = (
-        "degradation_binary_schmidt_notemp",
-        "degradation_binary_schmidt",
-        "degradation_binary",
-    )
-    if model:
-        slug = model_slug(model)
-        candidates.extend(PHASE2_DIR / name / slug for name in names)
-    else:
-        for name in names:
-            root = PHASE2_DIR / name
-            if not root.is_dir():
-                continue
-            candidates.extend(sorted(p for p in root.iterdir() if p.is_dir()))
-    for candidate in candidates:
-        if any(candidate.glob("*.responses.jsonl")):
-            return candidate
-    raise SystemExit(
-        "No se encontraron respuestas binarias. Indica --dir o --model.\n"
-        f"Rutas probadas: {', '.join(str(c) for c in candidates) or '(ninguna)'}"
-    )
+    try:
+        return resolve_degradation_dir(
+            PHASE2_DIR,
+            model=model,
+            representation="numeric",
+            decision_mode="binary",
+        )
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from None
 
 
 def load_records(

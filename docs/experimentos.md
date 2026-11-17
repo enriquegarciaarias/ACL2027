@@ -207,6 +207,28 @@ El análisis de la jerarquía se ejecuta sin LLM con
 `scripts/analyze_binary_hierarchy.py` (bootstrap agrupado por sujeto). La
 especificación completa está en [`experimento_binario_jerarquia.md`](experimento_binario_jerarquia.md).
 
+**Resultados (2026-11-17).** Los dos modelos están ejecutados (2.835 respuestas
+cada uno) y la clasificación del diseño primario está cerrada:
+
+- **En limpio empatan** en corrección (7b 0,908 / 14b 0,915; IC solapados), con
+  reparto de perfil: el 7b está mejor calibrado (ECE 0,068 vs 0,125) y el 14b
+  rankea mejor (AUROC 0,964 vs 0,912).
+- **La pérdida de respiración es casi gratuita** (C1: 0,915 y 0,917).
+- **Con EDA parcial (C2) el 14b se retira** (cobertura 0,778) y sube su accuracy
+  aparente a 0,945; el 7b apenas se mueve (0,887 con cobertura 1,00).
+- **Con EDA a cero fallan en direcciones opuestas**: el 7b sobrerreclama estrés
+  (accuracy 0,548 en C4, **por debajo** de la tasa base 0,700), el 14b
+  infra-reclama (1–3 predicciones de estrés; balanced 0,522/0,508 ≈ azar) y su
+  accuracy de 0,824/0,826 es un **artefacto de cobertura** (`acc*` 0,705/0,696).
+- **La variante no cambia la conclusión**: el colapso del 14b es estructural
+  (balanced 0,522 en las cuatro variantes).
+
+Tablas con IC por sujeto, sensibilidades y comandos de reproducción en
+[`resultados_jerarquia.md`](resultados_jerarquia.md). Las hipótesis H1, H2a,
+H2b, H4, H5 y H6 del primario se calculan con `scripts/analyze_degradation.py`,
+que ya resuelve esta variante, descarta `meditation` y construye la referencia
+sin temperatura.
+
 ## 1.3 Resultados en una página (WESAD, experimento principal)
 
 **Las hipótesis a prueba son:**
@@ -576,6 +598,7 @@ de desarrollo).
 | E7 | Validación externa: K-EmoCon | ¿Se replica en afecto con muñeca? | 23 participantes, ventanas 60 s | ~5,5k ventanas | AUROC | Mejor 0,609; LLM 0,642 | Negativo documentado | [`p3_kemocon.md`](p3_kemocon.md) |
 | E8 | Validación externa: PhysioNet 2017 | ¿Se replica con otra tarea, sensor y clase `noisy`? | 600 registros (197 dev / 403 test), 5 features ECG | 403 respuestas | balanced accuracy, abstención | 0,250 vs 0,552; 0/103 abstenciones | Firme (análisis) | [`p3_physionet.md`](p3_physionet.md) |
 | E9 | **Modelos × tarea bajo degradación** | ¿Resiste mejor el modelo grande? ¿Cambia la tarea la abstención? | 2 modelos × {4 clases, binario} × C0,C1,C2,C4,C5; 12 sujetos eval. | 11.340 respuestas | balanced, cobertura, claims, certeza | En limpio empatan en binario (Δ +0,014 [−0,012; +0,040]); 14b en 4 clases tiene mejor acc (0,703 vs 0,611) pero por abstención (100 % en C5), no discriminación. Con EDA a cero fallan en direcciones opuestas (7b: bal 0,63 sobrerreclamando estrés; 14b: bal 0,50 diciendo non-stress) | **Firme** | [`resultados_binario.md`](resultados_binario.md) |
+| **E10** | **Jerarquía binaria Schmidt sin temperatura (diseño primario)** | ¿Se sostiene el binario al alinear la tarea con el paper y quitar el confusor térmico? | 2 modelos × 5 condiciones × 424 ventanas (12 sujetos eval.) | 5.670 respuestas | accuracy, acc*, cobertura, balanced, AUROC | Empate en limpio (0,908 vs 0,915); el 14b se abstiene 22 % en C2 y en C4/C5 predice estrés 1–3 veces (balanced ≈0,51); la accuracy de 0,824/0,826 cae a 0,705/0,696 al contar la abstención | **Firme (clasificación); H1–H6 en curso** | [`resultados_jerarquia.md`](resultados_jerarquia.md) |
 
 ### Ejecución y comparación por modelo
 
@@ -881,6 +904,49 @@ abstención es el residuo del espacio de etiquetas: desaparece cuando existe una
 clase comodín (`non-stress`). En C4/C5, ni balanced ni cobertura son
 satisfactorios para ninguno de los dos modelos.
 
+## 3.11 E10 — Jerarquía binaria Schmidt sin temperatura (detalle)
+
+**Pregunta.** ¿Se sostiene el binario al alinear la tarea con el paper original
+(`non-stress` = `baseline` + `amusement`) y al quitar la temperatura, que no se
+degrada y correlaciona con el orden del protocolo (r = 0,801)?
+
+**Diseño.** 2 modelos × 5 condiciones × **424 ventanas** de 12 sujetos de
+evaluación (143 de `meditation` descartadas); variante `schmidt`, sin
+temperatura; 2.835 respuestas por modelo; bootstrap agrupado por sujeto (2.000
+remuestras). Artefactos en
+`degradation_binary_schmidt_notemp/{qwen2_5_7b,qwen3_14b}/`. Tablas completas,
+IC y sensibilidades en [`resultados_jerarquia.md`](resultados_jerarquia.md).
+
+**Resultado.** Tasa base (siempre `non-stress`) = 0,700; balanced del azar = 0,500.
+
+| Condición | 7b acc | 7b acc* | 7b bal | 14b acc | 14b acc* | 14b cov | 14b bal |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| C0 limpia | 0,908 | 0,908 | 0,907 | 0,915 | 0,915 | 1,000 | 0,888 |
+| C1 respiración ausente | 0,915 | 0,913 | 0,905 | 0,917 | 0,917 | 1,000 | 0,892 |
+| C2 EDA parcial | 0,887 | 0,884 | 0,854 | 0,945 | 0,736 | 0,778 | 0,804 |
+| C4 EDA a cero | 0,548 | 0,547 | 0,637 | 0,824 | 0,705 | 0,856 | 0,522 |
+| C5 ambas degradadas | 0,682 | 0,682 | 0,723 | 0,826 | 0,696 | 0,842 | 0,508 |
+
+`acc*` = abstención contada como error.
+
+**Lectura.**
+
+1. En limpio hay empate en corrección (IC solapados) y reparto de perfil: el 7b
+   calibra mejor (ECE 0,068 vs 0,125), el 14b rankea mejor (AUROC 0,964 vs
+   0,912).
+2. El 14b **se abstiene de forma dependiente de la etiqueta**: 63,8 % de las
+   ventanas de estrés en C2, 47,2 % en C4 y 50,4 % en C5, frente a 0,3–4,4 % de
+   las de `non-stress`. Se retira justo cuando desaparece la señal que define la
+   clase positiva.
+3. Con EDA a cero, el 7b sobrerreclama estrés (accuracy 0,548, **por debajo** de
+   la tasa base) y el 14b infra-reclama (1–3 predicciones de estrés de 424;
+   balanced ≈ azar). La accuracy de 0,824/0,826 es un artefacto de cobertura.
+4. El colapso del 14b es **estructural**: balanced 0,522 en las cuatro
+   variantes.
+5. Frente al corpus histórico (`all` + temperatura), el 7b mejora en C5
+   (balanced 0,613 → 0,723): parte del daño atribuido al modelo era de la
+   temperatura y de las clases ajenas a la tarea.
+
 ---
 
 # 4. Qué es firme y qué es exploratorio
@@ -897,6 +963,10 @@ satisfactorios para ninguno de los dos modelos.
   determinista, detector de calidad entrenado solo con desarrollo.
 - **E9 · Modelos × tarea bajo degradación**: matriz 11.340 respuestas, bootstrap
   agrupado por sujeto, resultados en [`resultados_binario.md`](resultados_binario.md).
+- **E10 · Jerarquía binaria (diseño primario)**: 5.670 respuestas (424 ventanas ×
+  5 condiciones × 2 modelos), variante `schmidt` sin temperatura, bootstrap por
+  sujeto; clasificación cerrada en
+  [`resultados_jerarquia.md`](resultados_jerarquia.md).
 - **Infraestructura** (E0): corpus, SQI, degradación, procedencia.
 
 ## Exploratorio

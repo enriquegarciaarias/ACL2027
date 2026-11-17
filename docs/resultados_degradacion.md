@@ -1,5 +1,11 @@
 # Resultados del barrido de degradación (H1, H2, H4, H5, H6)
 
+> **Diseño.** Este documento evalúa el corpus de **4 clases afectivas** con
+> **`qwen2.5:7b`** (567 ventanas, variante binaria `all`, con temperatura). El
+> experimento **primario** es binario `schmidt` sin temperatura (424 ventanas) y
+> se reporta en [`resultados_jerarquia.md`](resultados_jerarquia.md); las cifras
+> de aquí se citan como la tarea de 4 clases o como el corpus histórico.
+
 **Fecha:** 2026-11-10
 **Corpus:** 12 sujetos de **evaluación** (S5–S17 salvo S12), 567 ventanas ×
 5 condiciones = **2.835 respuestas** (7 inválidas, 0,25 %).

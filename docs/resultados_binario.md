@@ -11,14 +11,15 @@ condiciones** y contiene los resultados más citables de la línea.
 - Comparador: `results/output/WESAD/PHASE2/model_comparison.json`
 - Reproducción: §8.
 
-> **Nota de jerarquía (2026-11-16).** Las cifras de este documento se
+> **Nota de jerarquía (2026-11-17).** Las cifras de este documento se
 > calcularon sobre **567 ventanas** con la variante `all` (`non-stress` =
 > baseline + amusement + meditation) y con **temperatura** en la evidencia. No
 > son la tarea binaria de Schmidt (`baseline` + `amusement`): se reportan como
 > **"stress vs all non-stress"**. El experimento primario es **424 ventanas,
-> variante `schmidt`, sin temperatura**; sus resultados se añadirán tras la
-> re-ejecución. La jerarquía y las sensibilidades se analizan con
-> `scripts/analyze_binary_hierarchy.py` (bootstrap agrupado por sujeto). Ver
+> variante `schmidt`, sin temperatura**, y sus resultados están en
+> [`resultados_jerarquia.md`](resultados_jerarquia.md). La jerarquía y las
+> sensibilidades se analizan con `scripts/analyze_binary_hierarchy.py`
+> (bootstrap agrupado por sujeto). Ver
 > [`experimento_binario_jerarquia.md`](experimento_binario_jerarquia.md).
 
 ---

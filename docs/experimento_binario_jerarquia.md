@@ -1,9 +1,14 @@
 # Experimento binario: jerarquía de clases y temperatura
 
 **Fecha de fijación:** 2026-11-16 (antes de re-ejecutar).
-**Estado:** especificación cerrada; implementación de Fase 1 completa
+**Estado:** especificación cerrada; implementación completa
 (`sources/phase3/binary_hierarchy.py`, `scripts/analyze_binary_hierarchy.py`,
-flags `--nonstress-variant` y `--temperature`). Fase 2 (re-ejecución) pendiente.
+flags `--nonstress-variant` y `--temperature`). **Fase 2 completa** (2.835
+respuestas por modelo, `qwen2.5:7b` y `qwen3:14b`) y **clasificación evaluada**:
+resultados en [`resultados_jerarquia.md`](resultados_jerarquia.md). El análisis
+del resto de hipótesis (H1, H2a, H2b, H4, H5, H6) se ejecuta con
+`scripts/analyze_degradation.py`, que ya resuelve esta variante y la ausencia de
+temperatura.
 
 ---
 

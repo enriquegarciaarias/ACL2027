@@ -76,11 +76,41 @@ def _base_dir(
     return REPO_ROOT / "results" / "output" / "WESAD" / "PHASE2" / name
 
 
+def _degradation_dir(
+    model: str,
+    representation: str,
+    decision_mode: str,
+    nonstress_variant: str | None = None,
+    temperature_mode: str | None = None,
+) -> Path:
+    """Directorio de un barrido, resuelto con la misma regla que el análisis.
+
+    Acepta ``degradation_binary_schmidt_notemp`` (primario) y cae al histórico
+    ``degradation_binary`` (``all`` con temperatura) si no existe, igual que
+    ``analyze_degradation.py``.
+    """
+    from sources.phase3.degradation import resolve_degradation_dir
+
+    try:
+        return resolve_degradation_dir(
+            REPO_ROOT / "results" / "output" / "WESAD" / "PHASE2",
+            model=model,
+            representation=representation,
+            decision_mode=decision_mode,
+            nonstress_variant=nonstress_variant,
+            temperature_mode=temperature_mode,
+        )
+    except FileNotFoundError as exc:
+        raise SystemExit(str(exc)) from None
+
+
 def check_distinct_models(
     models: Sequence[str],
     mode: str,
     representation: str,
     decision_mode: str = "affective",
+    nonstress_variant: str | None = None,
+    temperature_mode: str | None = None,
 ) -> None:
     """Falla si dos modelos apuntan al mismo directorio de datos.
 
@@ -88,10 +118,14 @@ def check_distinct_models(
     ``qwen3:14b`` llegó truncado como ``qwen3`` y ambos modelos cayeron en la
     carpeta histórica, así que se comparaba un corpus consigo mismo.
     """
-    base = _base_dir(mode, representation, decision_mode)
     seen: dict[Path, str] = {}
     for model in models:
-        directory = _model_dir(base, model, quiet=True)
+        if mode == "degradation":
+            directory = _degradation_dir(
+                model, representation, decision_mode, nonstress_variant, temperature_mode
+            )
+        else:
+            directory = _model_dir(_base_dir(mode, representation, decision_mode), model, quiet=True)
         if directory in seen:
             raise SystemExit(
                 f"Los modelos '{seen[directory]}' y '{model}' apuntan al mismo "
@@ -118,24 +152,68 @@ def load_degradation(
     representation: str,
     conditions: set[str],
     decision_mode: str = "affective",
-) -> tuple[list[dict[str, Any]], Any]:
-    """Registros del barrido de degradación y la función de métricas."""
+    nonstress_variant: str | None = None,
+    temperature_mode: str | None = None,
+) -> tuple[list[dict[str, Any]], Any, dict[str, Any]]:
+    """Registros del barrido de degradación y la función de métricas.
+
+    En modo binario se filtra a las clases de la variante declarada (``schmidt``
+    descarta ``meditation``) para comparar sobre el mismo conjunto que el resto
+    del diseño primario.
+    """
     from analyze_degradation import (
         analyze_group,
         analyze_group_binary,
+        filter_primary_variant,
+        infer_include_temperature,
+        infer_variant,
         load_labels,
         load_records,
     )
 
-    base = _base_dir("degradation", representation, decision_mode)
-    directory = _model_dir(base, model)
+    directory = _degradation_dir(
+        model, representation, decision_mode, nonstress_variant, temperature_mode
+    )
     labels = load_labels()
     records = load_records(directory, conditions, split="evaluation")
     from sources.phase3.recovery import apply_recovery
 
-    records, _ = apply_recovery(records, decision_mode=decision_mode)
-    evaluator = analyze_group_binary if decision_mode == "binary" else analyze_group
-    return records, (lambda rows: evaluator(rows, labels))
+    # La tarea se deduce del corpus si no se indicó (evita analizar respuestas
+    # binarias con el evaluador de 4 clases y viceversa).
+    if decision_mode:
+        binary = decision_mode == "binary"
+    else:
+        from sources.phase3.binary_hierarchy import provenance as _provenance
+
+        binary = _provenance(records).get("decision_mode") == "stress_binary"
+    records, _ = apply_recovery(
+        records, decision_mode="stress_binary" if binary else "affective"
+    )
+    evaluator = analyze_group_binary if binary else analyze_group
+    info: dict[str, Any] = {
+        "directory": str(directory),
+        "decision_mode": "binary" if binary else "affective",
+        "nonstress_variant": None,
+        "include_temperature": None,
+        "n_dropped_variant": 0,
+    }
+    if binary:
+        variant = nonstress_variant or infer_variant(records)
+        include_temperature = (
+            temperature_mode == "include"
+            if temperature_mode
+            else infer_include_temperature(records)
+        )
+        kept = filter_primary_variant(records, labels, variant)
+        info.update(
+            {
+                "nonstress_variant": variant,
+                "include_temperature": include_temperature,
+                "n_dropped_variant": len(records) - len(kept),
+            }
+        )
+        records = kept
+    return records, (lambda rows: evaluator(rows, labels)), info
 
 
 def load_phase2(
@@ -257,7 +335,12 @@ def summarize(metrics: Mapping[str, Any]) -> dict[str, Any]:
         "n_invalid": metrics.get("n_invalid", 0),
         "n_decided": metrics.get("n_decided", 0),
         "abstention_rate": metrics.get("abstention_rate", float("nan")),
+        "coverage": metrics.get("coverage", float("nan")),
         "accuracy": metrics.get("accuracy", float("nan")),
+        # Abstención como error: la única cifra que no premia retirarse.
+        "accuracy_incl_abstain": metrics.get(
+            "accuracy_incl_abstain", metrics.get("accuracy", float("nan"))
+        ),
         "balanced_accuracy": metrics.get("balanced_accuracy", float("nan")),
         "ece": metrics.get("ece", float("nan")),
         "claims_n": n_claims,
@@ -352,6 +435,8 @@ def compare(
     representation: str,
     conditions: Sequence[str],
     decision_mode: str = "affective",
+    nonstress_variant: str | None = None,
+    temperature_mode: str | None = None,
 ) -> dict[str, Any]:
     """Ejecuta la comparación y devuelve el informe."""
     from analyze_degradation import load_labels
@@ -361,6 +446,7 @@ def compare(
     tables: dict[str, list[dict[str, Any]]] = {c: [] for c in conditions}
     counts: dict[tuple[str, str], dict[str, tuple[int, int]]] = {}
     models_in_data: dict[str, list[str]] = {}
+    corpus_info: dict[str, dict[str, Any]] = {}
     rows_by_condition: dict[str, dict[str, list[dict[str, Any]]]] = {
         c: {} for c in conditions
     }
@@ -368,10 +454,19 @@ def compare(
     for model in models:
         if mode == "phase2":
             records, evaluator = load_phase2(model, condition_set)
+            corpus_info[model] = {"directory": "llm_responses", "decision_mode": "affective"}
         else:
-            records, evaluator = load_degradation(
-                model, representation, condition_set, decision_mode
+            records, evaluator, info = load_degradation(
+                model,
+                representation,
+                condition_set,
+                decision_mode,
+                nonstress_variant,
+                temperature_mode,
             )
+            corpus_info[model] = info
+            if not decision_mode:
+                decision_mode = info.get("decision_mode") or "affective"
 
         found = sorted(_models_found(records))
         models_in_data[model] = found
@@ -430,7 +525,27 @@ def compare(
         "generated_at": utc_now(),
         "mode": mode,
         "representation": representation if mode != "phase2" else "llm_views",
-        "decision_mode": decision_mode,
+        "decision_mode": decision_mode or "affective",
+        "nonstress_variant": (
+            nonstress_variant
+            or next(
+                (
+                    info.get("nonstress_variant")
+                    for info in corpus_info.values()
+                    if info.get("nonstress_variant")
+                ),
+                None,
+            )
+        ),
+        "include_temperature": next(
+            (
+                info.get("include_temperature")
+                for info in corpus_info.values()
+                if info.get("include_temperature") is not None
+            ),
+            None,
+        ),
+        "corpus": corpus_info,
         "baseline_model": baseline,
         "models": list(models),
         "models_in_data": models_in_data,
@@ -448,11 +563,17 @@ def print_report(report: Mapping[str, Any]) -> None:
         f"{report['representation']}, tarea={report.get('decision_mode', 'affective')}) ==="
     )
     print(f"Modelos: {', '.join(report['models'])}")
+    if report.get("nonstress_variant") or report.get("include_temperature") is not None:
+        print(
+            f"Corpus: variante={report.get('nonstress_variant')} | "
+            f"temperatura={'sí' if report.get('include_temperature') else 'no'}"
+        )
     for model, found in report["models_in_data"].items():
         print(f"  {model}: datos de {found}")
     print(
-        f"\n{'condición':16s} {'modelo':16s} {'n':>5s} {'dec':>5s} {'abst':>6s} {'acc*':>6s} "
-        f"{'bal*':>6s} {'ECE*':>6s} {'sup':>6s} {'contra':>7s} {'certeza':>8s}"
+        f"\n{'condición':16s} {'modelo':16s} {'n':>5s} {'cov':>6s} {'dec':>5s} {'abst':>6s} "
+        f"{'acc':>6s} {'acc*':>6s} {'bal':>6s} {'ECE':>6s} {'sup':>6s} {'contra':>7s} "
+        f"{'certeza':>8s}"
     )
     for condition in report["conditions"]:
         for entry in report["tables"].get(condition, []):
@@ -470,8 +591,10 @@ def print_report(report: Mapping[str, Any]) -> None:
                 )
             print(
                 f"{condition:16s} {entry['model']:16s} {entry['n']:5d} "
+                f"{entry.get('coverage', float('nan')):6.3f} "
                 f"{decided:5d} "
                 f"{entry['abstention_rate']:6.3f} {entry['accuracy']:6.3f} "
+                f"{entry.get('accuracy_incl_abstain', entry['accuracy']):6.3f} "
                 f"{entry['balanced_accuracy']:6.3f} {entry['ece']:6.3f} "
                 f"{support} {contra} "
                 f"{entry['certainty_index']:8.2f}  ({entry['claims_n']} claims)"
@@ -479,10 +602,11 @@ def print_report(report: Mapping[str, Any]) -> None:
         print()
 
     print(
-        "  * acc, bal y ECE se calculan solo sobre las DECIDIDAS. Con abstención "
-        "alta (mirar 'dec') no son comparables:\n"
-        "    un modelo que se abstiene en el 99 % puede mostrar acc 1.000 sobre "
-        "una sola ventana."
+        "  acc, bal y ECE se calculan solo sobre las DECIDIDAS; acc* cuenta la "
+        "abstención como error y 'cov' es la cobertura.\n"
+        "  Con abstención alta (mirar 'cov' y 'dec') esas cifras no son "
+        "comparables: un modelo que se abstiene en el 99 % puede mostrar\n"
+        "  acc 1.000 sobre una sola ventana."
     )
 
     if report["deltas"]:
@@ -542,24 +666,50 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--decision-mode",
-        choices=["affective", "binary"],
-        default="affective",
-        help="Tarea del barrido: 4 clases o binario (directorio *_binary).",
+        choices=["", "affective", "binary"],
+        default="",
+        help="Tarea del barrido: 4 clases o binario stress/non-stress. "
+        "Vacío = se deduce de la procedencia del corpus.",
     )
     parser.add_argument("--conditions", default=",".join(DEFAULT_CONDITIONS))
+    parser.add_argument(
+        "--nonstress-variant",
+        default="",
+        choices=["", "schmidt", "baseline", "no_amusement", "all"],
+        help="Variante binaria del corpus (vacío = la que declare la procedencia).",
+    )
+    parser.add_argument(
+        "--temperature",
+        default="",
+        choices=["", "include", "exclude"],
+        help="Directorio con/sin temperatura (vacío = el primario disponible).",
+    )
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT))
     args = parser.parse_args(argv)
 
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     if len(models) < 2:
         raise SystemExit("Se necesitan al menos dos modelos para comparar.")
+    variant = args.nonstress_variant or None
+    temperature = args.temperature or None
     check_distinct_models(
-        models, args.mode, args.representation, args.decision_mode
+        models,
+        args.mode,
+        args.representation,
+        args.decision_mode,
+        variant,
+        temperature,
     )
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
 
     report = compare(
-        models, args.mode, args.representation, conditions, args.decision_mode
+        models,
+        args.mode,
+        args.representation,
+        conditions,
+        args.decision_mode,
+        variant,
+        temperature,
     )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)

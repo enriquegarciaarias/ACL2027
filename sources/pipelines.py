@@ -214,6 +214,8 @@ def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
         _append_flag(argv, "--representation", getattr(args, "representation", None))
         _append_flag(argv, "--conditions", getattr(args, "conditions", None))
         _append_flag(argv, "--decision-mode", getattr(args, "decision_mode", None))
+        _append_flag(argv, "--nonstress-variant", getattr(args, "nonstress_variant", None))
+        _append_flag(argv, "--temperature", getattr(args, "temperature", None))
         _append_flag(argv, "--split", getattr(args, "split", None))
         _append_flag(argv, "--output", output)
     elif experiment == "centering":
@@ -267,6 +269,11 @@ def build_compare_argv(args: Any) -> list[str] | None:
     _append_flag(argv, "--representation", getattr(args, "representation", None))
     _append_flag(argv, "--conditions", getattr(args, "conditions", None))
     _append_flag(argv, "--decision-mode", getattr(args, "decision_mode", None))
+    if experiment == "degradation":
+        _append_flag(
+            argv, "--nonstress-variant", getattr(args, "nonstress_variant", None)
+        )
+        _append_flag(argv, "--temperature", getattr(args, "temperature", None))
     _append_flag(argv, "--output", getattr(args, "output", None))
     return argv
 
@@ -501,6 +508,10 @@ def _plan(phase: str) -> dict[str, Any]:
         plan["compare_models"] = getattr(args, "compare_models", "") or None
         plan["hierarchy"] = bool(getattr(args, "hierarchy", False))
         plan["bootstrap"] = getattr(args, "bootstrap", None)
+        # En evaluación, sin bandera el analizador deduce el diseño del propio
+        # corpus (procedencia de las respuestas), no de un valor por defecto.
+        plan["nonstress_variant"] = getattr(args, "nonstress_variant", None) or "auto"
+        plan["temperature"] = getattr(args, "temperature", None) or "auto"
         if compare:
             # La evaluación de un modelo suelto no aplica: se comparan varios.
             plan["model"] = None

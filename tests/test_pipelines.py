@@ -131,11 +131,25 @@ def test_evaluate_degradation_argv():
             representation="numeric",
             conditions="C0_clean",
             split="evaluation",
+            nonstress_variant="schmidt",
+            temperature="exclude",
         ),
     )
     assert "--representation" in argv and "numeric" in argv
     assert "--conditions" in argv and "C0_clean" in argv
     assert "--split" in argv and "evaluation" in argv
+    # El analizador debe recibir el diseño primario, o leería otro corpus.
+    assert "--nonstress-variant" in argv and "schmidt" in argv
+    assert "--temperature" in argv and "exclude" in argv
+
+
+def test_evaluate_controls_does_not_forward_degradation_flags():
+    """En ``controls`` no hay variante ni temperatura de evidencia."""
+    argv = pipelines.build_evaluate_argv(
+        "controls", _args(nonstress_variant="schmidt", temperature="exclude")
+    )
+    assert "--nonstress-variant" not in argv
+    assert "--temperature" not in argv
 
 
 def test_evaluate_kemocon_is_reference_only():
@@ -169,6 +183,24 @@ def test_compare_argv_modes(monkeypatch):
     )
     argv = pipelines.build_compare_argv(processControl.args)
     assert "degradation" in argv
+
+
+def test_compare_argv_forwards_design_flags(monkeypatch):
+    """El comparador debe leer el mismo corpus (variante y temperatura)."""
+    monkeypatch.setattr(
+        processControl,
+        "args",
+        _args(
+            experiment="degradation",
+            compare_models="a:1,b:1",
+            nonstress_variant="schmidt",
+            temperature="exclude",
+        ),
+        raising=False,
+    )
+    argv = pipelines.build_compare_argv(processControl.args)
+    assert "--nonstress-variant" in argv and "schmidt" in argv
+    assert "--temperature" in argv and "exclude" in argv
 
 
 def test_compare_argv_rejects_other_experiments(monkeypatch):

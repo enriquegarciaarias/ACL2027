@@ -1,21 +1,28 @@
 #!/usr/bin/env python
-"""Análisis del barrido de degradación (H1, H2, H5).
+"""Análisis del barrido de degradación (H1, H2, H4, H5, H6).
 
-Lee las respuestas de ``results/output/WESAD/PHASE2/degradation/`` y calcula,
-por condición:
+Lee las respuestas del barrido (por defecto el **diseño primario**: binario
+``schmidt`` sin temperatura, 424 ventanas por condición) y calcula, por
+condición:
 
-- Corrección (accuracy, balanced accuracy) y abstención.
+- Corrección (accuracy, balanced), **cobertura** y **accuracy contando la
+  abstención como error**.
 - Calibración (ECE, Brier) y confianza media.
 - **Respaldo de afirmaciones** (H5): proporciones de claims respaldados,
   contradichos, no respaldados e indeterminados, y acierto de dirección.
 - **Certeza lingüística** (H2b): hedges, boosters e índice por 100 palabras.
+- **Resolubilidad** con la referencia features-only sobre las mismas ventanas y
+  features que vio el LLM (H1) y AUROC de confianza (H2a).
+- AUROC incremental de la compuerta y del SQI (H6).
 
 Sin llamadas al LLM; se puede ejecutar con el barrido en marcha (ignora líneas
 incompletas).
 
 Uso:
-    python scripts/analyze_degradation.py
-    python scripts/analyze_degradation.py --conditions C0_clean,C4_total_eda
+    python scripts/analyze_degradation.py --model qwen3:14b
+    python scripts/analyze_degradation.py --model qwen3:14b --decision-mode binary \\
+        --nonstress-variant schmidt --temperature exclude
+    python scripts/analyze_degradation.py --degradation-dir <ruta> --conditions C0_clean
 """
 
 from __future__ import annotations
@@ -36,12 +43,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
 
 from sources.ingestion.represent import _opaque_window_id
-from sources.phase2.llm_config import model_slug
+from sources.phase2.binary_variants import (  # noqa: E402
+    NONSTRESS_VARIANTS,
+    variant_classes,
+)
+from sources.phase3.binary_hierarchy import provenance
 from sources.phase3.certainty import linguistic_certainty
 from sources.phase3.claims import summarize_verdicts, verify_claims
 from sources.phase2.response_schema import (
     DECISION_MODE_AFFECTIVE,
     DECISION_MODE_STRESS_BINARY,
+)
+from sources.phase3.degradation import (
+    is_binary_mode,
+    resolve_degradation_dir,
 )
 from sources.phase3.records import evaluate_binary_records, evaluate_records
 from sources.phase3.recovery import apply_recovery
@@ -92,6 +107,41 @@ def load_records(
                 continue
             records.append(record)
     return records
+
+
+def infer_variant(records: list[dict[str, Any]]) -> str:
+    """Variante ``non-stress`` declarada por el corpus.
+
+    Las respuestas la registran en su procedencia; los corpus anteriores al
+    diseño por variantes no la tienen y equivalen a ``all`` (baseline +
+    amusement + meditation), que es lo que se evaluaba entonces.
+    """
+    value = provenance(records).get("nonstress_variant")
+    return value if value in NONSTRESS_VARIANTS else "all"
+
+
+def infer_include_temperature(records: list[dict[str, Any]]) -> bool:
+    """Si el corpus incluyó temperatura en la evidencia (default: sí)."""
+    value = provenance(records).get("include_temperature")
+    return True if value is None else bool(value)
+
+
+def filter_primary_variant(
+    records: list[dict[str, Any]],
+    labels: dict[str, str],
+    variant: str,
+) -> list[dict[str, Any]]:
+    """Conserva solo las ventanas que la variante declara.
+
+    Con ``schmidt`` se descartan las de ``meditation``: el prompt no las cubre,
+    así que puntuarlas mediría una clase que el modelo no recibió como tal.
+    """
+    allowed = {"stress", *variant_classes(variant)}
+    return [
+        record
+        for record in records
+        if labels.get(record.get("window_id")) in allowed
+    ]
 
 
 def _certainty_stats(items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -222,6 +272,11 @@ def analyze_group_binary(
         "coverage": metrics["coverage"],
         "abstention_rate": metrics["abstention_rate"],
         "accuracy": metrics["accuracy"],
+        # Accuracy contando la abstención como error: la cifra que impide que
+        # abstenerse parezca acertar (C4/C5 con EDA destruida).
+        "accuracy_incl_abstain": (
+            (metrics["tp"] + metrics["tn"]) / metrics["n"] if metrics["n"] else float("nan")
+        ),
         "balanced_accuracy": metrics["balanced_accuracy"],
         "precision_stress": metrics["precision_stress"],
         "recall_stress": metrics["recall_stress"],
@@ -311,8 +366,17 @@ def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict
         "n_valid": metrics["n_valid"],
         "n_invalid": metrics["n_invalid"],
         "n_abstain": metrics["n_abstain"],
+        "n_decided": metrics["n_decided"],
+        "coverage": (
+            metrics["n_decided"] / metrics["n_valid"] if metrics["n_valid"] else 0.0
+        ),
         "abstention_rate": metrics["abstention_rate"],
         "accuracy": metrics["accuracy"],
+        "accuracy_incl_abstain": (
+            metrics["accuracy"] * metrics["n_decided"] / metrics["n"]
+            if metrics["n"] and metrics["accuracy"] == metrics["accuracy"]
+            else float("nan")
+        ),
         "balanced_accuracy": metrics["balanced_accuracy"],
         "ece": metrics["ece"],
         "brier": metrics["brier"],
@@ -394,10 +458,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--decision-mode",
-        choices=["affective", "binary"],
-        default="affective",
+        choices=["", "affective", "binary"],
+        default="",
         help="Tarea con la que se generaron las respuestas: 4 clases o binario "
-        "stress/non-stress. Debe coincidir con el barrido (--decision-mode).",
+        "stress/non-stress. Vacío = se deduce de la procedencia del corpus.",
     )
     parser.add_argument(
         "--split",
@@ -405,34 +469,55 @@ def main(argv: list[str] | None = None) -> None:
         choices=["evaluation", "development", "all"],
         help="Conjunto a analizar (por defecto, evaluación).",
     )
+    parser.add_argument(
+        "--nonstress-variant",
+        default="",
+        choices=["", *NONSTRESS_VARIANTS],
+        help="Variante binaria del corpus. Vacío = la que declare la procedencia "
+        "de las respuestas (corpus antiguos equivalen a 'all').",
+    )
+    parser.add_argument(
+        "--temperature",
+        default="",
+        choices=["", "include", "exclude"],
+        help="Temperatura en la evidencia. Vacío = la que declare el corpus.",
+    )
     args = parser.parse_args(argv)
 
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
     split = "" if args.split == "all" else args.split
     labels = load_labels()
 
-    binary = args.decision_mode == "binary"
-    analyze_fn = analyze_group_binary if binary else analyze_group
-
     if args.degradation_dir:
         degradation_dir = Path(args.degradation_dir)
     else:
-        name = "degradation" if args.representation == "numeric" else "degradation_text"
-        if binary:
-            name += "_binary"
-        base = DEGRADATION_DIR.parent / name
-        degradation_dir = base / model_slug(args.model) if args.model else base
-        if args.model and not degradation_dir.is_dir() and base.is_dir():
-            # Ejecuciones anteriores al aislamiento por modelo: se leen de la
-            # carpeta histórica, avisando de a quién pertenecen.
-            print(
-                f"[AVISO] No existe {degradation_dir}; se usa la carpeta "
-                f"histórica {base}."
+        try:
+            degradation_dir = resolve_degradation_dir(
+                DEGRADATION_DIR.parent,
+                model=args.model,
+                representation=args.representation,
+                decision_mode=args.decision_mode,
+                nonstress_variant=args.nonstress_variant or None,
+                temperature_mode=args.temperature or None,
             )
-            degradation_dir = base
+        except FileNotFoundError as exc:
+            raise SystemExit(str(exc)) from None
     if not degradation_dir.is_dir():
         raise SystemExit(f"No existe el directorio de respuestas: {degradation_dir}")
     records = load_records(degradation_dir, set(conditions), split)
+
+    # Tarea: la bandera manda; si no se indicó, se deduce de la procedencia.
+    corpus_decision_mode = provenance(records).get("decision_mode")
+    if args.decision_mode:
+        binary = args.decision_mode == "binary"
+    else:
+        binary = corpus_decision_mode == DECISION_MODE_STRESS_BINARY
+        if binary:
+            print("[tarea] deducida del corpus: binaria (stress / non-stress)")
+        elif corpus_decision_mode:
+            print(f"[tarea] deducida del corpus: {corpus_decision_mode}")
+    analyze_fn = analyze_group_binary if binary else analyze_group
+
     n_loaded = len(records)
     models_found = {
         record.get("model") or (record.get("ollama_meta") or {}).get("model")
@@ -458,6 +543,28 @@ def main(argv: list[str] | None = None) -> None:
     else:
         print(f"Respuestas cargadas: {n_loaded} (split={args.split})")
 
+    variant = ""
+    include_temperature = True
+    n_dropped_variant = 0
+    if binary:
+        variant = args.nonstress_variant or infer_variant(records)
+        include_temperature = (
+            args.temperature == "include"
+            if args.temperature
+            else infer_include_temperature(records)
+        )
+        kept = filter_primary_variant(records, labels, variant)
+        n_dropped_variant = len(records) - len(kept)
+        records = kept
+        print(
+            f"Variante binaria: {variant} "
+            f"({' + '.join(variant_classes(variant))}); "
+            f"ventanas fuera de la variante: {n_dropped_variant}; "
+            f"temperatura en la evidencia: {'sí' if include_temperature else 'no'}"
+        )
+    elif args.temperature:
+        include_temperature = args.temperature == "include"
+
     by_condition: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
         by_condition[record["condition_id"]].append(record)
@@ -466,7 +573,10 @@ def main(argv: list[str] | None = None) -> None:
         "model": args.model or "legacy",
         "degradation_dir": str(degradation_dir),
         "representation": args.representation if args.model else "legacy",
-        "decision_mode": args.decision_mode,
+        "decision_mode": "binary" if binary else "affective",
+        "nonstress_variant": variant or None,
+        "include_temperature": include_temperature,
+        "n_dropped_variant": n_dropped_variant,
         "split": args.split,
         "n_records": len(records),
         "recovery": not args.no_recovery,
@@ -484,20 +594,32 @@ def main(argv: list[str] | None = None) -> None:
     subjects = sorted({record["subject"] for record in records})
     report["subjects"] = subjects
     report["reference_by_condition"] = reference_by_condition(
-        conditions, subjects, labels
+        conditions,
+        subjects,
+        labels,
+        include_temperature=include_temperature,
+        variant=variant or None,
     )
-    gate_scores = gate_scores_by_condition(conditions, subjects, by_condition)
+    gate_scores = gate_scores_by_condition(
+        conditions, subjects, by_condition, include_temperature=include_temperature
+    )
     sqi_scores = sqi_by_condition(conditions, subjects)
     report["indicator_incremental"] = {
         "gate": {
             condition: incremental_quality_auroc(
-                by_condition.get(condition, []), labels, gate_scores.get(condition, {})
+                by_condition.get(condition, []),
+                labels,
+                gate_scores.get(condition, {}),
+                decision_mode=args.decision_mode,
             )
             for condition in conditions
         },
         "sqi": {
             condition: incremental_quality_auroc(
-                by_condition.get(condition, []), labels, sqi_scores.get(condition, {})
+                by_condition.get(condition, []),
+                labels,
+                sqi_scores.get(condition, {}),
+                decision_mode=args.decision_mode,
             )
             for condition in conditions
         },
@@ -508,11 +630,20 @@ def main(argv: list[str] | None = None) -> None:
     with output_path.open("w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2, ensure_ascii=False)
 
-    print(f"\nTarea: {args.decision_mode} | representación: {args.representation}")
+    print(
+        f"\nTarea: {'binary' if binary else 'affective'} | "
+        f"representación: {args.representation}"
+    )
+    if binary:
+        print(
+            f"Variante: {variant} ({' + '.join(variant_classes(variant))} = "
+            f"non-stress) | temperatura: {'sí' if include_temperature else 'no'} | "
+            f"ventanas fuera de la variante: {n_dropped_variant}"
+        )
     print("\n=== Degradación: corrección, abstención y calibración ===")
     header = (
-        f"{'condición':16s} {'n':>5s} {'abst':>6s} {'acc':>6s} {'bal':>6s} "
-        f"{'ECE':>6s} {'conf':>6s} {'#conf':>6s}"
+        f"{'condición':16s} {'n':>5s} {'abst':>6s} {'cov':>6s} {'acc':>6s} "
+        f"{'acc*':>6s} {'bal':>6s} {'ECE':>6s} {'conf':>6s} {'#conf':>6s}"
     )
     print(header)
     for condition in conditions:
@@ -522,7 +653,9 @@ def main(argv: list[str] | None = None) -> None:
             continue
         print(
             f"{condition:16s} {entry['n']:5d} {entry['abstention_rate']:6.3f} "
-            f"{entry['accuracy']:6.3f} {entry['balanced_accuracy']:6.3f} "
+            f"{entry.get('coverage', 1.0):6.3f} {entry['accuracy']:6.3f} "
+            f"{entry.get('accuracy_incl_abstain', entry['accuracy']):6.3f} "
+            f"{entry['balanced_accuracy']:6.3f} "
             f"{entry['ece']:6.3f} {entry['confidence_mean']:6.1f} "
             f"{entry['n_distinct_confidence']:6d}"
         )
@@ -596,8 +729,8 @@ def main(argv: list[str] | None = None) -> None:
         else "\n=== Endpoint binario (4 clases mapeadas a stress / non-stress) ==="
     )
     print(
-        f"{'condición':16s} {'cob':>6s} {'abst':>6s} {'acc':>6s} {'bal':>6s} "
-        f"{'prec':>6s} {'rec':>6s} {'ref_bin':>8s}"
+        f"{'condición':16s} {'cob':>6s} {'abst':>6s} {'acc':>6s} {'acc*':>6s} "
+        f"{'bal':>6s} {'prec':>6s} {'rec':>6s} {'ref_bin':>8s}"
     )
     for condition in conditions:
         entry = report["conditions"][condition]
@@ -605,16 +738,23 @@ def main(argv: list[str] | None = None) -> None:
         ref = report["reference_by_condition"].get(condition, {})
         if not binary_entry.get("n"):
             continue
+        accuracy_all = (
+            (binary_entry["tp"] + binary_entry["tn"]) / binary_entry["n"]
+            if binary_entry.get("n")
+            else float("nan")
+        )
         print(
             f"{condition:16s} {binary_entry['coverage']:6.3f} "
             f"{binary_entry['abstention_rate']:6.3f} {binary_entry['accuracy']:6.3f} "
+            f"{accuracy_all:6.3f} "
             f"{binary_entry['balanced_accuracy']:6.3f} "
             f"{binary_entry['precision_stress']:6.3f} {binary_entry['recall_stress']:6.3f} "
             f"{ref.get('balanced_accuracy_binary', float('nan')):8.3f}"
         )
     print(
-        "  acc/bal/prec/rec se miden sobre las decididas ('cob' = cobertura). "
-        "La columna ref_bin es la referencia features-only."
+        "  acc/bal/prec/rec se miden sobre las decididas ('cob' = cobertura); "
+        "acc* cuenta la abstención como error. La columna ref_bin es la "
+        "referencia features-only con las mismas ventanas."
     )
 
     print("\n=== H2a: confianza como predictor de corrección ===")
@@ -732,8 +872,18 @@ def reference_by_condition(
     conditions: list[str],
     subjects: list[str],
     labels: dict[str, str],
+    include_temperature: bool = True,
+    variant: str | None = None,
 ) -> dict[str, Any]:
-    """Resolubilidad por condición con un modelo features-only (CV por sujeto)."""
+    """Resolubilidad por condición con un modelo features-only (CV por sujeto).
+
+    Args:
+        include_temperature: replica la vista del LLM (el primario no incluye
+            ``temp``, así que la referencia tampoco debe incluirla).
+        variant: si se indica, restringe las ventanas a las clases de esa
+            variante binaria (``stress`` + sus clases ``non-stress``), para
+            que la referencia y el LLM se evalúen sobre el mismo conjunto.
+    """
     from sklearn.impute import SimpleImputer
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import balanced_accuracy_score
@@ -743,19 +893,32 @@ def reference_by_condition(
 
     from sources.phase3.degradation import condition_matrix, load_features
 
+    allowed = {"stress", *variant_classes(variant)} if variant else None
     feature_names = sorted(
         {
             name
-            for window in load_features(INGEST_DIR, "C0_clean", subjects[0]).values()
+            for window in load_features(
+                INGEST_DIR, "C0_clean", subjects[0], include_temperature=include_temperature
+            ).values()
             for name in window
         }
     )
     results: dict[str, Any] = {}
     for condition in conditions:
         matrix, groups, window_ids = condition_matrix(
-            INGEST_DIR, condition, subjects, feature_names
+            INGEST_DIR,
+            condition,
+            subjects,
+            feature_names,
+            include_temperature=include_temperature,
         )
         y4 = np.array([labels.get(window_id, "UNKNOWN") for window_id in window_ids])
+        if allowed is not None:
+            keep = np.array([label in allowed for label in y4])
+            matrix = matrix[keep]
+            groups = [group for group, flag in zip(groups, keep) if flag]
+            window_ids = [wid for wid, flag in zip(window_ids, keep) if flag]
+            y4 = y4[keep]
         y2 = np.array([1 if label == "stress" else 0 for label in y4])
         if len(set(groups)) < 2:
             continue
@@ -779,34 +942,13 @@ def reference_by_condition(
             )
         results[condition] = {
             "n": int(len(y4)),
+            "classes": sorted(set(str(label) for label in y4)),
             "balanced_accuracy_4class": float(np.mean(bal4)) if bal4 else float("nan"),
             "balanced_accuracy_4class_std": float(np.std(bal4)) if bal4 else float("nan"),
             "balanced_accuracy_binary": float(np.mean(bal2)) if bal2 else float("nan"),
             "resolvable": bool(bal4 and np.mean(bal4) > 0.55),
         }
     return results
-
-
-def confidence_auroc(records: list[dict[str, Any]], labels: dict[str, str]) -> float:
-    """AUROC de la confianza como predictor de corrección (solo decididas)."""
-    from sources.phase3.evaluator import _compute_auroc_one_vs_rest
-
-    y_true: list[str] = []
-    scores: list[float] = []
-    for record in records:
-        decision = record.get("decision")
-        if decision not in ("baseline", "stress", "amusement", "meditation"):
-            continue
-        truth = labels.get(record["window_id"], "UNKNOWN")
-        if truth == "UNKNOWN":
-            continue
-        y_true.append("correct" if decision == truth else "incorrect")
-        scores.append(float(record.get("confidence") or 0) / 100.0)
-    if not y_true or len(set(y_true)) < 2:
-        return float("nan")
-    return _compute_auroc_one_vs_rest(
-        y_true, {"correct": scores, "incorrect": [1.0 - s for s in scores]}, "correct"
-    )
 
 
 def sqi_by_condition(
@@ -833,15 +975,23 @@ def gate_scores_by_condition(
     conditions: list[str],
     subjects: list[str],
     records_by_condition: dict[str, list[dict[str, Any]]],
+    include_temperature: bool = True,
 ) -> dict[str, dict[str, float]]:
-    """Score de consistencia (P1) por ventana y condición (usa valores absolutos)."""
+    """Score de consistencia (P1) por ventana y condición (usa valores absolutos).
+
+    ``include_temperature=False`` deja fuera las comprobaciones de temperatura:
+    si el LLM no recibió ese canal, vetar por él sería vetar por una evidencia
+    que el modelo nunca vio.
+    """
     from sources.phase2.consistency import check_consistency
     from sources.phase3.degradation import load_features
 
     cache: dict[tuple[str, str], float] = {}
     for subject in subjects:
         for condition in conditions:
-            rows = load_features(INGEST_DIR, condition, subject)
+            rows = load_features(
+                INGEST_DIR, condition, subject, include_temperature=include_temperature
+            )
             for window_id, values in rows.items():
                 report = check_consistency(values, duration_s=60.0)
                 cache[(window_id, condition)] = report.consistency_score
@@ -858,26 +1008,39 @@ def incremental_quality_auroc(
     records: list[dict[str, Any]],
     labels: dict[str, str],
     quality_scores: dict[str, float],
+    decision_mode: str = "affective",
 ) -> dict[str, Any]:
     """AUROC de confianza vs confianza+gate con CV agrupada por sujeto (H6)."""
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import roc_auc_score
     from sklearn.model_selection import GroupKFold
 
+    binary = is_binary_mode(decision_mode)
+    valid_decisions = ("stress", "non-stress") if binary else (
+        "baseline",
+        "stress",
+        "amusement",
+        "meditation",
+    )
     rows = []
     for record in records:
         decision = record.get("decision")
-        if decision not in ("baseline", "stress", "amusement", "meditation"):
+        if decision not in valid_decisions:
             continue
         truth = labels.get(record["window_id"], "UNKNOWN")
         score = quality_scores.get(record["window_id"], float("nan"))
         if truth == "UNKNOWN" or np.isnan(score):
             continue
+        correct = (
+            (decision == "stress") == (truth == "stress")
+            if binary
+            else decision == truth
+        )
         rows.append(
             (
                 float(record.get("confidence") or 0) / 100.0,
                 float(score),
-                1 if decision == truth else 0,
+                1 if correct else 0,
                 record["subject"],
             )
         )

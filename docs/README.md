@@ -16,8 +16,9 @@ pensado para dos lectores:
 |---:|---|---|
 | 1 | [`hipotesis.md`](hipotesis.md) | Qué pregunta la tesis, con qué hipótesis y criterios de refutación |
 | 2 | [`experimentos.md`](experimentos.md) | **Resumen ejecutivo + inventario de experimentos**: qué se construyó, qué se midió, resultados y qué es firme |
-| 3 | [`resultados_degradacion.md`](resultados_degradacion.md) | Resultados completos del experimento principal (tablas y lecturas) |
-| 4 | [`evolucion.md`](evolucion.md) | Cómo se llegó hasta aquí: qué se descartó y por qué (útil para escribir la tesis) |
+| 3 | [`resultados_jerarquia.md`](resultados_jerarquia.md) | **Resultados del diseño primario**: binario `schmidt` sin temperatura (424 ventanas), dos modelos, con cobertura, tasa base e IC por sujeto |
+| 4 | [`resultados_degradacion.md`](resultados_degradacion.md) | Resultados completos del experimento principal (tablas y lecturas) |
+| 5 | [`evolucion.md`](evolucion.md) | Cómo se llegó hasta aquí: qué se descartó y por qué (útil para escribir la tesis) |
 
 Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 
@@ -53,8 +54,9 @@ Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 |---|---|---|
 | [`experimentos.md`](experimentos.md) | **Resumen ejecutivo, inventario (E0–E8) y detalle de todos los experimentos** (WESAD, K-EmoCon, PhysioNet); punto de entrada único | Firme |
 | [`evolucion.md`](evolucion.md) | **Sinopsis de la evolución**: cómo cambió el experimento con cada resultado, reorientaciones y registro por sesión | Firme (memoria) |
-| [`resultados_degradacion.md`](resultados_degradacion.md) | H1–H6 y H3: corrección, abstención, claims, certeza, indicadores de calidad | **Final** |
-| [`resultados_binario.md`](resultados_binario.md) | Matriz 2 modelos × 2 tareas × 5 condiciones (**variante `all` con temperatura**): empate en limpio, fallos opuestos bajo destrucción, trampa accuracy/balanced, H2b dependiente de modelo×tarea y H6 como sustituto de la confianza. El primario `schmidt` sin temperatura se añadirá tras la re-ejecución | **Final (variante `all`)** |
+| [`resultados_degradacion.md`](resultados_degradacion.md) | H1–H6 y H3: corrección, abstención, claims, certeza, indicadores de calidad (4 clases, `qwen2.5:7b`) | **Final** |
+| [`resultados_jerarquia.md`](resultados_jerarquia.md) | **Diseño primario**: binario `schmidt` sin temperatura, 424 ventanas, `qwen2.5:7b` vs `qwen3:14b`; empate en limpio, abstención dependiente de la etiqueta del 14b, colapso opuesto con EDA destruida y trampa de la accuracy sobre decididas | **Final (clasificación); H1–H6 en curso** |
+| [`resultados_binario.md`](resultados_binario.md) | Matriz 2 modelos × 2 tareas × 5 condiciones (**variante `all` con temperatura**): empate en limpio, fallos opuestos bajo destrucción, trampa accuracy/balanced, H2b dependiente de modelo×tarea y H6 como sustituto de la confianza. El primario `schmidt` sin temperatura está en [`resultados_jerarquia.md`](resultados_jerarquia.md) | **Final (variante `all`)** |
 | [`consistencia.md`](consistencia.md) | Compuerta de consistencia fisiológica: 0 % de falsos vetos en limpio, 100 % en datos incoherentes, robustez | Firme |
 | [`claims_h5.md`](claims_h5.md) | Verificador de claims y certeza lingüística: definiciones y resultados | Firme (método) |
 | [`p2_binario.md`](p2_binario.md) | Prompt binario stress/no-stress: resultados | **Exploratorio** |

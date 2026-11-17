@@ -146,6 +146,8 @@ def build_generate_argv(
             argv, "--nonstress-variant", getattr(args, "nonstress_variant", None)
         )
         _append_flag(argv, "--temperature", getattr(args, "temperature", None))
+        _append_flag(argv, "--repetitions", getattr(args, "repetitions", None))
+        _append_flag(argv, "--sample-windows", getattr(args, "sample_windows", None))
         if getattr(args, "think", False):
             argv.append("--think")
         if getattr(args, "allowDev", False):
@@ -337,6 +339,9 @@ def _estimate_calls(experiment: str, subjects: Sequence[str], args: Any) -> int 
     cap = getattr(args, "max_windows", None)
     if cap:
         total_windows = min(total_windows, cap * len(subjects))
+    sampled = getattr(args, "sample_windows", None)
+    if sampled:
+        total_windows = min(total_windows, int(sampled) * len(subjects))
 
     conditions_arg = str(getattr(args, "conditions", "") or "")
     n_conditions = (
@@ -357,7 +362,8 @@ def _estimate_calls(experiment: str, subjects: Sequence[str], args: Any) -> int 
             * max(n_reps, 1)
         )
     if experiment == "degradation":
-        return total_windows * (n_conditions or DEGRADATION_CONDITIONS)
+        n_reps = max(int(getattr(args, "repetitions", None) or 1), 1)
+        return total_windows * (n_conditions or DEGRADATION_CONDITIONS) * n_reps
     if experiment == "centering":
         return total_windows * (n_conditions or 1)
     if experiment == "physionet":
@@ -487,6 +493,8 @@ def _plan(phase: str) -> dict[str, Any]:
         "temperature": getattr(args, "temperature", None) or "include",
         "force": bool(getattr(args, "force", False)),
         "allowDev": bool(getattr(args, "allowDev", False)),
+        "repetitions": max(int(getattr(args, "repetitions", None) or 1), 1),
+        "sample_windows": getattr(args, "sample_windows", None),
     }
     if phase == "generate":
         plan["think"] = bool(getattr(args, "think", False))

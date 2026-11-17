@@ -195,7 +195,22 @@ def manageArgs():
         '--max-windows',
         type=int,
         default=None,
-        help="Límite de ventanas por sujeto (pilotos).",
+        help="Límite de ventanas por sujeto (pilotos). Corta por el principio.",
+    )
+    parser.add_argument(
+        '--sample-windows',
+        type=int,
+        default=None,
+        help="Pilotos: K ventanas por sujeto repartidas por todo el registro "
+             "(muestra sistemática, ciega a las etiquetas).",
+    )
+    parser.add_argument(
+        '--repetitions',
+        type=int,
+        default=None,
+        help="GENERATE degradation: repeticiones del mismo prompt con semillas "
+             "distintas (varianza de muestreo). Con R>1 la salida va a "
+             "{nombre}_rep{R}/.",
     )
     parser.add_argument(
         '--max-records',

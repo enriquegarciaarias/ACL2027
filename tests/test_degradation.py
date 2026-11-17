@@ -298,7 +298,11 @@ def test_existing_pairs_retries_timeouts(tmp_path):
 
     existing, n_retry = sweep.existing_pairs(path)
 
-    assert existing == {("w1", "C0_clean"), ("w3", "C0_clean")}
+    # La clave incluye la repetición; los corpus sin el campo son repetición 0.
+    assert existing == {
+        ("w1", "C0_clean", 0),
+        ("w3", "C0_clean", 0),
+    }
     assert n_retry == 1
 
 

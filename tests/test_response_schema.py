@@ -191,6 +191,29 @@ def test_validate_claim_magnitude_and_direction_aliases():
     assert resp.claims[0].magnitude == "low"
 
 
+@pytest.mark.parametrize(
+    "direction,expected",
+    [
+        ("slight increase", "increase"),
+        ("slightly increase", "increase"),
+        ("sharply decrease", "decrease"),
+        ("markedly decrease", "decrease"),
+        ("somewhat stable", "stable"),
+    ],
+)
+def test_validate_claim_strips_direction_adverb(direction, expected):
+    """El adverbio antepuesto no invalida la respuesta (fallo real del piloto)."""
+    raw = (
+        '{"decision": "stress", "confidence": 85, '
+        '"claims": [{"metric": "eda_mean_us", "channel": "eda", '
+        f'"direction": "{direction}", "magnitude": "low"}}], '
+        '"reasoning": "x"}'
+    )
+    resp = validate_llm_output(raw)
+    assert resp.status == "valid_response", resp.error_message
+    assert resp.claims[0].direction == expected
+
+
 def test_validate_claim_wrist_channel_rejected():
     """Un título de muñeca no se mapea a pecho y se rechaza."""
     raw = (

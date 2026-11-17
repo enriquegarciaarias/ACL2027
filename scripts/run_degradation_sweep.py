@@ -21,9 +21,23 @@ para toda la modalidad). Por eso el barrido ejecuta las 5 condiciones
 efectivamente distintas y omite C3 (idéntica a C1). Ver
 ``docs/degradacion_llm.md``.
 
+Repeticiones (varianza de muestreo): ``--repetitions R`` repite el **mismo
+prompt** con R semillas (``--seed + r``) y guarda ``repetition`` y ``seed`` en
+cada registro. El corpus de una pasada queda intacto: con ``R > 1`` y sin
+``--output-dir`` la salida va a ``{nombre}_rep{R}/{modelo}/``. Si el modelo es
+determinista para el prompt, las R respuestas serán idénticas y las
+repeticiones no aportarán nada; eso lo mide ``scripts/analyze_repetitions.py``.
+
+Pilotos: ``--sample-windows K`` toma K ventanas repartidas por todo el registro
+del sujeto (muestra sistemática y ciega a las etiquetas). ``--max-windows``
+corta por el principio y en WESAD eso son casi todas ``baseline``.
+
 Uso:
     python scripts/run_degradation_sweep.py --subjects S5,S6 --max-windows 3
     python scripts/run_degradation_sweep.py            # evaluación completa
+    python scripts/run_degradation_sweep.py --subjects S5,S6,S7 \
+        --sample-windows 12 --conditions C0_clean,C4_total_eda,C5_total_both \
+        --repetitions 10
 """
 
 from __future__ import annotations
@@ -33,8 +47,6 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -84,14 +96,33 @@ from sources.phase3.degradation import (  # noqa: E402
 )
 
 
-def existing_pairs(path: Path) -> tuple[set[tuple[str, str]], int]:
-    """Pares ``(ventana, condición)`` ya respondidos, y cuántos se reintentan.
+def repetition_seeds(base_seed: int, repetitions: int) -> list[int]:
+    """Semillas de las repeticiones: ``base_seed + r`` para ``r = 0..R-1``.
 
-    Un ``timeout`` es un fallo de transporte, no una respuesta: si se contara
-    como cacheado, un barrido lanzado con el modelo sin instalar quedaría
-    marcado como completo y no se reintentaría nunca.
+    La repetición 0 usa ``--seed`` (42 por defecto), de modo que un barrido con
+    ``--repetitions 1`` y uno con ``--repetitions R`` comparten la primera
+    muestra y son comparables sin volver a llamar al modelo.
+
+    Raises:
+        ValueError: si ``repetitions`` no es un entero positivo.
     """
-    existing: set[tuple[str, str]] = set()
+    if int(repetitions) < 1:
+        raise ValueError(f"repetitions debe ser >= 1 (recibido {repetitions!r})")
+    return [int(base_seed) + r for r in range(int(repetitions))]
+
+
+def existing_pairs(path: Path) -> tuple[set[tuple[str, str, int]], int]:
+    """Ternas ``(ventana, condición, repetición)`` ya respondidas.
+
+    Devuelve también cuántas respuestas con ``timeout`` se reintentarán. Un
+    ``timeout`` es un fallo de transporte, no una respuesta: si se contara como
+    cacheado, un barrido lanzado con el modelo sin instalar quedaría marcado
+    como completo y no se reintentaría nunca.
+
+    Los corpus anteriores a las repeticiones no tienen el campo
+    ``repetition``: se interpretan como repetición 0 (la del ``--seed`` base).
+    """
+    existing: set[tuple[str, str, int]] = set()
     n_retry = 0
     if not path.is_file():
         return existing, n_retry
@@ -106,8 +137,35 @@ def existing_pairs(path: Path) -> tuple[set[tuple[str, str]], int]:
         if record.get("status") == "timeout":
             n_retry += 1
             continue
-        existing.add((record["window_id"], record["condition_id"]))
+        existing.add(
+            (
+                record["window_id"],
+                record["condition_id"],
+                int(record.get("repetition", 0) or 0),
+            )
+        )
     return existing, n_retry
+
+
+def sample_window_ids(window_ids: list[str], k: int | None) -> list[str]:
+    """Muestra sistemática de ``k`` ventanas repartidas por todo el registro.
+
+    Se usa en pilotos: ``--max-windows`` corta por el principio y en WESAD el
+    protocolo es secuencial (las primeras ventanas son todas ``baseline``), así
+    que un piloto con las N primeras mediría una sola clase. Esta muestra
+    recorre el registro completo con paso constante y **no** consulta las
+    etiquetas: la selección es ciega respecto de la clase real.
+
+    Args:
+        window_ids: identificadores ordenados del sujeto.
+        k: número de ventanas; ``None`` o ``>= len`` devuelve todas.
+    """
+    ordered = sorted(window_ids)
+    if not k or int(k) >= len(ordered):
+        return ordered
+    k = int(k)
+    step = len(ordered) / k
+    return [ordered[int(i * step)] for i in range(k)]
 
 
 def ensure_model_available(model: str) -> None:
@@ -167,13 +225,14 @@ def run_subject(
     output_dir: Path,
     config: Any,
     client: dict[str, Any],
-    seed: int,
+    seeds: list[int],
     max_windows: int | None,
     use_few_shot: bool,
     representation: str,
     decision_mode: str = DECISION_MODE_AFFECTIVE,
     nonstress_variant: str = DEFAULT_NONSTRESS_VARIANT,
     include_temperature: bool = True,
+    sample_windows: int | None = None,
 ) -> dict[str, Any]:
     responses_path = output_dir / f"{subject}.responses.jsonl"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -216,6 +275,8 @@ def run_subject(
         for condition in conditions
     }
     window_ids = sorted(clean_rows)
+    if sample_windows is not None:
+        window_ids = sample_window_ids(window_ids, sample_windows)
     if max_windows is not None:
         window_ids = window_ids[:max_windows]
 
@@ -224,9 +285,19 @@ def run_subject(
         window = windows.get(window_id, {})
         duration_s = window.get("duration_s", 60.0)
         for condition in conditions:
-            if (window_id, condition) in existing:
-                n_cached += 1
+            pending = [
+                (repetition, seed)
+                for repetition, seed in enumerate(seeds)
+                if (window_id, condition, repetition) not in existing
+            ]
+            n_cached += len(seeds) - len(pending)
+            if not pending:
                 continue
+
+            # El prompt se construye una sola vez por (ventana, condición): las
+            # repeticiones deben recibir exactamente el mismo texto y variar
+            # solo la semilla. Si se reconstruyera por repetición, cualquier
+            # no determinismo de la construcción se confundiría con muestreo.
             values = condition_rows[condition].get(window_id, {})
             if representation == "text":
                 scores = z_scores(values, centers, scales)
@@ -261,52 +332,61 @@ def run_subject(
                     nonstress_classes=classes,
                 )
             assert_no_leakage(prompt)
-            try:
-                raw_output, ollama_meta = _call_ollama_chat(client, prompt, config, seed=seed)
-                validated = validate_llm_output(raw_output, decision_mode=decision_mode)
-                status, decision = validated.status, validated.decision
-                confidence = validated.confidence
-                claims = [c.to_dict() for c in validated.claims]
-                reasoning, error = validated.reasoning, validated.error_message
-            except Exception as exc:  # noqa: BLE001
-                raw_output, ollama_meta = "", {}
-                status, decision, confidence = "timeout", None, None
-                claims, reasoning, error = [], "", str(exc)
 
-            record = {
-                "subject": subject,
-                "split": "development" if subject in DEV_SUBJECTS else "evaluation",
-                "model": config.model,
-                "condition_id": condition,
-                "representation": representation,
-                "decision_mode": decision_mode,
-                "nonstress_variant": nonstress_variant,
-                "nonstress_classes": list(classes),
-                "include_temperature": include_temperature,
-                "window_id": window_id,
-                "window_id_opaque": _opaque_window_id(window_id),
-                "duration_s": duration_s,
-                "features_sha256": condition_sha[condition],
-                "status": status,
-                "decision": decision,
-                "confidence": confidence,
-                "claims": claims,
-                "reasoning": reasoning,
-                "error_message": error,
-                "raw_output": raw_output,
-                "prompt": prompt,
-                "ollama_meta": ollama_meta,
-                "generated_at": utc_now(),
-            }
-            with responses_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-            n_calls += 1
-            if status in ("timeout", "invalid_output"):
-                n_errors += 1
-            print(
-                f"[DEG] {subject} {window_id} {condition}: {status} "
-                f"decision={decision} conf={confidence} claims={len(claims)}"
-            )
+            for repetition, seed in pending:
+                try:
+                    raw_output, ollama_meta = _call_ollama_chat(
+                        client, prompt, config, seed=seed
+                    )
+                    validated = validate_llm_output(
+                        raw_output, decision_mode=decision_mode
+                    )
+                    status, decision = validated.status, validated.decision
+                    confidence = validated.confidence
+                    claims = [c.to_dict() for c in validated.claims]
+                    reasoning, error = validated.reasoning, validated.error_message
+                except Exception as exc:  # noqa: BLE001
+                    raw_output, ollama_meta = "", {}
+                    status, decision, confidence = "timeout", None, None
+                    claims, reasoning, error = [], "", str(exc)
+
+                record = {
+                    "subject": subject,
+                    "split": "development" if subject in DEV_SUBJECTS else "evaluation",
+                    "model": config.model,
+                    "condition_id": condition,
+                    "representation": representation,
+                    "decision_mode": decision_mode,
+                    "nonstress_variant": nonstress_variant,
+                    "nonstress_classes": list(classes),
+                    "include_temperature": include_temperature,
+                    "window_id": window_id,
+                    "window_id_opaque": _opaque_window_id(window_id),
+                    "duration_s": duration_s,
+                    "features_sha256": condition_sha[condition],
+                    "repetition": repetition,
+                    "seed": seed,
+                    "status": status,
+                    "decision": decision,
+                    "confidence": confidence,
+                    "claims": claims,
+                    "reasoning": reasoning,
+                    "error_message": error,
+                    "raw_output": raw_output,
+                    "prompt": prompt,
+                    "ollama_meta": ollama_meta,
+                    "generated_at": utc_now(),
+                }
+                with responses_path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                n_calls += 1
+                if status in ("timeout", "invalid_output"):
+                    n_errors += 1
+                print(
+                    f"[DEG] {subject} {window_id} {condition} rep={repetition} "
+                    f"seed={seed}: {status} decision={decision} "
+                    f"conf={confidence} claims={len(claims)}"
+                )
 
     return {
         "subject": subject,
@@ -314,6 +394,7 @@ def run_subject(
         "n_cached": n_cached,
         "n_errors": n_errors,
         "conditions": conditions,
+        "n_repetitions": len(seeds),
     }
 
 
@@ -339,6 +420,21 @@ def main(argv: list[str] | None = None) -> None:
         "que incluye o excluye la modalidad de temperatura de la evidencia).",
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        default=1,
+        help="Repeticiones del mismo prompt con semillas distintas (varianza de "
+        "muestreo). La repetición 0 usa --seed y la r usa --seed+r.",
+    )
+    parser.add_argument(
+        "--sample-windows",
+        type=int,
+        default=None,
+        help="Pilotos: K ventanas por sujeto repartidas por todo el registro "
+        "(muestra sistemática, ciega a las etiquetas). Sin esta bandera se "
+        "usan todas.",
+    )
     parser.add_argument(
         "--think",
         action="store_true",
@@ -407,6 +503,7 @@ def main(argv: list[str] | None = None) -> None:
         cascade_enabled=False,
     )
     client = create_ollama_chat_client(config)
+    seeds = repetition_seeds(args.seed, args.repetitions)
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:
@@ -419,13 +516,21 @@ def main(argv: list[str] | None = None) -> None:
             args.nonstress_variant,
             args.temperature,
         )
+        if len(seeds) > 1:
+            # Las repeticiones son otro corpus (mismo prompt, varias muestras):
+            # no deben mezclarse con el barrido de una sola pasada, que es el
+            # que sostiene las cifras publicadas.
+            output_dir = (
+                output_dir.parent.with_name(f"{output_dir.parent.name}_rep{len(seeds)}")
+                / output_dir.name
+            )
 
     ensure_model_available(config.model)
     print(
         f"Barrido de degradación | sujetos={subjects} | condiciones={conditions} | "
         f"representación={args.representation} | tarea={args.decision_mode} | "
         f"variante={args.nonstress_variant} | temperatura={args.temperature} | "
-        f"modelo={config.model} | "
+        f"modelo={config.model} | repeticiones={len(seeds)} (semillas={seeds}) | "
         f"think={config.think} | few_shot={not args.no_few_shot} | "
         f"salida={output_dir}"
     )
@@ -442,6 +547,9 @@ def main(argv: list[str] | None = None) -> None:
         "nonstress_classes": list(variant_classes(args.nonstress_variant)),
         "temperature_mode": args.temperature,
         "include_temperature": args.temperature == "include",
+        "repetitions": len(seeds),
+        "seeds": seeds,
+        "sample_windows": args.sample_windows,
         "config": config.to_dict(),
     }
     for subject in subjects:
@@ -451,13 +559,14 @@ def main(argv: list[str] | None = None) -> None:
             output_dir=output_dir,
             config=config,
             client=client,
-            seed=args.seed,
+            seeds=seeds,
             max_windows=args.max_windows,
             use_few_shot=not args.no_few_shot,
             representation=args.representation,
             decision_mode=decision_mode,
             nonstress_variant=args.nonstress_variant,
             include_temperature=args.temperature == "include",
+            sample_windows=args.sample_windows,
         )
         summary["subjects"][subject] = result
         for key in total:

@@ -233,6 +233,42 @@ def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+#: Adverbios que el modelo antepone a la dirección (``"slight increase"``,
+#: ``"sharply decrease"``). Se eliminan antes de consultar los alias: la
+#: dirección canónica es increase/decrease/stable y el matiz ya lo lleva la
+#: magnitud. Sin esto, una variante léxica invalida la respuesta completa y se
+#: pierden también sus claims correctos.
+DIRECTION_MODIFIERS: tuple[str, ...] = (
+    "slight",
+    "slightly",
+    "sharp",
+    "sharply",
+    "markedly",
+    "significant",
+    "significantly",
+    "moderate",
+    "moderately",
+    "somewhat",
+    "strongly",
+    "mildly",
+    "gradually",
+    "marginally",
+    "substantially",
+)
+
+
+def _normalize_direction(value: str) -> str:
+    """Dirección canónica tolerando el adverbio antepuesto."""
+    direction = value.lower().strip()
+    if direction in DIRECTION_ALIASES:
+        return DIRECTION_ALIASES[direction]
+    for modifier in DIRECTION_MODIFIERS:
+        if direction.startswith(modifier + " "):
+            rest = direction[len(modifier) + 1 :].strip()
+            return DIRECTION_ALIASES.get(rest, rest)
+    return direction
+
+
 def _validate_claim(claim: Any, index: int) -> tuple[Claim | None, str | None]:
     """Valida un claim individual.
 
@@ -268,7 +304,7 @@ def _validate_claim(claim: Any, index: int) -> tuple[Claim | None, str | None]:
     channel = channel.lower().strip()
     direction = direction.lower().strip()
     magnitude = magnitude.lower().strip()
-    direction = DIRECTION_ALIASES.get(direction, direction)
+    direction = _normalize_direction(direction)
     magnitude = MAGNITUDE_ALIASES.get(magnitude, magnitude)
 
     # ``"magnitude": "stable"`` (y sinónimos) en lugar de low|medium|high: se

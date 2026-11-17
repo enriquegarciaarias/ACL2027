@@ -47,6 +47,7 @@ Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 | [`fase3_evaluacion.md`](fase3_evaluacion.md) | Diseño de Fase 3: métricas de corrección, calibración, abstención | Firme |
 | [`degradacion_llm.md`](degradacion_llm.md) | Diseño del barrido de degradación con LLM (condiciones, referencia solo C0, coste) | Firme |
 | [`experimento_binario_jerarquia.md`](experimento_binario_jerarquia.md) | Preregistro de la jerarquía binaria: `schmidt` (baseline+amusement) como primaria, sensibilidades 355/498/567, exclusión de temperatura y bootstrap agrupado por sujeto | Firme (especificación) |
+| [`repetitions.md`](repetitions.md) | Repeticiones de prompt: diseño, regla de decisión y resultados del pre-piloto (C0 determinista; C5 con sd 0,044; la confianza es una etiqueta, no una probabilidad) | Firme (pre-piloto); piloto pendiente |
 
 ### Resultados
 

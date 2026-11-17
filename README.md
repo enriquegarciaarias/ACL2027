@@ -51,8 +51,9 @@ Detalle y tablas completas: [`docs/experimentos.md`](docs/experimentos.md) (resu
 > C4 y +0,21 en C5), **H5 se replica** (respaldo 0,768→0,811 y 0,876→0,915
 > mientras la decisión se hunde) y **H6 no se replica** (ΔSQI inestable en el
 > 7b; Δgate = 0 en las diez celdas). La comparación entre modelos también depende
-> de la métrica: en C4 el 14b gana +0,277 de accuracy (sobre decididas) pero
-> pierde −0,114 de balanced porque se abstiene en la clase positiva.
+> de la métrica: en C4 el 14b gana +0,277 de accuracy (sobre decididas) y +0,158
+> contando la abstención como error, pero pierde **−0,126 de balanced** porque se
+> abstiene en la clase positiva (recall de estrés 0,045).
 
 ---
 

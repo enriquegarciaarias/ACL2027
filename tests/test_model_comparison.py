@@ -127,14 +127,16 @@ def test_load_degradation_filters_variant_and_infers_task(tmp_path, monkeypatch)
 
 
 def _counts(hits: int, decided: int, total: int | None = None) -> dict[str, int]:
-    """Entrada de ``per_subject_counts`` para tests."""
+    """Entrada de ``per_subject_counts`` para tests (sin clases binarias)."""
     return {
         "hits": hits,
         "decided": decided,
         "total": decided if total is None else total,
         "pos": 0,
+        "pos_dec": 0,
         "pos_tp": 0,
         "neg": 0,
+        "neg_dec": 0,
         "neg_tn": 0,
     }
 
@@ -182,25 +184,59 @@ def test_per_subject_counts_separates_decided_abstain_and_classes():
     assert counts["total"] == 4
     assert counts["pos"] == 2 and counts["pos_tp"] == 1
     assert counts["neg"] == 2 and counts["neg_tn"] == 1
+    # La abstención cuenta como positivo no decidido (recall estricta).
+    assert counts["pos_dec"] == 1
+    assert counts["neg_dec"] == 2
 
 
 def test_paired_deltas_expose_the_degenerate_classifier():
     """Accuracy puede subir mientras balanced baja (el caso del 14b en C4)."""
-    # Modelo A (7b): acierta estrés y no-estrés; 424 ventanas, 127 de estrés.
+    # Modelo A (7b): acierta estrés y no-estrés; 100 ventanas, 30 de estrés.
     base = {
         "S5": {"hits": 60, "decided": 100, "total": 100,
-               "pos": 30, "pos_tp": 15, "neg": 70, "neg_tn": 66},
+               "pos": 30, "pos_dec": 30, "pos_tp": 15,
+               "neg": 70, "neg_dec": 70, "neg_tn": 66},
     }
-    # Modelo B (14b): casi nunca dice estrés, pero se abstiene en el estrés.
+    # Modelo B (14b): casi nunca dice estrés y se abstiene en el estrés.
     better = {
         "S5": {"hits": 75, "decided": 85, "total": 100,
-               "pos": 30, "pos_tp": 2, "neg": 70, "neg_tn": 69},
+               "pos": 30, "pos_dec": 15, "pos_tp": 2,
+               "neg": 70, "neg_dec": 70, "neg_tn": 69},
     }
 
     deltas = cm.paired_bootstrap_all_metrics(base, better, n_boot=50, seed=42)
 
     assert deltas["accuracy"]["delta"] > 0
     assert deltas["balanced_accuracy"]["delta"] < 0
+    assert deltas["balanced_accuracy_incl_abstain"]["delta"] < 0
+    # La versión estricta es más severa: la abstención pesa como fallo.
+    assert (
+        deltas["balanced_accuracy_incl_abstain"]["delta"]
+        < deltas["balanced_accuracy"]["delta"]
+    )
+
+
+def test_balanced_with_abstention_as_error_differs_from_decided():
+    """La abstención selectiva baja la recall estricta, no la de decididas."""
+    counts = {
+        "S5": {
+            "hits": 6,
+            "decided": 8,
+            "total": 8,
+            "pos": 8,
+            "pos_dec": 4,
+            "pos_tp": 2,
+            "neg": 4,
+            "neg_dec": 4,
+            "neg_tn": 4,
+        }
+    }
+
+    decided = cm.metric_value(counts, ["S5"], "balanced_accuracy")
+    strict = cm.metric_value(counts, ["S5"], "balanced_accuracy_incl_abstain")
+
+    assert decided == pytest.approx(0.75)
+    assert strict == pytest.approx(0.625)
 
 
 def test_paired_bootstrap_all_metrics_skips_unavailable_balanced():
@@ -208,6 +244,7 @@ def test_paired_bootstrap_all_metrics_skips_unavailable_balanced():
     base = {"S5": _counts(5, 10)}
     stats = cm.paired_bootstrap_all_metrics(base, base, n_boot=20, seed=42)
     assert "balanced_accuracy" not in stats
+    assert "balanced_accuracy_incl_abstain" not in stats
     assert "accuracy" in stats and "accuracy_incl_abstain" in stats
 
 

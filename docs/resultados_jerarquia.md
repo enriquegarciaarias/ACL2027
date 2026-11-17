@@ -306,46 +306,52 @@ confianza → 14b).
 ## 6. Comparación pareada `qwen2.5:7b` vs `qwen3:14b`
 
 Bootstrap agrupado por **sujeto** (2.000 remuestras, 12 sujetos) sobre las mismas
-ventanas. `accuracy` se mide sobre decididas; `acc*` cuenta la abstención como
-error; `balanced` es la media de recall y especificidad (independiente de la
-prevalencia). Informe: `model_comparison_schmidt.json`.
+ventanas. Cuatro métricas pareadas, porque con prevalencia 0,30 la accuracy y la
+discriminación de la clase positiva no dicen lo mismo:
 
-| Condición | Δ accuracy (decididas) [IC 95 %] | Δ acc* | Δ balanced | Cobertura 7b → 14b |
+- `accuracy` (decididas) y `balanced` (decididas) coinciden con las columnas
+  `acc` y `bal` de §2.
+- `acc*` y `balanced (abst.=error)` cuentan la abstención como fallo: son las
+  versiones comparables entre modelos con coberturas distintas.
+
+| Condición | Δ accuracy (decididas) [IC 95 %] | Δ acc* [IC 95 %] | Δ balanced (decididas) | Δ balanced (abst.=error) [IC 95 %] |
 |---|---:|---:|---:|---:|
-| `C0_clean` | +0,007 [−0,024; +0,042] | +0,007 | −0,019 | 1,000 → 1,000 |
-| `C1_partial_resp` | +0,002 [−0,019; +0,021] | +0,002 | −0,014 | 1,000 → 1,000 |
-| `C2_partial_eda` | +0,059 [+0,023; +0,101] | **−0,151** | −0,050 | 1,000 → 0,778 |
-| `C4_total_eda` | +0,277 [+0,197; +0,348] | +0,158 | **−0,114** | 1,000 → 0,856 |
-| `C5_total_both` | +0,145 [+0,084; +0,211] | +0,014 | **−0,215** | 1,000 → 0,842 |
+| `C0_clean` | +0,007 [−0,024; +0,042] | +0,007 [−0,024; +0,042] | −0,019 | −0,020 [−0,067; +0,022] |
+| `C1_partial_resp` | +0,002 [−0,019; +0,021] | +0,002 [−0,019; +0,021] | −0,014 | −0,014 [−0,051; +0,014] |
+| `C2_partial_eda` | **+0,059** [+0,023; +0,101] | **−0,151** [−0,205; −0,094] | −0,050 | **−0,265** [−0,356; −0,173] |
+| `C4_total_eda` | **+0,277** [+0,197; +0,348] | **+0,158** [+0,076; +0,238] | −0,115 | **−0,126** [−0,188; −0,063] |
+| `C5_total_both` | **+0,145** [+0,084; +0,211] | +0,014 [−0,057; +0,083] | −0,215 | **−0,224** [−0,293; −0,153] |
 
-Las Δ de accuracy llevan IC del bootstrap pareado. Las de `acc*` y `balanced`
-son la diferencia exacta de las tablas de §2/§5 (mismo conjunto de ventanas); su
-IC sale del comparador actualizado
-(`paired_bootstrap_all_metrics`, tres métricas por condición).
+Signo positivo = el 14b es mejor. La Δ de `balanced (decididas)` es la
+diferencia exacta de la columna `bal` de §2 (su IC sale del mismo bootstrap y
+está en `model_comparison_schmidt.json`).
 
 **Lectura.**
 
 1. **En limpio y con pérdida de respiración no hay diferencia**: +0,007
-   [−0,024; +0,042] y +0,002 [−0,019; +0,021]. El empate no es falta de datos:
-   los intervalos excluyen cualquier ventaja relevante.
-2. **En C2 el signo cambia con la regla de coste**: +0,059 [+0,023; +0,101] si la
-   abstención es gratis, **−0,151** si cuesta. El 14b compra accuracy retirándose
-   del 22 % de las ventanas.
-3. **En C4/C5 la accuracy premia al clasificador degenerado**: +0,277 y +0,145 a
-   favor del 14b, que predice estrés 3 y 1 veces de 424. El **balanced** dice lo
-   contrario (−0,114 y −0,215) y `acc*` casi se anula en C5 (+0,014).
-4. **«Accuracy a cobertura comparable» no rescata la comparación**: en C4 el 7b
-   baja a 0,540 y el 14b se queda en 0,824 a la misma cobertura (0,856), pero esa
-   métrica mide **selectividad** (qué tan bien la confianza ordena los aciertos),
-   no discriminación de clase; el 14b tiene confianza informativa (§5.4) y el 7b
-   no (dos valores). Con prevalencia 0,30, una accuracy de 0,82 es compatible con
-   balanced ≈ 0,51.
-5. **Conclusión operativa**: la elección de modelo **depende de la métrica y del
-   coste declarado**. Si el criterio es detección de estrés con prevalencia 0,30
-   → **7b** (balanced). Si es ranking por confianza o respaldo de claims → **14b**
-   (0,92–0,95 de dirección). Si es accuracy bruta → 14b, pero por el artefacto de
-   abstenerse en la clase positiva. La tesis debe fijar la regla de decisión antes
-   de comparar modelos; reportar solo accuracy es indefendible con estos datos.
+   [−0,024; +0,042] y +0,002 [−0,019; +0,021], y el balanced estricto también
+   incluye el 0. El empate no es falta de datos.
+2. **En C2 el signo depende del coste de abstenerse**: +0,059 [+0,023; +0,101] si
+   la abstención es gratis, **−0,151** [−0,205; −0,094] si cuesta, y **−0,265**
+   en balanced estricto. El 14b compra su accuracy retirándose del 64 % de las
+   ventanas de estrés.
+3. **En C4 gana en las dos accuracies y pierde en balanced**: +0,277 y +0,158
+   [+0,076; +0,238], pero −0,126 [−0,188; −0,063]. Es el retrato exacto del
+   clasificador degenerado: acierta 296 de 297 ventanas de `non-stress` y 3 de
+   127 de estrés; con prevalencia 0,30 eso basta para 0,824 de accuracy.
+4. **En C5 el `acc*` se anula** (+0,014 [−0,057; +0,083]) mientras el balanced
+   cae −0,224: al contar la abstención, la ventaja desaparece.
+5. **La «accuracy a cobertura comparable» no rescata la comparación**: en C4 da
+   0,540 (7b) vs 0,824 (14b) a la misma cobertura, pero mide **selectividad**
+   (qué bien la confianza ordena los aciertos), no discriminación de clase. El
+   14b tiene confianza informativa (§5.4) y el 7b solo dos valores; con
+   prevalencia 0,30 un 0,824 es compatible con balanced ≈ 0,51.
+6. **Conclusión operativa**: la elección de modelo **depende de la métrica y del
+   coste declarado**. Para detección de estrés con prevalencia 0,30 → **7b**
+   (balanced). Para ranking por confianza o respaldo de claims → **14b**
+   (dirección 0,92–0,95). Para accuracy bruta → 14b, pero por el artefacto de la
+   clase mayoritaria. La regla de decisión debe fijarse antes de comparar
+   modelos; con estos datos, reportar solo accuracy es indefendible.
 
 ## 7. Amenazas a la validez
 

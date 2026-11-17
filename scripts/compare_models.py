@@ -276,8 +276,10 @@ def per_subject_counts(
                 "decided": 0,
                 "total": 0,
                 "pos": 0,
+                "pos_dec": 0,
                 "pos_tp": 0,
                 "neg": 0,
+                "neg_dec": 0,
                 "neg_tn": 0,
             },
         )
@@ -298,10 +300,12 @@ def per_subject_counts(
         entry["decided"] += 1
         correct = int(predicted == truth)
         entry["hits"] += correct
-        if correct and truth == "stress":
-            entry["pos_tp"] += 1
-        elif correct and truth == "non-stress":
-            entry["neg_tn"] += 1
+        if truth == "stress":
+            entry["pos_dec"] += 1
+            entry["pos_tp"] += correct
+        elif truth == "non-stress":
+            entry["neg_dec"] += 1
+            entry["neg_tn"] += correct
     return counts
 
 
@@ -310,6 +314,7 @@ PAIRED_METRICS: tuple[str, ...] = (
     "accuracy",
     "accuracy_incl_abstain",
     "balanced_accuracy",
+    "balanced_accuracy_incl_abstain",
 )
 
 
@@ -320,13 +325,16 @@ def metric_value(
 
     ``accuracy`` divide por decididas; ``accuracy_incl_abstain`` por todas las
     ventanas con verdad; ``balanced_accuracy`` es la media de recall y
-    especificidad sobre las ventanas de ``stress`` y ``non-stress`` (devuelve
-    ``nan`` en tareas de 4 clases).
+    especificidad **sobre las decididas** (coincide con la columna ``bal`` de la
+    tabla) y ``balanced_accuracy_incl_abstain`` cuenta la abstención como fallo
+    (la versión comparable entre modelos con coberturas distintas). Ambas
+    devuelven ``nan`` en tareas de 4 clases.
     """
-    if metric == "balanced_accuracy":
-        pos = sum(counts[s]["pos"] for s in sample)
+    if metric in ("balanced_accuracy", "balanced_accuracy_incl_abstain"):
+        decided = metric == "balanced_accuracy"
+        pos = sum(counts[s]["pos_dec" if decided else "pos"] for s in sample)
         pos_hits = sum(counts[s]["pos_tp"] for s in sample)
-        neg = sum(counts[s]["neg"] for s in sample)
+        neg = sum(counts[s]["neg_dec" if decided else "neg"] for s in sample)
         neg_hits = sum(counts[s]["neg_tn"] for s in sample)
         if not pos or not neg:
             return float("nan")
@@ -724,7 +732,8 @@ def print_report(report: Mapping[str, Any]) -> None:
                     name = {
                         "accuracy": "accuracy (decididas)",
                         "accuracy_incl_abstain": "accuracy (abst.=error)",
-                        "balanced_accuracy": "balanced",
+                        "balanced_accuracy": "balanced (decididas)",
+                        "balanced_accuracy_incl_abstain": "balanced (abst.=error)",
                     }.get(metric, metric)
                     print(
                         f"  {condition:16s} {label:30s} {name:22s} "

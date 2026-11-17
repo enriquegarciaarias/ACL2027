@@ -176,6 +176,13 @@ modelo no informa**. Con el 7b (AUROC 0,50) recupera hasta +0,24; con el 14b
 (AUROC 0,79 en limpio) casi nada. No es «el SQI mejora al modelo», es «el SQI
 sustituye una señal de confianza ausente».
 
+> **Límite del hallazgo (2026-11-17).** Con el diseño primario (424 ventanas,
+> `schmidt` sin temperatura) **no se replica**: el ΔSQI del 7b va de −0,139 en
+> C0 a +0,119 en C2 y −0,042 en C5, y el del 14b se queda en +0,001…+0,112.
+> La compuerta sigue en Δ = 0. La formulación «sustituye» queda por tanto
+> condicionada al corpus de 567; ver
+> [`resultados_jerarquia.md`](resultados_jerarquia.md) §5.6.
+
 ---
 
 ## 8. H2b y H5 en la matriz completa

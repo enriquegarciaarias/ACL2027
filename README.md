@@ -36,7 +36,7 @@ ACL2027 no se conforma con medir el acierto. Mide **cómo cambia todo lo anterio
 | **H3** Efecto de la representación | ✅ Apoyada | El texto acierta menos que el numérico (−0,09) pero degrada menos (+0,065 de interacción); en degradación severa se vuelve **más asertivo** (+1,36 de certeza). |
 | **H4** Adecuación de la abstención | ❌ Refutada (forma fuerte) | Infra-abstención en degradación (falla 74 %, se abstiene 16 %) y sobre-abstención en limpio (12,5 % con tarea resoluble). |
 | **H5** Respaldo de afirmaciones | ✅ Hallazgo principal | El respaldo de claims *sube* a 0,83 mientras la accuracy cae a 0,29: el modelo cita bien los valores pero falla al combinarlos. |
-| **H6** Indicador externo de calidad | ⚠️ Apoyado (SQI) | El SQI añade AUROC incremental (+0,05 a +0,09 en el 7b; hasta **+0,24** con prompt binario) y ~0 en el 14b: **sustituye a una confianza que no informa**, no mejora a un modelo que ya la tiene. El gate de consistencia no añade (Δ≈0). |
+| **H6** Indicador externo de calidad | ⚠️ Apoyado (SQI) | El SQI añade AUROC incremental (+0,05 a +0,09 en el 7b; hasta **+0,24** con prompt binario del corpus de 567) y ~0 en el 14b: **sustituye a una confianza que no informa**, no mejora a un modelo que ya la tiene. El gate de consistencia no añade (Δ≈0). **En el diseño primario (424) no se replica**: ΔSQI inestable en el 7b (−0,14 a +0,12) y ≤ +0,11 en el 14b. |
 
 Detalle y tablas completas: [`docs/experimentos.md`](docs/experimentos.md) (resumen, inventario y detalle de todos los experimentos) y [`docs/resultados_degradacion.md`](docs/resultados_degradacion.md) (experimento principal).
 
@@ -45,7 +45,12 @@ Detalle y tablas completas: [`docs/experimentos.md`](docs/experimentos.md) (resu
 > temperatura** y 424 ventanas de evaluación. Sus resultados (dos modelos,
 > cobertura, tasa base e IC por sujeto) están en
 > [`docs/resultados_jerarquia.md`](docs/resultados_jerarquia.md); las cifras de
-> la tabla anterior corresponden al corpus de 4 clases (567 ventanas).
+> la tabla anterior corresponden al corpus de 4 clases (567 ventanas). En el
+> diseño primario el LLM **iguala a la referencia supervisada en limpio**
+> (0,908 / 0,915 frente a 0,905), **H1 se refuerza** (exceso de coste +0,32 en
+> C4 y +0,21 en C5), **H5 se replica** (respaldo 0,768→0,811 y 0,876→0,915
+> mientras la decisión se hunde) y **H6 no se replica** (ΔSQI inestable en el
+> 7b; Δgate = 0 en las diez celdas).
 
 ---
 

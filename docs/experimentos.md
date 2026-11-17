@@ -245,13 +245,13 @@ sin temperatura.
 
 | Hipótesis | Veredicto | Evidencia |
 |---|---|---|
-| **H1** corrección bajo degradación | **Apoyada** | 0,611 → 0,263; la referencia cae menos (0,828 → 0,625): exceso de coste 0,15–0,20 |
-| **H2a** confianza y corrección | Matizada | AUROC de confianza 0,51 en limpio → 0,76 en C5; la sobreconfianza pasa de +0,15 a +0,47 |
-| **H2b** certeza lingüística | **Apoyada en dirección** | Índice +0,13 → −1,12; hedges 0,39 → 0,71 con boosters estables |
+| **H1** corrección bajo degradación | **Apoyada** | 4 clases: 0,611 → 0,263; la referencia cae menos (0,828 → 0,625): exceso 0,15–0,20. Primario (424): el LLM **iguala a la referencia en limpio** (0,908 vs 0,905) y el exceso sube a **+0,32 (C4)** y **+0,21 (C5)** |
+| **H2a** confianza y corrección | Matizada | AUROC de confianza 0,51 en limpio → 0,76 en C5; la sobreconfianza pasa de +0,15 a +0,47. En el primario solo informa en el 14b (0,867 → 0,731); el 7b emite dos valores de confianza |
+| **H2b** certeza lingüística | **Apoyada en dirección** | Índice +0,13 → −1,12; hedges 0,39 → 0,71 con boosters estables. En el primario depende del modelo: 14b decididas −0,25 → −0,85; 7b no monótono |
 | **H3** representación × degradación | **Apoyada** | Texto −0,09 en accuracy; interacción +0,065 [0,025; 0,103]; en C5 el texto se vuelve más asertivo (+1,36) y el numérico más cauto (−1,12) |
-| **H4** adecuación de la abstención | **Refutada** | Infra-abstención (brecha error−abstención hasta +0,58) y sobre-abstención en limpio (12,5 % con tarea resoluble) |
-| **H5** respaldo de afirmaciones | **Hallazgo principal** | El respaldo **sube** a 0,828 en C4 mientras la accuracy cae a 0,289: claims localmente ciertos, inferencia global errónea. `unsupported = 0` |
-| **H6** indicador externo de calidad | **Apoyada con SQI** | El SQI añade AUROC incremental (+0,05 a +0,09); la compuerta de consistencia no añade (Δ≈0, mide integridad) |
+| **H4** adecuación de la abstención | **Refutada** | Infra-abstención (brecha error−abstención hasta +0,58) y sobre-abstención en limpio (12,5 %). Primario: el 7b no se abstiene nunca (brecha **+0,45** en C4); el 14b se retira por etiqueta, no por dificultad |
+| **H5** respaldo de afirmaciones | **Hallazgo principal** | El respaldo **sube** a 0,828 en C4 mientras la accuracy cae a 0,289. Primario: 0,768 → 0,811 (7b) y 0,876 → 0,915 (14b) mientras la decisión se hunde. `unsupported = 0` en todos los brazos |
+| **H6** indicador externo de calidad | **Apoyada con SQI, dependiente del corpus** | El SQI añade AUROC incremental (+0,05 a +0,09 en 4 clases; +0,24 en el binario de 567) y la compuerta no añade (Δ≈0). **En el primario no se replica**: ΔSQI inestable en el 7b (−0,14 … +0,12) y ≤ +0,11 en el 14b |
 
 ### Detalle
 
@@ -523,6 +523,15 @@ Cada comprobación tiene una tolerancia configurable. Si se superan los umbrales
 
 **Interpretación.** El SQI sí deja rastro de la calidad de la señal: cuando el SQI es bajo, el LLM tiende a errar más, y usar el SQI como feature ayuda a predecir esos errores. En cambio, la compuerta de consistencia no aporta poder discriminatorio: vetar ventanas incoherentes no ayuda a distinguir clases, solo filtra entradas con problemas de integridad. Esto refuerza la lectura de H6: la calidad de la señal deja rastro detectable, pero una comprobación de integridad interna no es suficiente para mejorar la decisión del modelo.
 
+**En el diseño primario (424, binario `schmidt` sin temperatura) el efecto no se
+replica de forma estable.** En el 7b el ΔSQI va de **−0,139** en limpio a
++0,119 en C2 y −0,042 en C5 (la confianza es constante, AUROC ≈ 0,51); en el 14b
+es pequeño y positivo (+0,001 a +0,112), y donde más aporta es en C4, cuando su
+confianza ya ha perdido resolución. La compuerta sigue en Δ = 0 en las diez
+celdas. Con 12 sujetos y 424 ventanas, la varianza del estimador es alta: H6 se
+cita como **dependiente del corpus**, no como propiedad del indicador
+([`resultados_jerarquia.md`](resultados_jerarquia.md) §5.6).
+
 ### Lectura de la matriz modelos × tarea (E9)
 
 Con prompt binario y 2 modelos, la jerarquía se invierte al degradar: en
@@ -598,7 +607,7 @@ de desarrollo).
 | E7 | Validación externa: K-EmoCon | ¿Se replica en afecto con muñeca? | 23 participantes, ventanas 60 s | ~5,5k ventanas | AUROC | Mejor 0,609; LLM 0,642 | Negativo documentado | [`p3_kemocon.md`](p3_kemocon.md) |
 | E8 | Validación externa: PhysioNet 2017 | ¿Se replica con otra tarea, sensor y clase `noisy`? | 600 registros (197 dev / 403 test), 5 features ECG | 403 respuestas | balanced accuracy, abstención | 0,250 vs 0,552; 0/103 abstenciones | Firme (análisis) | [`p3_physionet.md`](p3_physionet.md) |
 | E9 | **Modelos × tarea bajo degradación** | ¿Resiste mejor el modelo grande? ¿Cambia la tarea la abstención? | 2 modelos × {4 clases, binario} × C0,C1,C2,C4,C5; 12 sujetos eval. | 11.340 respuestas | balanced, cobertura, claims, certeza | En limpio empatan en binario (Δ +0,014 [−0,012; +0,040]); 14b en 4 clases tiene mejor acc (0,703 vs 0,611) pero por abstención (100 % en C5), no discriminación. Con EDA a cero fallan en direcciones opuestas (7b: bal 0,63 sobrerreclamando estrés; 14b: bal 0,50 diciendo non-stress) | **Firme** | [`resultados_binario.md`](resultados_binario.md) |
-| **E10** | **Jerarquía binaria Schmidt sin temperatura (diseño primario)** | ¿Se sostiene el binario al alinear la tarea con el paper y quitar el confusor térmico? | 2 modelos × 5 condiciones × 424 ventanas (12 sujetos eval.) | 5.670 respuestas | accuracy, acc*, cobertura, balanced, AUROC | Empate en limpio (0,908 vs 0,915); el 14b se abstiene 22 % en C2 y en C4/C5 predice estrés 1–3 veces (balanced ≈0,51); la accuracy de 0,824/0,826 cae a 0,705/0,696 al contar la abstención | **Firme (clasificación); H1–H6 en curso** | [`resultados_jerarquia.md`](resultados_jerarquia.md) |
+| **E10** | **Jerarquía binaria Schmidt sin temperatura (diseño primario)** | ¿Se sostiene el binario al alinear la tarea con el paper y quitar el confusor térmico? | 2 modelos × 5 condiciones × 424 ventanas (12 sujetos eval.) | 5.670 respuestas | accuracy, acc*, cobertura, balanced, AUROC, H1–H6 | Empate en limpio (0,908 vs 0,915) e **igualdad con la referencia supervisada** (0,905); exceso de coste **+0,32/+0,21** (H1); el 14b se abstiene 22 % en C2 y predice estrés 1–3 veces en C4/C5 (balanced ≈0,51; `acc*` 0,70); respaldo de claims **sube** 0,768→0,811 y 0,876→0,915 (H5); H6 no se replica (ΔSQI inestable) | **Firme** | [`resultados_jerarquia.md`](resultados_jerarquia.md) |
 
 ### Ejecución y comparación por modelo
 
@@ -898,6 +907,8 @@ localmente ciertos, inferencia global errónea.
 *H6 (indicador de calidad):* el SQI sustituye a la confianza cuando esta no
 informa (7b-binario: AUROC 0,50 → ΔSQI +0,243); aporta poco cuando la confianza
 ya informa (14b: 0,79 → +0,043). La compuerta de consistencia no añade (Δ≈0).
+En el diseño primario (424) **no se replica** (ΔSQI −0,14 … +0,12 en el 7b; ver
+§3.11).
 
 **Lectura.** El tamaño no compra acierto en limpio; compra calibración. La
 abstención es el residuo del espacio de etiquetas: desaparece cuando existe una
@@ -947,6 +958,22 @@ IC y sensibilidades en [`resultados_jerarquia.md`](resultados_jerarquia.md).
    (balanced 0,613 → 0,723): parte del daño atribuido al modelo era de la
    temperatura y de las clases ajenas a la tarea.
 
+**Hipótesis (mismas ventanas y features que el LLM, sin temperatura).**
+
+| Hipótesis | 7b | 14b |
+|---|---|---|
+| **H1** coste en exceso | Ref. 0,905 → 0,861 (C4); LLM 0,908 → 0,547: **exceso +0,317** (C5: +0,205) | Ref. igual; LLM `acc*` 0,915 → 0,705: **exceso +0,166** (C5: +0,198) |
+| **H2a** AUROC de confianza | 0,50–0,54 (dos valores de confianza); sobreconfianza **+0,300** en C4 | **0,867 → 0,731**; sobreconfianza ≤ 0 |
+| **H2b** índice de certeza | −0,58 → −0,31, **no monótono** | −0,25 → −0,85 sobre **decididas** (global −1,02 por el texto del veto, −2,71 en las abstenciones) |
+| **H4** brecha error−abstención | 0 % de abstención en las 5 condiciones; brecha **+0,453** (C4) | Abstención 22,2 % / 14,4 % / 15,8 %; brecha +0,042 / **+0,151** / +0,146 |
+| **H5** respaldo de claims | 0,768 → 0,811; `unsupported` 0; dirección 0,85–0,88 | 0,876 → 0,915; `unsupported` 0; dirección 0,92–0,95 |
+| **H6** ΔSQI | **−0,139** (C0) … +0,119 (C2) … −0,042 (C5): inestable | +0,001 … **+0,112** (C4); Δgate = 0 en todo |
+
+En limpio **el LLM iguala a la referencia supervisada** (0,908 / 0,915 frente a
+0,905): el fallo bajo degradación no es falta de información. H1, H4 y H5 se
+sostienen; H2a, H2b y H6 dependen del modelo, y el «SQI sustituye a la
+confianza» **no se replica** en este corpus.
+
 ---
 
 # 4. Qué es firme y qué es exploratorio
@@ -965,7 +992,7 @@ IC y sensibilidades en [`resultados_jerarquia.md`](resultados_jerarquia.md).
   agrupado por sujeto, resultados en [`resultados_binario.md`](resultados_binario.md).
 - **E10 · Jerarquía binaria (diseño primario)**: 5.670 respuestas (424 ventanas ×
   5 condiciones × 2 modelos), variante `schmidt` sin temperatura, bootstrap por
-  sujeto; clasificación cerrada en
+  sujeto; clasificación e H1/H2a/H2b/H4/H5/H6 en
   [`resultados_jerarquia.md`](resultados_jerarquia.md).
 - **Infraestructura** (E0): corpus, SQI, degradación, procedencia.
 

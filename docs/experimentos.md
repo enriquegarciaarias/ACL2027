@@ -246,7 +246,7 @@ sin temperatura.
 | Hipótesis | Veredicto | Evidencia |
 |---|---|---|
 | **H1** corrección bajo degradación | **Apoyada** | 4 clases: 0,611 → 0,263; la referencia cae menos (0,828 → 0,625): exceso 0,15–0,20. Primario (424): el LLM **iguala a la referencia en limpio** (0,908 vs 0,905) y el exceso sube a **+0,32 (C4)** y **+0,21 (C5)** |
-| **H2a** confianza y corrección | Matizada | AUROC de confianza 0,51 en limpio → 0,76 en C5; la sobreconfianza pasa de +0,15 a +0,47. En el primario solo informa en el 14b (0,867 → 0,731); el 7b emite dos valores de confianza |
+| **H2a** confianza y corrección | Matizada | AUROC de confianza 0,51 en limpio → 0,76 en C5; la sobreconfianza pasa de +0,15 a +0,47. En el primario solo informa en el 14b (0,867 → 0,731); el 7b emite dos valores (85/50), y en una ventana 10/10 entre clases declara **85 ± 0,0** en 20 repeticiones (E11) |
 | **H2b** certeza lingüística | **Apoyada en dirección** | Índice +0,13 → −1,12; hedges 0,39 → 0,71 con boosters estables. En el primario depende del modelo: 14b decididas −0,25 → −0,85; 7b no monótono |
 | **H3** representación × degradación | **Apoyada** | Texto −0,09 en accuracy; interacción +0,065 [0,025; 0,103]; en C5 el texto se vuelve más asertivo (+1,36) y el numérico más cauto (−1,12) |
 | **H4** adecuación de la abstención | **Refutada** | Infra-abstención (brecha error−abstención hasta +0,58) y sobre-abstención en limpio (12,5 %). Primario: el 7b no se abstiene nunca (brecha **+0,45** en C4); el 14b se retira por etiqueta, no por dificultad |
@@ -985,6 +985,55 @@ balanced; en C5 +0,145 de accuracy, `acc*` nulo (+0,014 [−0,057; +0,083]) y
 → 14b; balanced y calibración → 7b; respaldo de claims y ranking de confianza →
 14b.
 
+## 3.12 E11 — Repeticiones de prompt (varianza de muestreo)
+
+**Pregunta.** Si se envía el mismo prompt R veces cambiando solo la semilla,
+¿cuánto cambia la respuesta y cuántas repeticiones hacen falta?
+
+**Diseño.** El prompt se construye una vez por `(ventana, condición)` y solo
+cambia `options.seed` (`--seed + r`); la repetición 0 es la del corpus
+publicado. Muestra sistemática de ventanas (`--sample-windows`), ciega a las
+etiquetas, y sujetos de evaluación. Salida aislada en `..._rep{R}/`.
+
+**Ejecuciones.** 7b · C5 · S5–S7 · 12 ventanas · **R=20** (720 llamadas, 0
+errores, 25:36). 14b · C0+C5 · S5 · R=5 (120 llamadas, 0 errores, 9:51).
+
+**Resultado en el 7b.**
+
+| Acuerdo modal | Ventanas |
+|---|---:|
+| 20/20 (nunca cambia) | 22 (73,3 %) |
+| 18/20 · 16/20 · 15/20 | 3 · 1 · 2 |
+| 11/20 · **10/20** | 1 · 1 |
+
+- **Ninguna de las 9 ventanas de estrés cambió**; las 8 inestables son
+  `non-stress` (4 baseline, 4 amusement) y el cambio va **siempre hacia
+  `stress`**.
+- Una pasada: accuracy 0,648 ± 0,043 (rango 0,533–0,700), balanced 0,749,
+  AUROC 0,761, cobertura 1,000 (0 abstenciones). k=20: 0,690 / 0,775 / 0,825.
+- Extrapolación: k≈3 para ±3 pp, k≈5 para ±2 pp.
+
+**El caso que decide la interpretación.** Una ventana de baseline sale **10
+`non-stress` / 10 `stress`** con **confianza 85 ± 0,0 en las 20 repeticiones**.
+La confianza no codifica la incertidumbre: la incertidumbre está en el muestreo.
+Repetir **revela** la indecidibilidad, no la arregla, y el modelo no se abstiene
+ni ahí.
+
+**El 14b.** 100 % determinista en la decisión en las dos condiciones; la
+varianza está toda en la confianza (sd intra 0,64; 5 valores distintos, frente a
+los 2 del 7b). Su trampa de accuracy en C5 (1,000 acc / 0,500 balanced /
+cobertura 0,70) es determinista, no una casualidad de semilla.
+
+**Lectura para las hipótesis.** H1 no es artefacto de semilla (las ventanas de
+estrés no se mueven y el agregado queda en ~±1 pp al escalar a 424); H2a gana un
+argumento decisivo (confianza alta en una ventana 50/50); la abstención no se
+activa ni cuando la respuesta es una moneda al aire. Promediar repeticiones
+mejora el AUROC de confianza +0,064 (~1,9 sd: sugerente, no concluyente con 30
+ventanas).
+
+**Regla aplicada.** R=3 para el agregado; no se lanza corpus completo. Detalle en
+[`repetitions.md`](repetitions.md).
+
 ---
 
 # 4. Qué es firme y qué es exploratorio
@@ -1005,6 +1054,11 @@ balanced; en C5 +0,145 de accuracy, `acc*` nulo (+0,014 [−0,057; +0,083]) y
   5 condiciones × 2 modelos), variante `schmidt` sin temperatura, bootstrap por
   sujeto; clasificación e H1/H2a/H2b/H4/H5/H6 en
   [`resultados_jerarquia.md`](resultados_jerarquia.md).
+- **E11 · Repeticiones de prompt**: 840 respuestas del servidor (7b R=20 en C5;
+  14b R=5 en C0/C5), con procedencia del motor registrada
+  (`run_provenance.json`). Muestra de 30 ventanas: la inestabilidad está donde
+  debe estar (0 de 9 ventanas de estrés) y la regla R=3 queda fijada en
+  [`repetitions.md`](repetitions.md).
 - **Infraestructura** (E0): corpus, SQI, degradación, procedencia.
 
 ## Exploratorio
@@ -1043,8 +1097,10 @@ desarrollo. Detalle y desviaciones declaradas:
    y `qwen3:14b`; no se puede separar efecto de tamaño de efecto de familia.
    `qwen3:8b` está instalado y permitiría aislar el tamaño (pendiente, 2
    condiciones ≈ 2 h).
-2. **Una sola semilla** en el experimento principal (`seeds=[42]`,
-   `repetitions=1`): no se estima la varianza de muestreo del LLM.
+2. **Varianza de muestreo medida solo en parte**: E11 la estima para el 7b en
+   C5 (30 ventanas, R=20) y para el 14b en C0/C5 (10 ventanas, R=5). El corpus
+   principal sigue siendo de una sola semilla; la extrapolación a 424 ventanas
+   es del orden de ±1 pp, no medida directamente.
 3. **Etiquetas de WESAD y de PhysioNet** provienen de un único protocolo/experto;
    `amusement` es fisiológicamente casi idéntica a `baseline` (AUROC 0,621).
 4. **Umbral SCR** (0,05 µS) calibrado empíricamente sobre S3, no con literatura ni
@@ -1068,8 +1124,9 @@ desarrollo. Detalle y desviaciones declaradas:
    prior de etiqueta).
 3. Validación humana de una muestra de claims y de hedges/boosters (idealmente
    con un segundo anotador).
-4. Repeticiones con semillas distintas en el experimento principal
-   (`repetitions > 1`, `seeds` múltiples) para estimar varianza del modelo.
+4. **Ampliar E11 a S8–S10** (mismo R=20, 1.440 llamadas, ~50 min) si se quiere
+   citar el +0,064 de AUROC de confianza; y **brazo textual del diseño primario
+   (H3)**, que no existe para ninguno de los dos modelos (2.835 × 2 llamadas).
 5. Dataset externo con **inducción de estrés** (UBFC-Phys / SWELL-KW) para
    validez externa del endpoint.
 6. Análisis de sensibilidad del tamaño de ventana (30/120 s).

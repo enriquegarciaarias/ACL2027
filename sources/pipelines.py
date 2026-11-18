@@ -222,6 +222,7 @@ def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
         _append_flag(argv, "--decision-mode", getattr(args, "decision_mode", None))
         _append_flag(argv, "--nonstress-variant", getattr(args, "nonstress_variant", None))
         _append_flag(argv, "--temperature", getattr(args, "temperature", None))
+        _append_flag(argv, "--compare-with", getattr(args, "compare_with", None))
         _append_flag(argv, "--split", getattr(args, "split", None))
         _append_flag(argv, "--output", output)
     elif experiment == "centering":
@@ -574,6 +575,7 @@ def _plan(phase: str) -> dict[str, Any]:
             # La evaluación de un modelo suelto no aplica: se comparan varios.
             plan["model"] = None
         plan["output"] = getattr(args, "output", None)
+        plan["compare_with"] = getattr(args, "compare_with", None)
     return plan
 
 

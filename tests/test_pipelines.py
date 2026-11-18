@@ -463,3 +463,48 @@ def test_evaluate_degradation_passes_decision_mode():
         "degradation", _args(decision_mode="binary")
     )
     assert "--decision-mode" in argv and "binary" in argv
+
+
+def test_generate_argv_forwards_compare_with_for_h3():
+    """El contraste H3 (texto − numérico) necesita el directorio del otro brazo."""
+    from types import SimpleNamespace
+
+    from sources.pipelines import build_evaluate_argv
+
+    args = SimpleNamespace(
+        model="qwen3:14b",
+        representation=None,
+        conditions=None,
+        decision_mode="binary",
+        nonstress_variant="schmidt",
+        temperature="exclude",
+        hierarchy=False,
+        repetitions=None,
+        compare_with="results/output/WESAD/PHASE2/degradation_text_binary_schmidt_notemp/qwen3_14b",
+        output=None,
+        seed=None,
+    )
+    argv = build_evaluate_argv("degradation", args)
+    assert "--compare-with" in argv
+    assert argv[argv.index("--compare-with") + 1].endswith("qwen3_14b")
+
+
+def test_generate_argv_omits_compare_with_by_default():
+    from types import SimpleNamespace
+
+    from sources.pipelines import build_evaluate_argv
+
+    args = SimpleNamespace(
+        model="qwen3:14b",
+        representation=None,
+        conditions=None,
+        decision_mode="binary",
+        nonstress_variant="schmidt",
+        temperature="exclude",
+        hierarchy=False,
+        repetitions=None,
+        compare_with=None,
+        output=None,
+        seed=None,
+    )
+    assert "--compare-with" not in build_evaluate_argv("degradation", args)

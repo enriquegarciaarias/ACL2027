@@ -253,6 +253,14 @@ def manageArgs():
         help="Ruta alternativa del informe de EVALUATE.",
     )
     parser.add_argument(
+        '--compare-with',
+        type=str,
+        default=None,
+        help="EVALUATE degradation: directorio del otro brazo de representación "
+             "(p. ej. degradation_text_binary_schmidt_notemp/qwen3_14b) para el "
+             "contraste H3.",
+    )
+    parser.add_argument(
         '--noEmbeddings',
         action='store_true',
         help="INGEST: no calcular representaciones densas (no las usa la Fase 2).",

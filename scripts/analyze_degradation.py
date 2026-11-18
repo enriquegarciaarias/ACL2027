@@ -805,6 +805,7 @@ def main(argv: list[str] | None = None) -> None:
         print("\n=== H3: contraste de representaciones (numérica vs otra) ===")
         print(
             f"{'condición':16s} {'acc_num':>8s} {'acc_txt':>8s} {'Δacc':>7s} "
+            f"{'cob_num':>8s} {'cob_txt':>8s} {'inv_txt':>8s} "
             f"{'abst_num':>9s} {'abst_txt':>9s} {'Δabst':>7s} {'Δclaims':>8s} {'Δcerteza':>9s}"
         )
         for condition in conditions:
@@ -825,12 +826,22 @@ def main(argv: list[str] | None = None) -> None:
                 "numeric": {
                     "accuracy": base["accuracy"],
                     "abstention_rate": base["abstention_rate"],
+                    # Cobertura e inválidas: sin ellas, una diferencia de
+                    # accuracy entre representaciones puede ser solo un
+                    # subconjunto distinto de ventanas (el texto produce más
+                    # inválidas al copiar "not available" en los claims).
+                    "coverage": base.get("coverage"),
+                    "n_invalid": base.get("n_invalid"),
+                    "n": base.get("n"),
                     "claims_supported": base["claims"]["supported_rate"],
                     "certainty_index": base["certainty"]["certainty_index_mean"],
                 },
                 "other": {
                     "accuracy": other["accuracy"],
                     "abstention_rate": other["abstention_rate"],
+                    "coverage": other.get("coverage"),
+                    "n_invalid": other.get("n_invalid"),
+                    "n": other.get("n"),
                     "claims_supported": other["claims"]["supported_rate"],
                     "certainty_index": other["certainty"]["certainty_index_mean"],
                 },
@@ -841,9 +852,15 @@ def main(argv: list[str] | None = None) -> None:
                     "certainty_index": d_cert,
                 },
             }
+            cov_num = base.get("coverage")
+            cov_txt = other.get("coverage")
             print(
                 f"{condition:16s} {base['accuracy']:8.3f} {other['accuracy']:8.3f} "
-                f"{d_acc:7.3f} {base['abstention_rate']:9.3f} "
+                f"{d_acc:7.3f} "
+                f"{(float('nan') if cov_num is None else cov_num):8.3f} "
+                f"{(float('nan') if cov_txt is None else cov_txt):8.3f} "
+                f"{other.get('n_invalid') or 0:8d} "
+                f"{base['abstention_rate']:9.3f} "
                 f"{other['abstention_rate']:9.3f} {d_abst:7.3f} "
                 f"{d_claims:8.3f} {d_cert:9.3f}"
             )

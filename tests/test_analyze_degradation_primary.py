@@ -138,3 +138,19 @@ def test_incremental_quality_auroc_understands_binary_decisions():
 
     assert block, "el bloque no puede quedar vacío en modo binario"
     assert 0.0 <= block["auroc_confidence"] <= 1.0
+
+
+def test_h3_comparison_reports_coverage_and_invalid():
+    """El contraste H3 debe mostrar cobertura e inválidas de ambos brazos.
+
+    Sin ellas, una diferencia de accuracy entre representaciones puede ser solo
+    un subconjunto distinto de ventanas: el brazo textual produce inválidas al
+    copiar "not available" en los claims (155 en el 7b, concentradas en C4).
+    """
+    from pathlib import Path
+
+    source = Path("scripts/analyze_degradation.py").read_text(encoding="utf-8")
+    assert '"coverage": base.get("coverage")' in source
+    assert '"coverage": other.get("coverage")' in source
+    assert '"n_invalid": other.get("n_invalid")' in source
+    assert "'cob_num':>8s" in source and "'inv_txt':>8s" in source

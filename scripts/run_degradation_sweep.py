@@ -50,7 +50,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sources.common.llm_client import check_model_available
+from sources.common.llm_client import check_model_available, ollama_run_provenance
 from sources.common.provenance import sha256_file, utc_now
 from sources.ingestion.represent import LLM_ALLOWED_FEATURES, _opaque_window_id
 from sources.phase2.development_split import (
@@ -522,6 +522,36 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     ensure_model_available(config.model)
+    # Identidad del motor y del modelo: dos builds del mismo nombre no
+    # producen el mismo corpus (2026-11-18: 0 vs 28 abstenciones con Ollama
+    # 0.40.6 y 0.30.7). Se escribe al arrancar, no al final, para que quede
+    # registrada aunque el job se corte.
+    provenance = ollama_run_provenance(config.model)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with (output_dir / "run_provenance.json").open("w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "generated_at": utc_now(),
+                "model": config.model,
+                "model_slug": config.model_slug,
+                "representation": args.representation,
+                "decision_mode": args.decision_mode,
+                "nonstress_variant": args.nonstress_variant,
+                "temperature_mode": args.temperature,
+                "repetitions": len(seeds),
+                "seeds": seeds,
+                "sample_windows": args.sample_windows,
+                "config": config.to_dict(),
+                "ollama": provenance,
+            },
+            fh,
+            indent=2,
+            ensure_ascii=False,
+        )
+    print(
+        f"[DEG] motor: ollama={provenance.get('ollama_version')} "
+        f"digest={provenance.get('model_digest')}"
+    )
     print(
         f"Barrido de degradación | sujetos={subjects} | condiciones={conditions} | "
         f"representación={args.representation} | tarea={args.decision_mode} | "
@@ -547,6 +577,7 @@ def main(argv: list[str] | None = None) -> None:
         "seeds": seeds,
         "sample_windows": args.sample_windows,
         "config": config.to_dict(),
+        "ollama": provenance,
     }
     for subject in subjects:
         result = run_subject(

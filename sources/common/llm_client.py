@@ -202,6 +202,84 @@ def check_model_available(
     )
 
 
+def ollama_run_provenance(
+    model: str,
+    host: str = "http://localhost:11434",
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Identidad del motor y del modelo con el que se genera un corpus.
+
+    El nombre (``qwen2.5:7b``) **no** identifica el corpus: dos builds del
+    mismo nombre y dos versiones de Ollama decodifican distinto con la misma
+    semilla. Comprobado el 2026-11-18: el mismo prompt y la misma semilla dieron
+    0 abstenciones en el servidor (Ollama 0.40.6) y 28 en local (0.30.7).
+
+    Registra, best-effort (``None``/``{}`` si algo falla, nunca lanza):
+
+    - ``ollama_version``: ``GET /api/version``.
+    - ``model_digest`` y ``model_size``: del modelo en ``GET /api/tags``.
+    - ``model_parameters``: los parámetros por defecto del modelo
+      (``POST /api/show``), que es donde viven ``temperature``, ``top_k``,
+      ``repeat_penalty``… cuando la petición no los fija.
+
+    Args:
+        model: nombre del modelo tal como lo conoce Ollama.
+        host: base de la API de Ollama.
+        timeout: segundos por petición.
+    """
+    base = host.rstrip("/")
+    provenance: dict[str, Any] = {
+        "model": model,
+        "ollama_version": None,
+        "model_digest": None,
+        "model_size": None,
+        "model_parameters": {},
+        "errors": [],
+    }
+
+    try:
+        response = requests.get(f"{base}/api/version", timeout=timeout)
+        response.raise_for_status()
+        provenance["ollama_version"] = response.json().get("version")
+    except Exception as exc:  # noqa: BLE001 - procedencia best-effort
+        provenance["errors"].append(f"/api/version: {exc}")
+
+    try:
+        response = requests.get(f"{base}/api/tags", timeout=timeout)
+        response.raise_for_status()
+        for entry in response.json().get("models", []) or []:
+            name = str(entry.get("name") or entry.get("model") or "")
+            if name == model or name.split(":")[0] == model:
+                provenance["model_digest"] = entry.get("digest")
+                provenance["model_size"] = entry.get("size")
+                break
+    except Exception as exc:  # noqa: BLE001
+        provenance["errors"].append(f"/api/tags: {exc}")
+
+    try:
+        response = requests.post(
+            f"{base}/api/show", json={"name": model}, timeout=timeout
+        )
+        response.raise_for_status()
+        payload = response.json()
+        parameters = payload.get("parameters")
+        if parameters:
+            provenance["model_parameters"] = parameters
+        details = payload.get("details") or {}
+        if details:
+            provenance["model_details"] = {
+                key: details.get(key)
+                for key in ("family", "parameter_size", "quantization_level")
+                if details.get(key) is not None
+            }
+    except Exception as exc:  # noqa: BLE001
+        provenance["errors"].append(f"/api/show: {exc}")
+
+    if not provenance["errors"]:
+        provenance.pop("errors", None)
+    return provenance
+
+
 def ollama_warm_up(client: Mapping[str, Any], model: str) -> None:
     """Calienta el modelo de embeddings en Ollama con una llamada ligera.
 

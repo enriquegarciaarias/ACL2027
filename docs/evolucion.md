@@ -220,6 +220,11 @@ Las sesiones anteriores a la creación de este documento se resumen a partir de
 | 2026-11-17 | ¿Resiste más el modelo grande en el diseño primario? | En limpio empatan (+0,007 [−0,024; +0,042]); en C2 +0,059 de accuracy pero −0,151 de `acc*` y −0,265 de balanced; en C4 el 14b gana +0,277 de accuracy y +0,158 de `acc*` pero **pierde −0,126 de balanced** (se abstiene en el 47 % de las ventanas de estrés); en C5 +0,145 / +0,014 / −0,224 | La comparación no es identificable sin una regla de coste: fijar balanced y `acc*` como métricas de decisión y reportar accuracy solo como descriptivo |
 | 2026-11-17 | ¿Modula el modelo su lenguaje y su confianza? | 7b: confianza con **dos valores** (AUROC 0,50–0,54) y certeza no monótona (−0,58 → −0,31); 14b: AUROC 0,867 → 0,731 y certeza sobre decididas −0,25 → −0,85 | H2a y H2b **dependen del modelo**; el índice global del 14b está inflado por el texto del veto (−2,4 en abstenciones) |
 
+| 2026-11-18 | ¿Está la respuesta estabilizada por la semilla? | Con 20 repeticiones: 22/30 ventanas no cambian nunca y **0 de las 9 de estrés**; las 8 inestables son `non-stress` y el cambio va siempre hacia `stress`. Una pasada: accuracy 0,648 ± 0,043 (rango 0,533–0,700) | **R=3 basta para el agregado** (±3 pp); no se lanza corpus completo de repeticiones |
+| 2026-11-18 | ¿Mide la confianza la incertidumbre? | Una ventana sale **10/10** entre clases con **confianza 85 ± 0,0** en las 20 repeticiones; el 7b no se abstiene nunca, ni ahí | Repetir **revela** la indecidibilidad, no la arregla: la incertidumbre no está en el número que emite el modelo |
+| 2026-11-18 | ¿Forma parte del experimento el motor de inferencia? | Mismo prompt y misma semilla: **0 abstenciones** en el servidor (Ollama 0.40.6) y **28** en local (0.30.7); accuracy 0,682 vs 0,614 | `run_provenance.json` con versión y digest; las cifras se citan solo del servidor y los runs locales no se documentan |
+| 2026-11-18 | ¿Se puede analizar en el nodo de login? | `import numpy` aborta con `Illegal instruction` en `sirius`, también con un venv limpio y el wheel oficial; el mismo `.venv` funciona en los nodos de cálculo | Análisis y `--dry-run` por `srun`/lanzador; mensaje al administrador pendiente |
+
 ### Plantilla para la próxima sesión
 
 ```

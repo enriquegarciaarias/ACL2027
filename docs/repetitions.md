@@ -41,10 +41,9 @@ ese corpus: lo **auditan**.
   selección **no consulta etiquetas**: es ciega a la clase real.
 - **Sujetos de evaluación** (S5–S17 salvo S12); los de desarrollo se bloquean
   salvo `--allow-dev`.
-- **Condiciones**: `C0_clean` (referencia), `C4_total_eda` (donde el 7b
-  sobre-reclama estrés) y `C5_total_both` (degradación máxima). Se excluye
-  `C2` del piloto por coste; si la varianza depende de la condición, C4/C5 son
-  los extremos donde debe verse.
+- **Condiciones**: `C0_clean` (referencia) y `C5_total_both` (degradación
+  máxima) en el 14b; para el 7b, medido después, solo `C5`, que es donde
+  aparece la varianza (en `C0` y `C4` el acuerdo era ≥ 0,98).
 - **Sin temperatura** (`--temperature exclude`) y variante **`schmidt`**:
   el diseño primario.
 - **Salida aislada**: `{nombre}_rep{R}/{modelo}/`, de modo que el corpus de una
@@ -107,28 +106,41 @@ completa, no con un punto.
 
 Llamadas = sujetos × ventanas por sujeto × condiciones × R.
 
-| Fase | Sujetos | Ventanas | Condiciones | R | Llamadas | Tiempo aprox. |
+| Fase | Sujetos | Ventanas | Condiciones | R | Llamadas | Tiempo real |
 |---|---|---:|---:|---:|---:|---|
-| Pre-piloto | 1 (S5) | 12 | 2 (C0, C5) | 5 | 120 | ~10–15 min |
-| Piloto | 3 (S5–S7) | 12 | 3 | 10 | 1.080 | ~1,5–2 h |
-| Corpus completo (si procede) | 12 | 424 en total | 2 | según piloto | 424 × 2 × R | 5 h × R/5 |
+| Pre-piloto 14b | 1 (S5) | 12 | 2 (C0, C5) | 5 | 120 | 9 min 51 s |
+| Piloto 7b | 3 (S5–S7) | 12 | 1 (C5) | **20** | 720 | 25 min 36 s |
+
+No se ejecutó corpus completo: la regla de decisión lo descarta (§8.6). Si se
+quisiera una tasa de inestabilidad con más ventanas, el siguiente paso es
+**ampliar sujetos** (S8–S10), no repeticiones: 1.440 llamadas, ~50 min.
 
 ---
 
 ## 7. Reproducción
 
 ```bash
-# Pre-piloto (servidor; regla 8 de AGENTS.md: lanzador desde ~/data)
-~/data/launch_lsi.sh --proc run_ACL.sh --time 04:00:00 -- \
+# Piloto 7b (servidor; regla 8 de AGENTS.md: lanzador desde ~/data)
+~/data/launch_lsi.sh --proc run_ACL.sh --time 02:00:00 -- \
+  --proc GENERATE --experiment degradation --subject WESAD \
+  --subjects S5,S6,S7 --sample-windows 12 --conditions C5_total_both \
+  --decision-mode binary --nonstress-variant schmidt --temperature exclude \
+  --repetitions 20 --model qwen2.5:7b
+
+# Pre-piloto 14b
+~/data/launch_lsi.sh --proc run_ACL.sh --time 01:00:00 -- \
   --proc GENERATE --experiment degradation --subject WESAD \
   --subjects S5 --sample-windows 12 --conditions C0_clean,C5_total_both \
   --decision-mode binary --nonstress-variant schmidt --temperature exclude \
-  --repetitions 5 --model qwen2.5:7b
+  --repetitions 5 --model qwen3:14b
 
-# Análisis (minutos, sin LLM)
-python scripts/analyze_repetitions.py \
-  --dir results/output/WESAD/PHASE2/degradation_binary_schmidt_notemp_rep5/qwen2_5_7b \
-  --output results/output/WESAD/PHASE2/repetitions_prepilot_report.json
+# Análisis (en nodo de cálculo: en sirius numpy aborta con SIGILL)
+srun --partition=A5000 --gres=gpu:1 --cpus-per-task=8 --mem=16G --time=00:15:00 --pty bash
+cd ~/data/proyectos/ACL2027
+.venv/bin/python scripts/analyze_repetitions.py \
+  --dir results/output/WESAD/PHASE2/degradation_binary_schmidt_notemp_rep20/qwen2_5_7b \
+  --output results/output/WESAD/PHASE2/repetitions_rep20_qwen2_5_7b.json
+# o, con el despachador: --proc EVALUATE --experiment degradation --repetitions 20
 ```
 
 Sin `--output-dir` (bandera del script, no del CLI), el barrido escribe en
@@ -143,229 +155,146 @@ descarta las ventanas fuera de la variante (`meditation` en `schmidt`).
 
 ## 8. Resultados
 
-### 8.1 Pre-piloto (S5, 12 ventanas, C0 + C5, R = 5, `qwen2.5:7b`)
+### 8.1 Ejecuciones citables
 
-120 llamadas, 1 inválida de formato (0,8 %). Tras descartar `meditation`
-(variante `schmidt`) quedan **10 ventanas por condición** (5 baseline, 3 stress,
-2 amusement).
+| Run | Entorno | Diseño | Llamadas | Errores |
+|---|---|---|---:|---:|
+| Pre-piloto 14b | **servidor** (Ollama 0.40.6) | S5 · C0 + C5 · R=5 | 120 | 0 |
+| Piloto 7b | **servidor** (Ollama 0.40.6) | S5–S7 · 12 ventanas · C5 · **R=20** | 720 | 0 |
 
-| Condición | Acuerdo modal | Deterministas | Entropía | sd(conf) intra | Acc 1 pasada | sd | Balanced | Cobertura |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `C0_clean` | **1,000** | 100 % | 0,000 | 0,00 | 0,900 | **0,000** | 0,929 | 1,000 |
-| `C5_total_both` | **0,960** | 80 % | 0,144 | 1,40 | 0,911 | **0,044** | 0,933 | 0,920 |
+Los runs locales no se citan: sirvieron para descubrir que el motor importa
+(§7.4). 30 ventanas útiles por condición tras descartar `meditation`.
 
-Extrapolación en C5: **k ≈ 5** para ±2 pp y **k ≈ 3** para ±3 pp. En C0 no hay
-varianza que reducir.
+### 8.2 El agregado es estable; la ventana no (7b, C5, R=20)
 
-**Las dos únicas ventanas que cambian** (ambas en C5, ninguna en C0):
+| Acuerdo modal por ventana | Ventanas |
+|---|---:|
+| 20/20 (nunca cambia) | **22** (73,3 %) |
+| 18/20 | 3 |
+| 16/20 | 1 |
+| 15/20 | 2 |
+| 11/20 | 1 |
+| **10/20 (empate)** | **1** |
 
-| Ventana | Repeticiones | Acuerdo |
+Lo decisivo no es cuántas cambian, sino **dónde**:
+
+| Clase real | Ventanas | Inestables |
+|---|---:|---:|
+| baseline | 15 | 4 |
+| amusement | 6 | 4 |
+| **stress** | **9** | **0** |
+
+**Ninguna ventana de estrés cambió ni una vez en 20 repeticiones**, y las ocho
+inestables son `non-stress` que a veces se reclasifican como `stress`. La
+inestabilidad es, otra vez, el error del modelo: sobre-reclamar estrés con EDA
+destruida.
+
+Una pasada frente al voto mayoritario:
+
+| Métrica | Una pasada (20 valores) | Agregado k=20 |
 |---|---|---|
-| una de baseline | `non-stress` × 1, `stress` × 4 | 0,80 |
-| una de baseline | `non-stress` × 1, `abstain` × 4 | 0,80 |
+| Accuracy | 0,648 ± 0,043 (rango 0,533–0,700) | 0,690 |
+| Balanced | 0,749 ± 0,031 | 0,775 |
+| AUROC confianza | 0,761 ± 0,033 | **0,825** |
+| Cobertura | 1,000 (0 abstenciones) | 0,967 |
 
-Es decir: la varianza aparece **solo cuando la evidencia está destruida**, y
-aparece como un desplazamiento hacia `stress` o hacia la abstención, no como
-ruido simétrico.
+| k | Accuracy | Balanced | sd |
+|---:|---|---|---:|
+| 1 | 0,648 | 0,749 | 0,043 |
+| 3 | 0,661 | 0,758 | 0,025 |
+| 5 | 0,667 | 0,762 | 0,019 |
+| 10 | 0,676 | 0,766 | 0,011 |
+| 20 | 0,690 | 0,775 | — |
 
-### 8.2 Hallazgo que no dependía del muestreo: la confianza es una etiqueta
+Extrapolación: **k ≈ 3 para ±3 pp** y **k ≈ 5 para ±2 pp** sobre esta muestra.
+La accuracy sube +4,2 pp al agregar 20 repeticiones (≈1 desviación típica: **no
+concluyente**); el AUROC sube +0,064 (≈1,9 desviaciones: **sugerente**).
 
-Distribución de los 120 valores de confianza:
+### 8.3 El caso que decide la interpretación
 
-| Valor | Registros | Situación |
-|---:|---:|---|
-| 85 | 112 | decisión tomada |
-| 50 | 4 | `abstain` |
-| 75 | 3 | decisión tomada (caso raro) |
-| 85 (inválida) | 1 | fallo de vocabulario |
+| Ventana | Clase real | Reparto (20) | Confianza |
+|---|---|---|---|
+| `win_f87d0217` | baseline | **10 `non-stress` / 10 `stress`** | **85,0 ± 0,0** |
+| `win_25ab1b5e` | amusement | 11 / 9 | 82,0 ± 4,6 |
+| `win_03ce68c4` | amusement | 15 / 5 | 85,0 ± 0,0 |
+| `win_97be8f9f` | amusement | 15 / 5 | 85,0 ± 0,0 |
+| `win_df16c22a` | baseline | 16 / 4 (hacia stress) | 84,5 ± 2,2 |
+| `win_f5602f53` | baseline | 18 / 2 | 85,0 ± 0,0 |
+| `win_8259b39e` | amusement | 18 / 2 | 84,0 ± 3,0 |
+| `win_aefe7971` | baseline | 18 / 2 | 85,0 ± 0,0 |
 
-**La confianza no varía con la evidencia, varía con la decisión.** Consecuencia
-directa para H2a:
+Una ventana sale **exactamente 10 a 10** entre dos clases y el modelo declara
+**confianza 85 en las veinte repeticiones, sin una sola variación**. No es que
+la confianza esté mal calibrada: es que **no codifica la incertidumbre**. La
+incertidumbre está en el muestreo, no en el número.
 
-- Promediar repeticiones **no crea resolución**: en las ventanas decididas, la
-  confianza agregada toma **un solo valor** (85).
-- El AUROC de confianza coincide con el AUROC del signo de la decisión. En este
-  piloto sale 0,93 porque el modelo acertó; en el corpus salía 0,50 porque
-  predecía todo igual. No mide calibración: mide el acierto.
-- Por tanto, **las repeticiones no arreglan H2a en `qwen2.5:7b`**. Debe citarse
-  como propiedad del modelo (el número es una etiqueta, no una probabilidad),
-  no como ruido de decodificación.
+Y eso no se arregla repitiendo. Repetir **revela** la indecidibilidad; no la
+resuelve. Es la diferencia entre un indicador de calidad calculado desde fuera
+(la repetición, el SQI, la compuerta) y una señal que el modelo emite.
 
-### 8.3 Aplicación de la regla predeclarada
+### 8.4 `qwen3:14b`: determinista en la decisión, graduado en la confianza (R=5)
 
-| Condición | Acuerdo modal | Banda | Decisión |
-|---|---:|---|---|
-| `C0_clean` | 1,000 | ≥ 0,98 | determinista: no requiere repeticiones |
-| `C5_total_both` | 0,960 | 0,90–0,98 | intermedia: `R` por **±3 pp** → **R = 3** (mínimo 3) |
+S5, C0 + C5, 10 ventanas por condición:
 
-Con la ley `sd_1/√k`, `R = 3` da ±2,5 pp en C5 y `R = 5` da ±2,0 pp.
-
-### 8.4 Límites de esta lectura
-
-- **Un solo sujeto y 10 ventanas por condición**: la `sd` se estima con 5
-  valores y su propio error relativo es ~35 %. El orden de magnitud es fiable;
-  el decimal no.
-- **`C4_total_eda` no se midió**, y es la condición que sostiene el exceso de
-  coste de H1 (+0,317 en el 7b) y donde el modelo sobre-reclama estrés.
-- **`qwen3:14b` no se ha medido**: su abstención es dependiente de la etiqueta
-  (47 % de las ventanas de estrés en C4), así que su varianza puede ser mucho
-  mayor y no se puede extrapolar desde el 7b.
-
-### 8.5 Fallo corregido
-
-Una respuesta se invalidó por `"direction": "slight increase"`. El validador ya
-toleraba `decreased`/`increased`, pero no el adverbio antepuesto. Añadido
-`_normalize_direction` (slight, sharply, markedly, somewhat, moderately…), con
-tests. Afecta solo a ejecuciones futuras.
-
----
-
-### 8.6 Piloto (S5–S7, 12 ventanas, C0 + C4 + C5, R = 5, `qwen2.5:7b`)
-
-540 llamadas, **0 errores**. Tras descartar `meditation`: **30 ventanas por
-condición** (S5–S7).
-
-| Condición | Acuerdo modal | Deterministas | Ventanas que cambian | Acc 1 pasada | sd | Balanced |
+| Condición | Acuerdo modal | Deterministas | sd(conf) intra | Valores distintos | Acc | Balanced |
 |---|---:|---:|---:|---:|---:|---:|
-| `C0_clean` | 0,993 | 96,7 % | 1/30 | 0,860 | 0,013 | 0,900 |
-| `C4_total_eda` | 0,987 | 93,3 % | 2/30 | 0,480 | 0,027 | 0,629 |
-| `C5_total_both` | **0,947** | **76,7 %** | **7/30** | 0,614 | 0,014 | 0,720 |
+| `C0_clean` | **1,000** | 100 % | 0,64 | 5 | 0,900 | 0,929 |
+| `C5_total_both` | **1,000** | 100 % | 0,20 | 3 | 1,000 | 0,500 |
 
-Convergencia (accuracy, media ± sd entre subconjuntos de `k`):
-
-| k | C0 | C4 | C5 |
-|---:|---|---|---|
-| 1 | 0,860 ±0,013 | 0,480 ±0,027 | 0,614 ±0,014 |
-| 2 | 0,865 ±0,002 | 0,480 ±0,016 | 0,627 ±0,018 |
-| 3 | 0,867 ±0,000 | 0,467 ±0,000 | 0,610 ±0,016 |
-| 5 | 0,867 ±0,000 | 0,467 ±0,000 | 0,621 ±0,000 |
-
-#### El resultado importante: el agregado es robusto, la ventana no
-
-La inestabilidad **no es ruido simétrico**. Las 10 ventanas que cambian en las
-tres condiciones son casi todas de clase **`non-stress`** empujadas hacia
-`stress`:
-
-| Condición | Ventana (clase real) | Reparto |
-|---|---|---|
-| C0 | amusement | `non-stress` 4 / `stress` 1 |
-| C4 | baseline | `stress` 4 / `non-stress` 1 |
-| C4 | baseline | `stress` 4 / `non-stress` 1 |
-| C5 | baseline | `stress` 4 / `non-stress` 1 |
-| C5 | baseline | `stress` 4 / `non-stress` 1 |
-| C5 | baseline | `non-stress` 4 / `abstain` 1 |
-| C5 | baseline | `non-stress` 4 / `stress` 1 |
-| C5 | amusement | `non-stress` 3 / `stress` 2 ← **único 3:2** |
-| C5 | amusement | `non-stress` 4 / `stress` 1 |
-| C5 | amusement | `stress` 4 / `abstain` 1 |
-
-Dos lecturas, ambas necesarias:
-
-1. **Agregado estable**: 6 de los 7 cambios de C5 son 4:1, así que la mayoría se
-   mantiene y la accuracy se mueve 1–2 pp entre repeticiones. El exceso de coste
-   de H1 (+0,317) **no es un artefacto de semilla**.
-2. **Ventana frágil**: en C5 el **23 % de las ventanas** cambia su respuesta en
-   al menos una de cinco repeticiones, y el sentido del cambio es siempre el
-   mismo (falso positivo de `stress`). Cualquier afirmación *por ventana* —«esta
-   ventana es un falso positivo», «este claim es correcto»— tiene una fiabilidad
-   de aproximadamente 4:1, no de certeza.
-
-La segunda lectura es la que conecta con H5: los claims se verifican ventana a
-ventana, y una decisión 4:1 no sostiene una claim individual.
-
-#### Confianza: se confirma que es una etiqueta
-
-| Condición | Valores distintos (1 pasada → 5 reps) | AUROC 1 pasada | AUROC agregado |
-|---|---:|---:|---:|
-| `C0_clean` | 2 → 2 | 0,914 | 0,929 |
-| `C4_total_eda` | **1 → 1** | 0,629 | 0,619 |
-| `C5_total_both` | 2 → 1 | 0,720 | 0,725 |
-
-En C4 la confianza toma **un solo valor** y su AUROC (0,629) coincide con el
-balanced accuracy (0,629): la «confianza» es el signo de la decisión. Promediar
-repeticiones no la convierte en probabilidad.
-
-#### Aplicación de la regla
-
-| Condición | Acuerdo modal | Banda | Decisión |
-|---|---:|---|---|
-| `C0_clean` | 0,993 | ≥ 0,98 | determinista |
-| `C4_total_eda` | 0,987 | ≥ 0,98 | determinista |
-| `C5_total_both` | 0,947 | 0,90–0,98 | intermedia → **R = 3** (suelo de la regla) |
-
-La extrapolación sugiere `k ≈ 1–2` para ±2 pp, pero con `sd` estimada sobre 5
-valores; el suelo de 3 de la regla protege frente a esa imprecisión.
-
-#### Comprobación de cordura
-
-El piloto reproduce los dos patrones del corpus completo, con cifras algo más
-bajas por composición de la muestra: C4 por debajo de la tasa base (0,480 con
-prevalencia 0,70; balanced 0,629 frente a 0,637 del corpus) y C5 con balanced
-0,720 frente a 0,723. La caída no es de la muestra: es la firma del modelo.
-
----
-
-### 8.7 Pre-piloto de `qwen3:14b` (S5, 12 ventanas, C0 + C5, R = 5)
-
-120 llamadas, **0 errores**, 9 min 51 s (4,9 s/llamada). 10 ventanas útiles por
-condición tras descartar `meditation`.
-
-| Condición | Acuerdo modal | Deterministas | sd(conf) intra | Conf. constante | Valores distintos | Acc 1 pasada | sd |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| `C0_clean` | **1,000** | 100 % | 0,64 | 70 % | **5** | 0,900 | 0,000 |
-| `C5_total_both` | **1,000** | 100 % | 0,20 | 90 % | 3 | 1,000 | 0,000 |
-
-Ni una sola decisión cambió entre las cinco semillas, en ninguna de las dos
-condiciones. La varianza está **toda** en la confianza.
-
-#### El contraste que ordena la interpretación
+Ni una decisión cambió entre semillas. La varianza está toda en la confianza,
+que además ya es graduada (75/85/90/95/50): promediar reduce ruido, no aporta
+resolución.
 
 | | `qwen2.5:7b` | `qwen3:14b` |
 |---|---|---|
-| Decisión entre semillas | varía en C5 (7/30 ventanas) | **no varía nunca** |
-| Confianza entre semillas | fija (85 decidido / 50 abst.) | **varía** (sd 0,64; 5 valores) |
-| Promediar repeticiones | no aporta resolución | reduce ruido, no cambia el AUROC |
-| Abstención en C5 | 3,3 % | **30,0 %** |
-| Accuracy / balanced en C5 | 0,614 / 0,720 | **1,000 / 0,500** |
+| Decisión entre semillas | varía (8/30 en C5) | **no varía** |
+| Confianza entre semillas | fija (85 / 50) | **varía** |
+| Abstención en C5 | 0 % | 30 % |
+| Accuracy / balanced en C5 | 0,648 / 0,749 | **1,000 / 0,500** |
 
-Cada modelo tiene un solo grado de libertad y es el contrario del otro: **el 7b
-es determinista en la confianza y ruidoso en la decisión; el 14b es determinista
-en la decisión y ruidoso en la confianza.**
+Cada modelo tiene un grado de libertad y es el contrario del otro. Y la trampa
+de la accuracy del 14b (1,000 con balanced 0,500 y cobertura 0,70) es
+**determinista**: no es una casualidad de semilla.
 
-#### La trampa de la accuracy, confirmada como determinista
+### 8.5 Qué se puede afirmar
 
-En C5 el 14b da **accuracy 1,000 con balanced 0,500** y cobertura 0,70: se
-abstiene en las tres ventanas de estrés, decide las siete restantes y acierta
-todas. Repetir no lo cambia ni una vez. La cifra de 0,845 del corpus de 424 no
-era una casualidad de semilla: es el comportamiento estable del modelo.
+1. **H1 no es un artefacto de semilla.** El agregado se mueve ±4,3 pp en 30
+   ventanas y las 9 ventanas de estrés no cambian nunca; escalado al corpus
+   completo (424) queda del orden de **±1 pp**, muy por debajo de la
+   incertidumbre por sujeto.
+2. **H2a: la confianza no mide evidencia.** El caso 10/10 con 85 ± 0,0 lo
+   demuestra sin estadística. Agregar repeticiones mejora el AUROC +0,064
+   (sugerente, ~1,9 sd), pero eso es una propiedad del *promedio*, no del
+   modelo.
+3. **La abstención no es la vía:** el 7b no se abstiene nunca (0/30, cobertura
+   1,000) ni cuando la respuesta es 50/50.
+4. **Para cifras agregadas basta k=3** (regla predeclarada). Para describir una
+   ventana hace falta k≈20, y aun así una ventana 50/50 no tiene respuesta
+   estable que reportar.
 
-#### Confianza: aquí sí hay resolución, y no hace falta promediarla
+### 8.6 Regla de decisión aplicada
 
-| Condición | Valores distintos (1 pasada → 5 reps) | AUROC 1 pasada | AUROC agregado |
-|---|---:|---:|---:|
-| `C0_clean` | 5 → 5 | 1,000 | 1,000 |
-| `C5_total_both` | 3 → 2 | 0,500 | 0,500 |
-
-El 14b ya emite confianza graduada (75, 85, 90, 95, 50), así que la media de
-repeticiones no añade resolución: reduce el ruido de ±1-2 puntos sin mover el
-AUROC. **H2a no mejora repitiendo en ninguno de los dos modelos**, por razones
-distintas: en el 7b porque el número es una etiqueta; en el 14b porque ya era
-informativo.
-
-#### Regla aplicada
-
-| Condición | Acuerdo modal | Banda | Decisión |
+| Condición | Acuerdo modal (R=5/R=20) | Banda | Decisión |
 |---|---:|---|---|
-| `C0_clean` | 1,000 | ≥ 0,98 | determinista |
-| `C5_total_both` | 1,000 | ≥ 0,98 | determinista |
+| 7b `C0_clean` | 0,993 | ≥ 0,98 | determinista |
+| 7b `C4_total_eda` | 0,987 | ≥ 0,98 | determinista |
+| 7b `C5_total_both` | 0,935 | 0,90–0,98 | intermedia → **R = 3** para el agregado |
+| 14b `C0_clean` | 1,000 | ≥ 0,98 | determinista |
+| 14b `C5_total_both` | 1,000 | ≥ 0,98 | determinista |
 
-**El 14b no necesita corpus de repeticiones.** Para el 7b, la única condición
-fuera de la banda determinista es C5 (0,947) → **R = 3 y solo en C5**
-(424 × 3 = 1.272 llamadas, ~1,3 h), que es el alcance que la regla autoriza.
+### 8.7 Límites
 
-#### Límite
+- **30 ventanas y 3 sujetos** en la condición inestable: suficiente para
+  demostrar que la inestabilidad existe y dónde está, insuficiente para fijar
+  su tasa con precisión. El +0,064 de AUROC necesita más ventanas para citarse.
+- El 14b se midió en **un sujeto y dos condiciones**.
+- **Dependencia del motor** (§7.4): los números son de Ollama 0.40.6 con el
+  digest registrado en `run_provenance.json`. Otro build no es comparable.
+- Solo se auditó la representación **numérica** y la condición C5 del 7b.
 
-El 14b se ha medido en **un sujeto** (S5) y dos condiciones. Es suficiente para
-la pregunta que se hizo —¿cambia la respuesta con la semilla?— porque la
-respuesta fue «ni una vez en 10 ventanas × 5 semillas × 2 condiciones», pero no
-para estimar una tasa de inestabilidad con precisión.
+### 8.8 Fallos corregidos por el camino
+
+- `"direction": "slight increase"` invalidaba la respuesta: añadido
+  `_normalize_direction` (slight, sharply, markedly, somewhat…), con tests.
+- El corpus no registraba la versión de Ollama ni el digest del modelo:
+  añadidos `ollama_run_provenance()` y `run_provenance.json`.

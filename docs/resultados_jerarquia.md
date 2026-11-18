@@ -286,7 +286,57 @@ La referencia es una regresión logística con CV agrupada por sujeto sobre las
 
 ---
 
-### 5.7 Resumen del diseño primario frente al corpus histórico
+### 5.7 H3 — representación numérica frente a textual
+
+Barrido textual del diseño primario (2.835 respuestas por modelo, mismas
+ventanas, mismos prompts salvo la representación). El bloque de H3 del
+analizador reporta ahora **cobertura e inválidas** junto a la accuracy: sin
+ellas, la comparación premia a quien se abstiene.
+
+| Condición | 7b num | 7b txt | Δ7b | 14b num | 14b txt | Δ14b |
+|---|---:|---:|---:|---:|---:|---:|
+| `C0_clean` | 0,908 | 0,762 | **−0,146** | 0,915 | 0,903 | −0,012 |
+| `C1_partial_resp` | 0,915 | 0,885 | −0,030 | 0,917 | 0,899 | −0,018 |
+| `C2_partial_eda` | 0,887 | 0,823 | −0,064 | 0,945 | 1,000 | +0,055 |
+| `C4_total_eda` | 0,547 | 0,294 | **−0,253** | 0,824 | 0,952 | +0,129 |
+| `C5_total_both` | 0,682 | **0,252** | **−0,429** | 0,826 | 0,952 | +0,126 |
+| Cobertura del texto | 1,000 | 1,000 | — | 1,000 | 0,996 → **0,480** | — |
+
+En el 14b las tres últimas celdas son positivas **solo porque se abstiene**:
+93 % de las ventanas en C2, 48 % en C4 y 52 % en C5. En utilidad
+(abstención contada como error) el signo se invierte: **−0,664** (C2),
+**−0,211** (C4) y **−0,239** (C5). El 7b no se abstiene nunca, así que su caída
+es de corrección pura.
+
+| Métrica | 7b | 14b |
+|---|---|---|
+| Efecto de la degradación, numérico | −0,226 | −0,220 |
+| Efecto de la degradación, **texto** | **−0,510** | **−0,442** |
+| Modo de fallo del texto | responde mal y con confianza | se retira |
+
+- **La representación duplica el coste de la degradación en los dos modelos.**
+  Es la misma conclusión por dos caminos distintos: el 7b pierde 43 puntos de
+  accuracy en C5 sin abstenerse; el 14b conserva 0,952 sobre las pocas que
+  decide, pero decide la mitad.
+- **El 7b ya pierde 14,6 pp en limpio** (0,908 → 0,762) con cobertura 1,000:
+  es una propiedad de la representación para ese modelo, no un efecto de la
+  degradación.
+- **El formato también se degrada.** El 7b textual produce **155 inválidas**
+  (5,5 %; 140 en C4) frente a **2** del 14b (0,07 %), todas por copiar
+  `not available` en `direction`/`magnitude`: cuando la EDA no existe, el
+  modelo declara la ausencia dentro del claim. La recuperación tolerante rescata
+  la decisión (cobertura 1,000); se pierde el claim de ausencia, para el que el
+  esquema no tiene categoría — es una limitación de diseño, no un fallo del
+  pipeline.
+
+**H3 queda apoyada, con la dirección contraria a la del corpus exploratorio.**
+Allí el texto degradaba menos (interacción +0,065 en accuracy, 4 clases, solo
+7b); en el diseño primario y con los dos modelos degrada el doble. La lectura
+del corpus viejo no se sostiene y hay que citarla como tal.
+
+---
+
+### 5.8 Resumen del diseño primario frente al corpus histórico
 
 | Hipótesis | Corpus histórico (567, `all`+temp) | Diseño primario (424, `schmidt` sin temp) |
 |---|---|---|
@@ -296,8 +346,9 @@ La referencia es una regresión logística con CV agrupada por sujeto sobre las
 | H4 | Infra-abstención, brecha +0,58 | **Brecha +0,45 (7b, sin abstenerse) y +0,15 (14b)** |
 | H5 | 0,78 → 0,83 | **0,768 → 0,811 (7b) y 0,876 → 0,915 (14b)** |
 | H6 | ΔSQI hasta +0,24 (7b) | **ΔSQI inestable en 7b; +0,11 máximo en 14b**; Δgate = 0 |
+| H3 | Texto −0,09 en accuracy; interacción +0,065 (texto degrada menos) | **Texto degrada el doble** (−0,51 vs −0,23 en 7b; −0,44 vs −0,22 en 14b); el 14b lo hace retirándose (cobertura 0,48 en C5) |
 
-La conclusión robusta es **H1, H4 y H5**; **H2a, H2b y H6 dependen del modelo**
+La conclusión robusta es **H1, H3, H4 y H5**; **H2a, H2b y H6 dependen del modelo**
 y del corpus, y así hay que declararlo. La comparación entre modelos (§6)
 añade un tercer eje: **quién gana depende de la métrica** (accuracy bruta →
 14b; balanced → 7b; calibración → 7b; respaldo de claims y ranking de

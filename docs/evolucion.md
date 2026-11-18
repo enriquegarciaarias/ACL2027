@@ -225,6 +225,9 @@ Las sesiones anteriores a la creación de este documento se resumen a partir de
 | 2026-11-18 | ¿Forma parte del experimento el motor de inferencia? | Mismo prompt y misma semilla: **0 abstenciones** en el servidor (Ollama 0.40.6) y **28** en local (0.30.7); accuracy 0,682 vs 0,614 | `run_provenance.json` con versión y digest; las cifras se citan solo del servidor y los runs locales no se documentan |
 | 2026-11-18 | ¿Se puede analizar en el nodo de login? | `import numpy` aborta con `Illegal instruction` en `sirius`, también con un venv limpio y el wheel oficial; el mismo `.venv` funciona en los nodos de cálculo | Análisis y `--dry-run` por `srun`/lanzador; mensaje al administrador pendiente |
 
+| 2026-11-18 | ¿La representación cambia el fallo bajo degradación? | El texto **duplica el coste**: −0,510 vs −0,226 (7b) y −0,442 vs −0,220 (14b). El 7b responde mal y con confianza (0,252 en C5, sin abstenerse); el 14b se retira (cobertura 0,480) y su `Δacc` +0,126 es artefacto de cobertura (en `acc*`, −0,239) | H3 apoyada con la **dirección invertida** respecto del corpus de 4 clases (+0,065); aquel resultado queda como exploratorio |
+| 2026-11-18 | ¿Se sostiene el formato cuando falta la evidencia? | 155 inválidas del 7b textual (5,5 %; **140 en C4**) frente a 2 del 14b (0,07 %), todas por copiar `not available` en `direction`/`magnitude` | La recuperación tolerante rescata la decisión; el «claim de ausencia» no tiene categoría en el esquema y se declara como limitación, sin añadir un alias post hoc |
+
 ### Plantilla para la próxima sesión
 
 ```

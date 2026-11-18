@@ -248,7 +248,7 @@ sin temperatura.
 | **H1** corrección bajo degradación | **Apoyada** | 4 clases: 0,611 → 0,263; la referencia cae menos (0,828 → 0,625): exceso 0,15–0,20. Primario (424): el LLM **iguala a la referencia en limpio** (0,908 vs 0,905) y el exceso sube a **+0,32 (C4)** y **+0,21 (C5)** |
 | **H2a** confianza y corrección | Matizada | AUROC de confianza 0,51 en limpio → 0,76 en C5; la sobreconfianza pasa de +0,15 a +0,47. En el primario solo informa en el 14b (0,867 → 0,731); el 7b emite dos valores (85/50), y en una ventana 10/10 entre clases declara **85 ± 0,0** en 20 repeticiones (E11) |
 | **H2b** certeza lingüística | **Apoyada en dirección** | Índice +0,13 → −1,12; hedges 0,39 → 0,71 con boosters estables. En el primario depende del modelo: 14b decididas −0,25 → −0,85; 7b no monótono |
-| **H3** representación × degradación | **Apoyada** | Texto −0,09 en accuracy; interacción +0,065 [0,025; 0,103]; en C5 el texto se vuelve más asertivo (+1,36) y el numérico más cauto (−1,12) |
+| **H3** representación × degradación | **Apoyada (dirección invertida respecto del corpus exploratorio)** | En el diseño primario el texto **duplica el coste de la degradación**: 7b −0,51 vs −0,23 y 14b −0,44 vs −0,22 (en utilidad). El 7b pierde 43 pp de accuracy en C5 sin abstenerse; el 14b se retira (cobertura 0,48) y su `Δacc` positivo es artefacto de cobertura. En el corpus de 4 clases (solo 7b) la interacción era +0,065, es decir, el texto degradaba menos |
 | **H4** adecuación de la abstención | **Refutada** | Infra-abstención (brecha error−abstención hasta +0,58) y sobre-abstención en limpio (12,5 %). Primario: el 7b no se abstiene nunca (brecha **+0,45** en C4); el 14b se retira por etiqueta, no por dificultad |
 | **H5** respaldo de afirmaciones | **Hallazgo principal** | El respaldo **sube** a 0,828 en C4 mientras la accuracy cae a 0,289. Primario: 0,768 → 0,811 (7b) y 0,876 → 0,915 (14b) mientras la decisión se hunde. `unsupported = 0` en todos los brazos |
 | **H6** indicador externo de calidad | **Apoyada con SQI, dependiente del corpus** | El SQI añade AUROC incremental (+0,05 a +0,09 en 4 clases; +0,24 en el binario de 567) y la compuerta no añade (Δ≈0). **En el primario no se replica**: ΔSQI inestable en el 7b (−0,14 … +0,12) y ≤ +0,11 en el 14b |
@@ -454,6 +454,34 @@ Se comparan las dos representaciones sobre las mismas 567 ventanas de evaluació
 | **En C5, numérico más cauto** | −1,12 | El índice de certeza lingüística del numérico en C5 es −1,12. El numérico usa muchos más hedges y menos boosters: se vuelve más cauteloso cuando la señal se degrada. |
 
 La representación importa. El texto comienza con un accuracy algo menor (−0,09), pero es más robusto a la degradación: su caída es menos pronunciada y, en condiciones severas (C4/C5), el texto se vuelve más asertivo mientras el numérico se vuelve más cauteloso. Esta divergencia en certeza lingüística (+1,36 vs −1,12 en C5) es el núcleo de H3: no es solo cuánto acierta cada representación, sino cómo cambia el *comportamiento lingüístico* del modelo cuando la evidencia se destruye.
+
+**H3 en el diseño primario (resultado definitivo).** Lo anterior es el corpus
+de 4 clases con `qwen2.5:7b`. Con el diseño primario (binario `schmidt` sin
+temperatura, 424 ventanas) y el barrido textual de los dos modelos, **el signo
+se invierte**:
+
+| Condición | 7b num | 7b txt | Δ7b | 14b num | 14b txt | Δ14b |
+|---|---:|---:|---:|---:|---:|---:|
+| `C0_clean` | 0,908 | 0,762 | **−0,146** | 0,915 | 0,903 | −0,012 |
+| `C2_partial_eda` | 0,887 | 0,823 | −0,064 | 0,945 | 1,000 | +0,055 |
+| `C4_total_eda` | 0,547 | 0,294 | **−0,253** | 0,824 | 0,952 | +0,129 |
+| `C5_total_both` | 0,682 | **0,252** | **−0,429** | 0,826 | 0,952 | +0,126 |
+| Cobertura del texto | 1,000 | 1,000 | — | 1,000 | **0,480** en C5 | — |
+
+- **Efecto de la degradación**: numérico −0,226 / texto **−0,510** en el 7b;
+  numérico −0,220 / texto **−0,442** en el 14b. El texto duplica el coste.
+- **En el 14b el signo positivo es cobertura**: se abstiene en el 93 % de C2 y
+  el 52 % de C5. En utilidad (`acc*`) son −0,664 y −0,239.
+- **Dos modos de fallo**: el 7b responde mal y con confianza (0,252 en C5);
+  el 14b se retira.
+- **El formato también se degrada**: 155 inválidas del 7b textual (5,5 %;
+  140 en C4) frente a 2 del 14b (0,07 %), todas por copiar `not available` en
+  `direction`/`magnitude`. La recuperación tolerante rescata la decisión
+  (cobertura 1,000) y se pierde el claim de ausencia.
+
+La conclusión del corpus de 4 clases **no se sostiene** en el diseño primario y
+se conserva solo como resultado exploratorio. Detalle por condición:
+[`resultados_jerarquia.md`](resultados_jerarquia.md) §5.7.
 
 #### H4 adecuación de la abstención
 

@@ -23,6 +23,7 @@ rsync -av --exclude .venv --exclude .git --exclude __pycache__ \
 | **WESAD** | `S*/S*.pkl` (una carpeta por sujeto) | `results/input/WESAD/` | ~12,9 GB | dataset original |
 | **PhysioNet/CinC 2017** | `training2017/` con `.mat`, `.hea` y `REFERENCE.csv` | `results/input/EXTERNAL/physionet2017/training2017/` | ~230 MB | `training2017.zip` (95 MB) de PhysioNet |
 | **K-EmoCon** | `kemocon_feature_table.csv` y `kemocon_period_assignments.csv` | `results/input/EXTERNAL/KEMOCON/` | 5,1 MB | tablas derivadas (PSRI) |
+| **DREAMT** | `data_64Hz/S0xx_whole_df.csv` (rama *wearable*; las etiquetas de sueño viajan ahí) | `results/input/dreamt/` | 14 GB | `DREAMT.zip` de PhysioNet (**licencia restringida 1.5.0**) |
 
 ## 2. Por qué los externos no pasan por `INGEST`
 
@@ -35,6 +36,12 @@ rsync -av --exclude .venv --exclude .git --exclude __pycache__ \
 - **K-EmoCon** no necesita ingesta en este proyecto: se usan las **tablas ya
   derivadas** (features por ventana de 5 s y asignación de periodos). Ingerir de
   nuevo las señales crudas de muñeca no aportaría nada y duplicaría el trabajo.
+- **DREAMT** trae una rejilla de épocas de 30 s y etiquetas de sueño por fichero,
+  no un `.pkl` por sujeto: el adaptador `sources/external/dreamt.py` ancla la
+  rejilla, construye ventanas puras de 60 s y extrae las features. La rama
+  `data_64Hz` (14 GB) basta porque las etiquetas PSG viajan en ella; la de
+  100 Hz (101 GB) solo sería necesaria para HRV real (desviación D7 del
+  preregistro).
 
 Consecuencia: `results/input/EXTERNAL/` contiene **datos de entrada** (no
 artefactos), y los artefactos siguen yendo a `results/output/{WESAD,
@@ -68,6 +75,18 @@ cp <PSRI>/results/output/KEMOCON/kemocon_feature_table.csv \
    results/input/EXTERNAL/KEMOCON/
 ```
 
+**DREAMT** (PhysioNet, licencia restringida: hay que aceptarla con la cuenta):
+
+```bash
+# descarga autenticada desde https://physionet.org/content/dreamt/1.0.0/
+cd results/input
+unzip -q ~/DREAMT.zip            # crea dreamt/data_64Hz/*.csv y data_100Hz/
+ls dreamt/data_64Hz/S002_whole_df.csv
+```
+
+Solo se necesita `data_64Hz/` (14 GB). Si no se va a usar la rama PSG, la
+carpeta `data_100Hz/` (101 GB) puede quedarse fuera: el adaptador no la lee.
+
 ## 4. Reubicar sin tocar código
 
 En `config.json` (o en `results/input/{subject}/config.json`, que se fusiona):
@@ -76,7 +95,8 @@ En `config.json` (o en `results/input/{subject}/config.json`, que se fusiona):
 "params": {
   "external": {
     "physionet": { "data_dir": "/otra/ruta/training2017" },
-    "kemocon":   { "data_dir": "/otra/ruta/KEMOCON" }
+    "kemocon":   { "data_dir": "/otra/ruta/KEMOCON" },
+    "dreamt":    { "data_dir": "/otra/ruta/dreamt" }
   }
 }
 ```
@@ -90,6 +110,7 @@ prioridad si usas el script directamente.
 ```bash
 python main.py --proc GENERATE --experiment physionet --dry-run
 python main.py --proc GENERATE --experiment kemocon  --dry-run
+python main.py --proc GENERATE --experiment dreamt   --dry-run
 ```
 
 El bloque `paths` del plan indica `external_data` y `external_data_exists`, y

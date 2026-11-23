@@ -24,13 +24,25 @@ from .evaluator import (
     EvaluationResult,
 )
 from .claims import (
+    MIN_CLAIMS_FOR_RATE,
+    claim_coherence,
     parse_prompt_features,
+    response_coherence,
+    summarize_coherence,
     summarize_verdicts,
     verify_claim,
     verify_claims,
 )
 from .certainty import linguistic_certainty
 from .records import evaluate_binary_records, evaluate_records
+from .signatures import (
+    COMPACT_FEATURES,
+    PRIMARY_FEATURES,
+    SENSITIVITY_FEATURES,
+    STRESS_SIGNATURE,
+    feature_set,
+    sign_of,
+)
 
 __all__ = [
     "evaluate_subject",
@@ -46,4 +58,15 @@ __all__ = [
     "verify_claim",
     "verify_claims",
     "linguistic_certainty",
+    # Relevancia de H5 (preregistro docs/h5_relevancia.md)
+    "MIN_CLAIMS_FOR_RATE",
+    "claim_coherence",
+    "response_coherence",
+    "summarize_coherence",
+    "STRESS_SIGNATURE",
+    "PRIMARY_FEATURES",
+    "COMPACT_FEATURES",
+    "SENSITIVITY_FEATURES",
+    "feature_set",
+    "sign_of",
 ]

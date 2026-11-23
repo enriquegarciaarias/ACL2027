@@ -37,9 +37,14 @@ def _args(**overrides) -> SimpleNamespace:
         noGate=False,
         nonstress_variant=None,
         temperature=None,
+        coherence_set=None,
         hierarchy=False,
         from_affective=False,
         bootstrap=None,
+        phase=None,
+        windows_per_class=None,
+        reference=False,
+        seed=None,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -107,6 +112,45 @@ def test_generate_kemocon_argv():
     assert "--max-windows" in argv and "5" in argv
 
 
+def test_generate_dreamt_argv():
+    """El piloto de sueño es un runner con fases: el --proc decide la fase."""
+    argv = pipelines.build_generate_argv(
+        "dreamt",
+        _args(representation="both", windows_per_class=5, seed=42, subjects="S034"),
+    )
+    assert argv[:2] == ["--phase", "generate"]
+    assert "--representation" in argv and "both" in argv
+    assert "--windows-per-class" in argv and "5" in argv
+    assert "--subjects" in argv and "S034" in argv
+
+
+def test_evaluate_dreamt_argv_resolves_model_and_phase():
+    """Sin --model la evaluación no podría leer la carpeta del modelo."""
+    processControl.defaults = {"llm": {"primary_model": "qwen2.5:7b"}}
+    argv = pipelines.build_evaluate_argv(
+        "dreamt", _args(model=None, reference=True)
+    )
+    assert argv[:2] == ["--phase", "evaluate"]
+    assert "--model" in argv and "qwen2.5:7b" in argv
+    assert "--reference" in argv
+
+
+def test_dreamt_call_estimate_counts_both_views():
+    """80 ventanas x 6 condiciones x 2 vistas = 960, el coste del preregistro."""
+    calls = pipelines._estimate_calls(
+        "dreamt",
+        ["S034", "S051", "S076", "S084"],
+        _args(windows_per_class=5, representation="both"),
+    )
+    assert calls == 960
+    numeric_only = pipelines._estimate_calls(
+        "dreamt",
+        ["S034", "S051", "S076", "S084"],
+        _args(windows_per_class=5, representation="numeric"),
+    )
+    assert numeric_only == 480
+
+
 def test_unknown_experiment_raises():
     with pytest.raises(ValueError):
         pipelines.build_generate_argv("no-existe", _args())
@@ -141,6 +185,35 @@ def test_evaluate_degradation_argv():
     # El analizador debe recibir el diseño primario, o leería otro corpus.
     assert "--nonstress-variant" in argv and "schmidt" in argv
     assert "--temperature" in argv and "exclude" in argv
+
+
+def test_evaluate_degradation_forwards_coherence_set():
+    """El eje de relevancia de H5 se elige desde el CLI, no se fija por defecto."""
+    argv = pipelines.build_evaluate_argv(
+        "degradation", _args(coherence_set="compact")
+    )
+    assert "--coherence-set" in argv and "compact" in argv
+
+    # Sin bandera, el analizador aplica su propio valor por defecto (primary).
+    argv = pipelines.build_evaluate_argv("degradation", _args())
+    assert "--coherence-set" not in argv
+
+
+def test_dry_run_plan_reports_coherence_set(monkeypatch):
+    monkeypatch.setattr(
+        processControl, "args", _args(experiment="degradation"), raising=False
+    )
+    plan = pipelines._plan("evaluate")
+    assert plan["coherence_set"] == "primary"
+    # En evaluación la tarea también se deduce del corpus, como la variante.
+    assert plan["decision_mode"] == "auto"
+    monkeypatch.setattr(
+        processControl,
+        "args",
+        _args(experiment="degradation", coherence_set="sensitivity"),
+        raising=False,
+    )
+    assert pipelines._plan("evaluate")["coherence_set"] == "sensitivity"
 
 
 def test_evaluate_controls_does_not_forward_degradation_flags():

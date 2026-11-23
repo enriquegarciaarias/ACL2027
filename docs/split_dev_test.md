@@ -1,6 +1,7 @@
 # Split congelado de desarrollo/evaluación y corrección de la fuga del few-shot
 
-**Fecha:** 2026-11-09
+**Fecha:** 2026-11-09 · **Actualizado:** 2026-11-19 (auditoría §6.1:
+desviaciones 7–10 declaradas)
 **Módulo:** `sources/phase2/development_split.py`
 **Versión del split:** 1.0
 
@@ -125,3 +126,50 @@ sujetos, normalización y avisos.
    Se reportan las cuatro variantes y la comparación con Schmidt es de
    **composición de clases**, no de rendimiento. Ver
    [`experimento_binario_jerarquia.md`](experimento_binario_jerarquia.md).
+7. **La normalización intra-sujeto (E12) está en producción** (auditoría
+   2026-11-19). La representación del experimento primario no es la escala
+   absoluta: `sources/phase3/degradation.py` calcula `subject_reference()` con
+   las ventanas `C0_clean` de cada sujeto y envía `z_scores()` al modelo. Esa
+   normalización se eligió en **E6 (E12)**, un análisis marcado exploratorio que
+   se ejecutó sobre las **705 ventanas de los 15 sujetos** (E12 conserva archivos
+   de S2, S3 y S4 en `results/output/WESAD/PHASE2/e12/`). Consecuencia: E1 mide
+   bien sobre sujetos de evaluación, pero su representación **no** es una
+   decisión independiente de esos datos. No se re-ejecutó. Alternativa pendiente:
+   fijar la referencia con S2–S4 (coste: 2.835 × 2 llamadas, porque cambia el
+   prompt).
+8. **El conjunto de 23 features de la vista LLM se fijó mirando salidas del
+   corpus evaluado** (2026-11-08/09). La exclusión de `eda_scr_candidates`
+   («diagnóstico interno que se confundía con el número real de SCR») y la
+   inclusión de `resp` en los ejemplos salen de inspeccionar respuestas y errores
+   de evaluación. Matiz importante: la exclusión de muñeca/BVP **sí** tiene
+   justificación en desarrollo (el confusor de movimiento se analizó en S2,
+   AUROC hasta 0,928), así que no todas las piezas del conjunto están
+   contaminadas; conviene citar por separado las dos justificaciones.
+9. **Los umbrales y la laxitud de la compuerta de consistencia** (`max_hard=0`,
+   `max_soft=1`, `tolerance_scale=1.0`, activada por defecto en `config.json`)
+   se fijaron con un barrido sobre las **705 ventanas** de los 15 sujetos
+   ([`consistencia.md`](consistencia.md) §4.1). El mecanismo es determinista y
+   no usa etiquetas ni prompt —por eso E3 se sostiene como mecanismo—, pero el
+   **punto de operación** sí se eligió con datos de evaluación: con
+   `tolerance_scale` 1→3 la detección de `NC_shuffled` no cambia y la
+   sensibilidad al ruido baja de 96,2 % a 52,9 %. En limpio produce 0 vetos, así
+   que las métricas de `C0` no dependen de esa elección; las de `NC_shuffled` sí.
+10. **Decisiones menores con datos de evaluación.** (a) **R=3** repeticiones
+    (E11) se fijó con 30 ventanas de **S5–S7**, que son de evaluación. (b) Los
+    *smokes* operativos del barrido (numérico, textual y repeticiones) se
+    hicieron sobre **S5**, con 1 ventana cada uno: no ajustan nada, pero gastan
+    muestra de evaluación. Se listan por exhaustividad, no porque cambien
+    conclusiones.
+
+### 6.1. Auditoría 2026-11-19: qué se comprobó y qué no se arregló
+
+Se verificó en disco que los corpus **de producción no contienen sujetos de
+desarrollo** (`degradation/` y `degradation_text/`: S5–S11 y S13–S17; `e12/`:
+los 15, incluidos S2–S4). Es decir, el split se respetó **en los datos** y no se
+respetó del todo **en el diseño**: de las decisiones que siguen en producción,
+3 estaban declaradas (1, 5–6 de esta lista) y 3 no lo estaban hasta hoy (7–9),
+más la fuga del few-shot ya corregida y las decisiones menores (10).
+
+No se re-ejecutó ningún brazo: la sesión fue de auditoría y documentación. La
+corrección de mayor impacto sería la 7 (representación), y es también la más
+cara, porque cambia el prompt de las 5.670 respuestas del diseño primario.

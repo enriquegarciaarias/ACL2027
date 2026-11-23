@@ -202,7 +202,7 @@ anterior, pero no las borra: esas cuestan horas de LLM y se decide aparte.
 
 ### 5. Fase 2 — respuestas del LLM (`GENERATE`)
 
-Tres fases, un verbo cada una: `INGEST` (corpus) → `GENERATE` (respuestas) → `EVALUATE` (métricas). El **experimento** es un parámetro (`--experiment`), no una fase: `controls`, `degradation`, `centering`, `physionet`, `kemocon`.
+Tres fases, un verbo cada una: `INGEST` (corpus) → `GENERATE` (respuestas) → `EVALUATE` (métricas). El **experimento** es un parámetro (`--experiment`), no una fase: `controls`, `degradation`, `centering`, `physionet`, `kemocon`, `dreamt`.
 
 ```sh
 # Experimento `controls`: C0 + 4 controles negativos (el antiguo PHASE2)
@@ -216,6 +216,9 @@ python main.py --proc GENERATE --experiment degradation --subject WESAD --repres
 # Validación externa
 python main.py --proc GENERATE --experiment physionet --per-class 150
 python main.py --proc GENERATE --experiment kemocon --task arousal
+
+# Segunda tarea (estadios de sueño, DREAMT): prepare + generate en una llamada
+python main.py --proc GENERATE --experiment dreamt --representation both
 ```
 
 `PHASE2` sigue funcionando como alias deprecado de `GENERATE --experiment controls`. Cada respuesta guarda decisión, confianza, claims, razonamiento, prompt completo y veredicto de la compuerta de consistencia.
@@ -263,7 +266,7 @@ Cada modelo escribe en su propio subdirectorio (`qwen3:14b` → `qwen3_14b`), as
 | Flag | Descripción |
 |---|---|
 | `--proc` | Fase: `INGEST`, `GENERATE` o `EVALUATE` (alias: `PHASE2`, `PHASE3`). |
-| `--experiment` | `controls` (def.), `degradation`, `centering`, `physionet`, `kemocon`. |
+| `--experiment` | `controls` (def.), `degradation`, `centering`, `physionet`, `kemocon`, `dreamt`. |
 | `--subject` | Carpeta en `results/input/` (default: `default`). |
 | `--subjects` | Subconjunto de sujetos (`S5,S6`). |
 | `--step` | Inicia el pipeline de ingesta desde un paso con nombre. |
@@ -275,7 +278,7 @@ Cada modelo escribe en su propio subdirectorio (`qwen3:14b` → `qwen3_14b`), as
 | `--decision-mode` | `affective` (4 clases) o `binary` (`stress`/`non-stress`). |
 | `--nonstress-variant` | `schmidt` (def.), `baseline`, `no_amusement`, `all`: qué clases forman `non-stress`. |
 | `--temperature` | `include` o `exclude`: temperatura en la evidencia (el primario la excluye). |
-| `--representation` | `numeric` o `text` (experimento `degradation`). |
+| `--representation` | `numeric`, `text` o `both` (`both` solo en el experimento `dreamt`). |
 | `--conditions` | Condiciones separadas por comas. |
 | `--split` | `evaluation`, `development` o `all` (al evaluar). |
 | `--max-windows` | Límite de ventanas por sujeto (pilotos). |
@@ -283,6 +286,9 @@ Cada modelo escribe en su propio subdirectorio (`qwen3:14b` → `qwen3_14b`), as
 | `--per-class` | Registros por clase (`physionet`). |
 | `--task` | Tarea afectiva (`kemocon`). |
 | `--tag` | Sufijo de ficheros de salida (`physionet`, `kemocon`, `centering`). |
+| `--windows-per-class` | `dreamt`: ventanas muestreadas por clase y sujeto (5). |
+| `--reference` | `EVALUATE dreamt`: añade la referencia features-only (LOSO). |
+| `--phase` | `dreamt`: fase del runner (`prepare`/`generate`/`evaluate`); se deduce de `--proc`. |
 | `--raw-decisions` | Evalúa la decisión cruda del modelo (sin compuerta). |
 | `--noGate` | Desactiva la compuerta de consistencia (ablación). |
 | `--allowDev` | Permite sujetos de desarrollo (S2–S4). |
@@ -369,6 +375,7 @@ ACL2027/
 │   ├── p4_calibracion.md        # Calibración, temperatura, conformal (exploratorio)
 │   ├── p3_kemocon.md            # Validación externa K-EmoCon (negativo documentado)
 │   ├── p3_physionet.md          # Validación externa PhysioNet 2017 (negativo documentado)
+│   ├── piloto_dreamt.md         # Segunda tarea: estadios de sueño (DREAMT), preregistro y resultados
 │   ├── literatura_slip.md       # Análisis del corpus SLIP (E1–E14)
 │   └── README.md                # Índice completo de documentos por área
 ├── scripts/                     # Experimentos y análisis
@@ -377,6 +384,7 @@ ACL2027/
 │   ├── run_p3_kemocon.py            # validación externa K-EmoCon
 │   ├── run_p3_physionet.py          # validación externa PhysioNet 2017
 │   ├── analyze_p3_physionet.py      # análisis de PhysioNet 2017 (claims, calidad, ablación)
+│   ├── run_p4_dreamt.py             # segunda tarea: estadios de sueño (prepare/generate/evaluate)
 │   ├── compare_models.py            # comparación de modelos (tabla + bootstrap por sujeto)
 │   ├── run_e12_pilot.py             # representación centrada (exploratorio)
 │   ├── resolvability_analysis.py    # separabilidad y confusor temporal
@@ -388,8 +396,8 @@ ACL2027/
 │   ├── ingestion/               # pipeline INGEST (WESAD): discover, ingest, qc, window, degrade, features, represent, package
 │   ├── phase2/                  # prompts, LLM, esquema de respuesta, controles negativos, gate de consistencia
 │   ├── phase3/                  # evaluación, claims, certeza, calibración, degradación
-│   └── external/                # adaptadores K-EmoCon y PhysioNet 2017
-├── tests/                       # 491 tests (sin dependencia de los datasets reales)
+│   └── external/                # adaptadores K-EmoCon, PhysioNet 2017 y DREAMT
+├── tests/                       # 623 tests (sin dependencia de los datasets reales)
 └── results/                     # NO versionado: input/ y output/ por subject
 ```
 
@@ -408,7 +416,7 @@ python -m pytest -q
 ## 🧭 Filosofía del código
 
 - **Anti-leakage por diseño:** las etiquetas viven solo en `groundtruth/`; nunca se mezclan con features, representaciones ni prompts. Hay comprobaciones (`assert_no_leakage`) y tests que lo verifican.
-- **Reproducibilidad:** versiones fijadas, caché de llamadas al LLM, split dev/test congelado (dev S2–S4, test S5–S17), few-shot con medianas de desarrollo (sin fuga del test al prompt).
+- **Reproducibilidad:** versiones fijadas, caché de llamadas al LLM, split dev/test congelado (dev S2–S4, test S5–S17), few-shot con medianas de desarrollo (sin fuga del test al prompt). El reparto se respeta **en los datos**; las decisiones de diseño tomadas con datos de evaluación están declaradas en [`docs/split_dev_test.md`](docs/split_dev_test.md) §6 (desviaciones 1–10).
 - **Trazabilidad:** cada respuesta del LLM guarda el prompt completo, parámetros del modelo, semilla, hash de caché y veredicto de la compuerta de consistencia para auditoría posterior.
 - **Rutas sin hardcodeo:** todas las rutas se resuelven a través de `processControl.env` (prohibido hardcodear `"results"` en módulos).
 

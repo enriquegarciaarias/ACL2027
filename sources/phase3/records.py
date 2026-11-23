@@ -12,7 +12,7 @@ ventana (``window_id_opaque``), nunca por el ID real.
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -27,6 +27,7 @@ from sources.phase3.evaluator import (
 def evaluate_records(
     records: list[Mapping[str, Any]],
     label_by_opaque: Mapping[str, str],
+    label_order: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Calcula métricas de clasificación sobre una lista de registros.
 
@@ -35,12 +36,18 @@ def evaluate_records(
             ``window_id_opaque``. Los registros sin etiqueta conocida se
             tratan como ``UNKNOWN`` (cuentan en el denominador de accuracy).
         label_by_opaque: mapping ``window_id_opaque -> etiqueta real``.
+        label_order: orden de clases del espacio de decisión. Por defecto las
+            cuatro clases afectivas de WESAD. La tarea de sueño pasa las suyas
+            (``wake``/``n1``/``n2``/``rem``). El bloque ``binary``
+            stress/baseline solo se calcula si ambas etiquetas están en el
+            espacio.
 
     Returns:
         dict con recuentos, accuracy, balanced accuracy, abstención, AUROC por
         clase, ECE, Brier, matriz de confusión y métricas del subconjunto
         binario stress/baseline.
     """
+    order: tuple[str, ...] = tuple(label_order) if label_order is not None else LABEL_ORDER
     rows = []
     for record in records:
         true_label = label_by_opaque.get(record.get("window_id_opaque", ""), "UNKNOWN")
@@ -58,7 +65,7 @@ def evaluate_records(
     correct = sum(1 for r in decided if r["predicted"] == r["true_label"])
     accuracy = correct / len(decided) if decided else 0.0
     recalls = []
-    for label in LABEL_ORDER:
+    for label in order:
         total = sum(1 for r in decided if r["true_label"] == label)
         hit = sum(
             1
@@ -74,20 +81,20 @@ def evaluate_records(
             r["confidence"] / 100.0 if r["predicted"] == c else 0.0
             for r in decided
         ]
-        for c in LABEL_ORDER
+        for c in order
     }
     if decided:
         auroc = {
-            c: _compute_auroc_one_vs_rest(y_true, y_probs, c) for c in LABEL_ORDER
+            c: _compute_auroc_one_vs_rest(y_true, y_probs, c) for c in order
         }
         ece = _compute_ece(
             y_true,
             [r["predicted"] for r in decided],
             [r["confidence"] / 100.0 for r in decided],
         )
-        brier = _compute_brier_score(y_true, y_probs, LABEL_ORDER)
+        brier = _compute_brier_score(y_true, y_probs, order)
     else:
-        auroc = {c: float("nan") for c in LABEL_ORDER}
+        auroc = {c: float("nan") for c in order}
         ece = float("nan")
         brier = float("nan")
     confusion = {
@@ -95,16 +102,17 @@ def evaluate_records(
             pl: sum(
                 1 for r in valid if r["true_label"] == tl and r["predicted"] == pl
             )
-            for pl in list(LABEL_ORDER) + ["abstain"]
+            for pl in list(order) + ["abstain"]
         }
-        for tl in LABEL_ORDER
+        for tl in order
     }
+    has_binary = {"stress", "baseline"} <= set(order)
     binary_rows = [
         r
         for r in decided
         if r["true_label"] in ("stress", "baseline")
         and r["predicted"] in ("stress", "baseline")
-    ]
+    ] if has_binary else []
     tp = sum(
         1
         for r in binary_rows
@@ -126,7 +134,7 @@ def evaluate_records(
         if r["true_label"] == "baseline" and r["predicted"] == "stress"
     )
     n_bin = len(binary_rows)
-    binary = {
+    binary = None if not has_binary else {
         "n": n_bin,
         "accuracy": (tp + tn) / n_bin if n_bin else 0.0,
         "precision_stress": tp / (tp + fp) if (tp + fp) else 0.0,

@@ -527,6 +527,23 @@ Las afirmaciones (*claims*) que el LLM hace en su respuesta están respaldadas p
 
 **Implicación.** La corrección y el respaldo de afirmaciones son ejes distintos. Un modelo puede ser muy bueno justificando cada pieza de evidencia por separado y, aun así, ser muy malo tomando la decisión final. Esto debilita la confianza en la explicabilidad del modelo: unas explicaciones locales correctas no garantizan una decisión global correcta.
 
+**Relevancia: el eje que faltaba (implementado 2026-11-21).** «Respaldado» no
+significa «a favor». Una afirmación puede ser cierta y **contradecir** la
+decisión («la conductancia está muy disminuida» es verdad y se usa para concluir
+`stress`). El preregistro
+[`h5_relevancia.md`](h5_relevancia.md) fija antes de medir la firma por clase
+(dirección esperada de 12 features bajo `stress`), la regla de coherencia y las
+predicciones P0–P4 con sus falsadores; el analizador ya la calcula
+(`--coherence-set primary|compact|sensitivity`) y publica `coherence_rate`,
+el desglose por lado de la decisión y `against_supported_share` (proporción de
+claims **verdaderos** que contradicen la conclusión). El pre-chequeo sobre el
+corpus histórico —**exploratorio**, no del diseño primario— da P0 11/12 y
+`against_supported_share` 0,27 en `C0` → 0,83 en `C5`: al destruir EDA, dos de
+cada tres afirmaciones verdaderas apuntan contra la propia decisión
+([`claims_h5.md`](claims_h5.md) §5.7). Las cifras del diseño primario están
+pendientes de ejecución ([`resultados_jerarquia.md`](resultados_jerarquia.md)
+§5.9).
+
 #### H6 indicador externo de calidad
 
 Si un indicador externo de calidad de la señal (SQI) añade información útil para predecir cuándo el LLM va a acertar, más allá de la confianza declarada por el propio modelo. También se evalúa si la compuerta de consistencia fisiológica (P1) añade capacidad de detección de errores.
@@ -637,6 +654,8 @@ de desarrollo).
 | E9 | **Modelos × tarea bajo degradación** | ¿Resiste mejor el modelo grande? ¿Cambia la tarea la abstención? | 2 modelos × {4 clases, binario} × C0,C1,C2,C4,C5; 12 sujetos eval. | 11.340 respuestas | balanced, cobertura, claims, certeza | En limpio empatan en binario (Δ +0,014 [−0,012; +0,040]); 14b en 4 clases tiene mejor acc (0,703 vs 0,611) pero por abstención (100 % en C5), no discriminación. Con EDA a cero fallan en direcciones opuestas (7b: bal 0,63 sobrerreclamando estrés; 14b: bal 0,50 diciendo non-stress) | **Firme** | [`resultados_binario.md`](resultados_binario.md) |
 | **E10** | **Jerarquía binaria Schmidt sin temperatura (diseño primario)** | ¿Se sostiene el binario al alinear la tarea con el paper y quitar el confusor térmico? | 2 modelos × 5 condiciones × 424 ventanas (12 sujetos eval.) | 5.670 respuestas | accuracy, acc*, cobertura, balanced, AUROC, H1–H6 | Empate en limpio (0,908 vs 0,915) e **igualdad con la referencia supervisada** (0,905); exceso de coste **+0,32/+0,21** (H1); el 14b se abstiene 22 % en C2 y predice estrés 1–3 veces en C4/C5 (balanced ≈0,51; `acc*` 0,70); respaldo de claims **sube** 0,768→0,811 y 0,876→0,915 (H5); H6 no se replica (ΔSQI inestable); la comparación entre modelos depende de la métrica (Δ acc +0,277 en C4 con Δ balanced −0,126) | **Firme** | [`resultados_jerarquia.md`](resultados_jerarquia.md) |
 | **E11** | **Repeticiones de prompt (varianza de muestreo)** | ¿Es la respuesta estable para el mismo prompt? ¿Cuántas repeticiones hacen falta? | 7b: S5–S7 · 12 ventanas · C5 · **R=20** (720). 14b: S5 · 12 ventanas · C0/C5 · R=5 (120). Ambos en el servidor | 840 respuestas | acuerdo modal, sd de accuracy, convergencia, confianza | **El agregado es estable; la ventana no.** 22/30 ventanas no cambian nunca y **0 de las 9 de estrés**; las 8 inestables son `non-stress` que a veces se reclaman como `stress`. Una pasada da accuracy 0,648 ± 0,043 (rango 0,533–0,700); k=20 la sube a 0,690 (+4,2 pp, ≈1 sd, no concluyente). **El caso decisivo**: una ventana sale 10/10 entre clases con **confianza 85 ± 0,0** en las 20 repeticiones → la confianza no codifica la incertidumbre, y repetir la revela pero no la arregla. 14b: 100 % determinista en la decisión y con confianza graduada (sd 0,64; 5 valores); su trampa de accuracy en C5 (1,000 acc / 0,500 balanced) es determinista | Firme (pilotos) · regla: R=3 para el agregado; sin corpus completo | [`repetitions.md`](repetitions.md) |
+
+| **E12** | **Piloto DREAMT: segunda tarea (estadios de sueño)** | ¿Se sostienen H1–H6 cuando cambian la tarea, la etiqueta y el sensor? | 4 sujetos piloto × 20 ventanas de 60 s puras × 5 condiciones + `NC_absent`, en numérico y texto | 960 | balanced, cobertura, claims, coherencia, certeza | LLM 0,300/0,275 en limpio frente a referencia 0,494; abstención en `C1` 25 % numérico vs **98,8 %** texto; `unsupported` 0 en todas las condiciones; **negativo en accuracy**, positivo en el mecanismo | Ejecutado (piloto, sin datos de test) | [`piloto_dreamt.md`](piloto_dreamt.md) |
 
 ### Ejecución y comparación por modelo
 
@@ -1064,13 +1083,104 @@ ventanas).
 
 ---
 
+## 3.13 E12 — Piloto DREAMT: segunda tarea (estadios de sueño)
+
+**Pregunta.** ¿Se sostienen H1–H6 cuando cambian la tarea, la etiqueta y el
+sensor? Las hipótesis de [`hipotesis.md`](hipotesis.md) §3 no mencionan estrés:
+se formulan sobre corrección, confianza, certeza, claims y abstención bajo
+degradación. El estrés es una propiedad de las etiquetas de WESAD.
+
+**Por qué DREAMT.** 100 sujetos con una noche cada uno, Empatica E4 + PSG, y
+puntuación de estadios de sueño hecha por expertos. La etiqueta no es
+autoinforme y el sensor es comercial. Además, el confusor que obligó a abrir
+§7 de [`hipotesis.md`](hipotesis.md) **desaparece**: en WESAD el movimiento
+correlaciona con el estrés de forma espuria (AUC 0,928), mientras que en DREAMT
+el movimiento **es** la definición de vigilia. Aquí degradar ACC destruye
+evidencia legítima, no un atajo.
+
+**Estado.** Preregistro congelado el 2026-11-22 y **piloto ejecutado el mismo
+día**: 4 sujetos, 80 ventanas, 960 llamadas (numérico y texto), 3 inválidas,
+34 min en local con `qwen2.5:7b`. No produce resultados citables (n = 4, sin
+intervalos por sujeto), pero sí una dirección clara. Detalle en
+[`piloto_dreamt.md`](piloto_dreamt.md) §18.
+
+**Lo que dio el piloto (en una línea cada cosa).**
+
+- **Techo de la tarea**: la referencia supervisada con las mismas 18 features y
+  estandarización intra-sujeto (LOSO, 1.309 ventanas) llega a 0,494 de accuracy
+  y 0,418 de balanced; el azar es 0,25. Con la rama *wearable* y sin HRV, la
+  tarea es **débilmente resoluble**.
+- **H1 negativa en limpio**: el LLM queda en 0,300 (numérico) y 0,275 (texto),
+  por debajo de la referencia (−0,194 / −0,219). No es falta de información: es
+  el lector. El numérico colapsa a `n2` (recall 0,70; `n1` 0,10; `rem` 0,05).
+- **H4 es la del par (modelo, representación)**: `C4`/`NC_absent` → 100 % de
+  abstención en las dos vistas, pero **`C1` (ausencia de EDA) 25,0 % numérico
+  frente a 98,8 % textual**, y `C2` (EDA a cero) 0 % en ambas. La ausencia se
+  percibe si se verbaliza; el valor imposible se acepta como medida.
+- **H5 replica**: `unsupported = 0` en todas las condiciones (el modelo deja de
+  citar el canal ausente) y en `C3` numérico el 53,7 % de los claims verdaderos
+  van **contra** la decisión, con la coherencia cayendo de 0,719 a 0,491.
+- **H2a/H2b**: dos valores de confianza (75/85), AUROC de confianza ≤ 0,61,
+  sobreconfianza +0,53; la certeza lingüística es 0,00 en las decididas y
+  −16,7/−28,6 en las abstenciones (reacciona a la abstención, no a la
+  degradación).
+- **H6 no evaluable** aquí: no hay indicador de calidad definido para DREAMT.
+- **Comparación con WESAD**: normalizando contra la referencia de cada eje, el
+  LLM pasa de ≈100 % de la referencia (binario `schmidt`, 0,907 vs 0,905) a
+  ≈61 % en DREAMT (0,300 vs 0,494). Se descompone en tres causas —evidencia más
+  débil (techo 0,494), 4 clases balanceadas (azar 0,25) y una brecha real del
+  lector—, con la advertencia de que DREAMT corrió con Ollama 0.30.7 local y
+  WESAD con 0.40.6 en servidor. Ver `piloto_dreamt.md` §18.8.
+
+**Falsadores.** Solo F2 se activa parcialmente (balanced en limpio 0,300/0,275,
+cerca del azar, con la referencia en 0,418). F1, F3, F4 y F5 no se activan: el
+modelo distingue `C1` de `C2` y el numérico del textual.
+
+**Decisiones fijadas.** Rama wearable (`data_64Hz/`, 14 GB; las etiquetas ya
+viajan en esos ficheros); ventana de 60 s con pureza 1,0; 4 clases
+(W/N1/N2/R) con **N3 excluido**; matriz de 5 condiciones separando **ausencia**
+(`C1_absent_eda`) de **degeneración** (`C2_degenerate_eda`) más
+`C3_absent_hrv`, `C4_absent_core` y `NC_absent`.
+
+**Particularidades que el diseño de WESAD no tenía.**
+
+- La evidencia **no incluye respiración** (el E4 no la mide) y **no incluye
+  HRV**: se midió que `IBI` (cuantizado a 1/64 s con *dither*) y los picos de
+  `BVP` (RR de 328 a 5.641 ms) no permiten SDNN/RMSSD, así que el bloque
+  cardiaco se deriva de la columna `HR` del dispositivo (1 Hz, 0 NaN en las
+  ventanas muestreadas) — desviación **D7**. El modelo tiene que resolver el
+  problema sin el canal respiratorio y sin la feature con más peso teórico.
+- La tabla de firma de H5 es nueva (**3 features, 3 mecanismos**; `n1` se
+  declara sin firma porque no es discriminable de `n2`, y `rem` no firma HR
+  porque su mediana está a −0,2 SD de la referencia del sujeto — desviación
+  **D8**). La temperatura se excluye por confusor de orden de la noche. Se
+  valida con un pre-chequeo P0 antes de interpretar ninguna coherencia.
+- `NC_zero` de la implementación genérica **no se usa**: su semántica queda
+  cubierta por `C2_degenerate_eda`, que sí es válido porque se aplica antes de
+  estandarizar.
+
+**Falsadores.** P0 fallando en ≥2 features; balanced ≈0,25 en limpio; abstención
+idéntica entre `C3`/`C4` y `C0`; numérico ≡ textual; y `C1` ≡ `C2` (el modelo
+no distingue ausencia de valor imposible). Si se cumple cualquiera, el piloto
+se reporta como el resultado que es y no se escala.
+
+Detalle completo en [`piloto_dreamt.md`](piloto_dreamt.md).
+
+---
+
 # 4. Qué es firme y qué es exploratorio
 
 ## Firme
 
 - **E1 · Barrido de degradación** (numérico y textual) con split congelado,
   prompts y few-shot construidos solo con desarrollo, referencia por condición e
-  intervalos bootstrap agrupados por sujeto.
+  intervalos bootstrap agrupados por sujeto. **Salvedad declarada:** la
+  representación que ve el modelo es la normalización intra-sujeto de **E6**
+  (elegida en un análisis exploratorio con datos de evaluación) y el conjunto de
+  features y los umbrales de la compuerta se fijaron con el mismo tipo de
+  información. Firme en **los datos** (sin ventanas de S2–S4), no en la
+  independencia de todas sus decisiones de diseño; ver
+  [`split_dev_test.md`](split_dev_test.md) §6, desviaciones 7–9.
 - **E2 · Resolubilidad** como análisis (no como resultado del LLM).
 - **E3 · Compuerta de consistencia** como mecanismo: determinista, 0 % de falsos
   positivos en limpio, 100 % en datos incoherentes. No usa prompt ni etiquetas.
@@ -1087,6 +1197,12 @@ ventanas).
   (`run_provenance.json`). Muestra de 30 ventanas: la inestabilidad está donde
   debe estar (0 de 9 ventanas de estrés) y la regla R=3 queda fijada en
   [`repetitions.md`](repetitions.md).
+- **E12 · Segundo eje de tarea (DREAMT, piloto)**: preregistro congelado antes
+  de generar y **960/960 respuestas** ejecutadas; P0 8/8. Firme como
+  **demostración de mecanismo** (100 % de abstención con el núcleo ausente,
+  `unsupported = 0`, H4 dependiente de la representación 25,0 % vs 98,8 %) y
+  como **resultado negativo de precisión** (LLM 0,300/0,275 frente a referencia
+  0,494). **No firme como medida de accuracy**: n = 4 sujetos, sin intervalos.
 - **Infraestructura** (E0): corpus, SQI, degradación, procedencia.
 
 ## Exploratorio
@@ -1098,7 +1214,9 @@ ventanas).
   resultado.
 - **E6 · Representación centrada (E12)**: post hoc y con normalización
   transductiva por sujeto (sin etiquetas, pero usando la distribución del sujeto
-  que se evalúa).
+  que se evalúa). **Ojo:** aunque la ficha esté aquí, su normalización es la que
+  usa E1 en producción; la elección se hizo sobre las 705 ventanas (con S2–S4) y
+  se declara como desviación 7 en [`split_dev_test.md`](split_dev_test.md) §6.
 
 ## Negativo documentado
 
@@ -1116,6 +1234,12 @@ declarada (`FEW_SHOT_PROVENANCE`) y dos tests que bloquean la reaparición de lo
 valores antiguos. Todo lo ejecutado antes de esa corrección es material de
 desarrollo. Detalle y desviaciones declaradas:
 [`split_dev_test.md`](split_dev_test.md).
+
+La **auditoría del 2026-11-19** comprobó que el split se respetó en los datos
+(los corpus de producción no tienen ventanas de S2–S4) pero no del todo en el
+diseño: añadió las desviaciones **7–10** (normalización z de E12 en producción,
+conjunto de 23 features, umbrales de la compuerta y decisiones menores). La
+corrección cara —recalcular E1 con referencia de desarrollo— **no** se ejecutó.
 
 ---
 

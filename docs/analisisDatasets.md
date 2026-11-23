@@ -552,6 +552,47 @@ distinta.
 | **UBFC-Phys**, **SWELL-KW** | Inducción de estrés con EDA/ECG (candidatos) | No incorporados; hay que verificar canales, licencia y calidad | **Validación externa del endpoint** (pendiente) |
 | **WearableQA**, **PhysioBench** | Benchmarks listos para comparar | No son datos crudos; tareas ya definidas | Comparabilidad, no experimento propio |
 
+#### 7.4.1 DREAMT: inventario verificado (2026-11-22)
+
+Comprobado sobre `results/input/dreamt/`, no sobre la ficha del repositorio:
+
+| Elemento | Valor |
+|---|---|
+| Sujetos | 100, **una noche** cada uno |
+| `data_64Hz/` | 14 GB: solo Empatica E4 (BVP, ACC, TEMP, EDA, HR, IBI) **+ etiquetas de sueño y apnea** |
+| `data_100Hz/` | 101 GB: PSG (EEG, EOG, EMG mentón, ECG, flujo, tórax, abdomen, SpO2) + E4 |
+| Duración | 8,6 h de E4 (incluye «P» de preparación); 6,7 h de PSG |
+| Etiquetas | estadio (P/W/N1/N2/N3/R) y eventos de apnea, constantes por época de 30 s |
+| Metadatos | edad, sexo, IMC, AHI, OAHI, SaO2, índice de arousal, historia clínica |
+| **Estrés / afecto** | **no existe** (el ZIP no incluye cuestionarios) |
+| Licencia | PhysioNet **Restricted** 1.5.0 |
+
+Consecuencias que cambian el papel del dataset:
+
+- **Las etiquetas viajan en la carpeta de 64 Hz**: el ground truth es PSG, pero no
+  hace falta la carpeta de 101 GB para usarlo. La rama *wearable* (14 GB) sirve
+  completa.
+- La rejilla de 30 s está anclada **al inicio de la noche puntuada**, no a la
+  primera fila del CSV (11 s de desfase en S004). Anclar mal produce un 27 % de
+  épocas «mixtas» inexistentes.
+- «P» ocupa el **22 %** del registro y se excluye; **N3 está en 6 de 13 sujetos**
+  (5,3 % de las épocas).
+- `IBI` está en **segundos** (el `Metadata.txt` dice ms) y `ACC` en cuentas de
+  **1/64 g**.
+- **HRV no es calculable en la rama wearable**: `IBI` está cuantizado a 1/64 s
+  con *dither* (0–21 intervalos por ventana tras deduplicar) y los picos de
+  `BVP` dan RR de 328 a 5.641 ms. La columna `HR` del dispositivo (1 Hz, 0 NaN
+  en las ventanas medidas) sí es utilizable, pero solo da HR media, no HRV.
+- **EDA de muñeca**: 0,036–1,699 µS en S002 frente a 0,3–20 µS del pecho de
+  WESAD; el umbral SCR de 0,05 µS produce casi cero detecciones, así que SCR
+  queda fuera de la tabla de firma.
+
+Por eso DREAMT deja de ser «complemento» y pasa a ser el **eje de generalidad de
+la segunda tarea**: no sustituye a WESAD para el endpoint afectivo, pero
+replica H1–H6 sobre otra etiqueta y otro sensor. Preregistro en
+[`piloto_dreamt.md`](piloto_dreamt.md), con las desviaciones D7 (sin HRV) y D8
+(tabla de firma de 3 features) declaradas antes de generar respuestas.
+
 ### 7.5 Datasets externos ya probados: PhysioNet 2017 y K-EmoCon (controles externos, no alternativas a WESAD)
 
 PhysioNet/CinC 2017 y K-EmoCon **no son alternativas a WESAD**: responden a una

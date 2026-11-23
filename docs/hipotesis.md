@@ -54,6 +54,15 @@ La literatura previa ha abordado la degradación de telemetría, la calibración
 
 *Nota metodológica: Las hipótesis incluyen su operacionalización y criterios de refutación para garantizar que puedan ser falsadas mediante modelos mixtos, bootstrap y correcciones estrictas por comparaciones múltiples (Holm, FDR).*
 
+**Las hipótesis no dependen de la etiqueta ni del fenómeno.** Todas se formulan
+sobre *corrección, confianza, certeza lingüística, abstención y respaldo de
+claims bajo degradación controlada de la entrada*. «Estrés vs baseline» es una
+propiedad de las etiquetas de WESAD, no del constructo: la tarea es un parámetro
+del experimento y puede cambiarse sin tocar H1–H6. Lo único que debe
+re-instanciarse por dataset es la sección de **confusores** (§7 aquí para WESAD;
+§14.2 de [`piloto_dreamt.md`](piloto_dreamt.md) para la tarea de sueño), y la
+tabla de firma por clase que usa H5.
+
 ### H1. Corrección bajo degradación
 *   **Enunciado:** La corrección de las respuestas disminuirá con la degradación, con un efecto que depende del tipo de perturbación y que excederá la pérdida de información medida por el modelo de referencia (*coste en exceso*).
 *   **Operacionalización:** Corrección (exactitud y macro-F1) por condición. Interacción tipo × severidad. Coste en exceso = Δ corrección del LLM − Δ corrección del modelo de referencia.
@@ -229,6 +238,18 @@ Y la vista LLM (`numeric_llm`, `text_llm`) filtrará los canales `acc` y `emg` d
 
 ## 8. Decisiones a fijar en el piloto (Octubre-Noviembre)
 1.  **Tarea y datos:** Candidato estrés vs. reposo con WESAD. Criterio de paso: el LLM supera claramente el azar en la condición original.
+    *Resuelto y ampliado (2026-11-22):* la tarea es un parámetro, no una
+    dependencia de las hipótesis. Se añade un **segundo eje de tarea** con
+    etiquetas de experto y otro sensor (estadios de sueño, DREAMT), preregistrado
+    en [`piloto_dreamt.md`](piloto_dreamt.md); el criterio de paso de su piloto
+    son los falsadores F1–F5 de ese documento.
+    *Piloto ejecutado (2026-11-22, 960 llamadas):* el criterio de paso se
+    cumple (solo F2 se activa parcialmente) y el **mecanismo** se replica
+    (100 % de abstención con el núcleo ausente, `unsupported = 0`), pero la
+    **precisión no**: LLM 0,300/0,275 frente a la referencia supervisada 0,494.
+    La segunda tarea aporta el contraste ausencia vs degeneración y el hallazgo
+    de que **H4 depende de la representación** (25,0 % numérico vs 98,8 %
+    textual con EDA ausente). Detalle en `piloto_dreamt.md` §18.
 2.  **Modelo de referencia** para la resolubilidad y margen *m*.
 3.  **Perturbaciones y niveles:** Tres tipos × tres niveles + condición original.
 4.  **Representaciones:** Secuencia numérica y resumen estadístico.

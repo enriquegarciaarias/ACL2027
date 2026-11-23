@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from sources.ingestion.represent import LLM_ALLOWED_FEATURES
 from sources.phase2.binary_variants import (
@@ -27,6 +27,7 @@ from sources.phase2.binary_variants import (
 )
 from sources.phase2.response_schema import (
     DECISION_MODE_AFFECTIVE,
+    DECISION_MODE_SLEEP4,
     DECISION_MODE_STRESS_BINARY,
     DECISION_MODES,
 )
@@ -204,6 +205,13 @@ STANDARDIZED_NOTE = (
     "subject's session reference and +1 is one scale unit above it. Small "
     "deviations (within about ±1) are normal. Use the dominant pattern across "
     "features; abstain only when key features are missing or clearly contradictory."
+)
+
+#: Variante para la tarea de sueño: la referencia es la noche completa del
+#: sujeto, no una «sesión». El resto del texto se mantiene idéntico para que la
+#: representación sea la misma (H3 compara formatos, no redacciones).
+SLEEP_STANDARDIZED_NOTE = STANDARDIZED_NOTE.replace(
+    "the subject's session reference", "the subject's whole-night reference"
 )
 
 STANDARDIZED_RUBRIC = """Physiological decision guidance (use patterns, not fixed thresholds):
@@ -415,6 +423,138 @@ BINARY_RULE_SETS: dict[str, tuple[str, ...]] = {
     "valence_binary": VALENCE_RULES,
 }
 
+# ---------------------------------------------------------------------------
+# Segunda tarea base (DREAMT): estadios de sueño
+# ---------------------------------------------------------------------------
+# El bloque se redacta en inglés (es el texto que ve el modelo) y no menciona
+# el dataset, el sujeto ni la hora de la noche: la tarea se describe por la
+# fisiología, no por el protocolo. N3 no aparece en el espacio de decisión
+# (preregistro §6), así que el prompt no lo ofrece ni como opción ni como
+# distractor.
+
+SLEEP_TASK_NOTE: str = (
+    "Task: classify the sleep stage of a 60-second window from wearable "
+    "signals (heart rate, skin conductance, skin temperature and wrist "
+    "movement). Stages: "
+    "wake, n1 (light transition), n2 (stable non-REM), rem (rapid eye movement)."
+)
+
+SLEEP_SCHEMA_DECISION: str = '"wake" | "n1" | "n2" | "rem" | "abstain"'
+
+SLEEP_RULES: tuple[str, ...] = (
+    '- Use "wake" when movement, heart rate and skin conductance activity are '
+    "jointly elevated.",
+    '- Use "n2" when movement is minimal and heart rate is below the '
+    "night reference.",
+    '- Use "rem" when movement is minimal but skin conductance activity is '
+    "above the night reference (REM is not a quiet stage for the autonomic "
+    "system).",
+    '- Use "n1" only when the pattern clearly differs from n2 in the direction '
+    "of wake, without reaching the wake pattern.",
+    "- Movement is direct evidence in this task, not a confounder: use it.",
+    "- If the channels needed to separate the candidate stages are missing or "
+    'contradict each other, set decision to "abstain".',
+)
+
+#: Features que ve el modelo en esta tarea (18 = 2 ecg + 7 eda + 4 temp + 5 acc).
+#:
+#: Quedan fuera cinco claves del vocabulario común:
+#:
+#: * ``ecg_sdnn_ms``, ``ecg_rmssd_ms`` y ``ecg_n_beats``: la rama *wearable* no
+#:   permite HRV (desviación D7).
+#: * ``eda_scr_amplitude_mean_us`` y ``eda_scr_amplitude_max_us``: están nulas
+#:   en el 91 % de las 2.295 ventanas medidas (la EDA de muñeca apenas produce
+#:   SCR). Dejarlas dentro enseñaría al modelo que «not available» es el estado
+#:   normal y debilitaría la detección de ausencia (H4).
+SLEEP_FEATURES: tuple[str, ...] = (
+    "ecg_hr_bpm",
+    "ecg_rr_mean_ms",
+    "eda_mean_us",
+    "eda_std_us",
+    "eda_slope_us_per_s",
+    "eda_tonic_mean_us",
+    "eda_phasic_std_us",
+    "eda_scr_count",
+    "eda_scr_rate_per_min",
+    "temp_mean_degc",
+    "temp_std_degc",
+    "temp_slope_degc_per_s",
+    "temp_range_degc",
+    "acc_mean_g",
+    "acc_std_g",
+    "acc_p95_g",
+    "acc_energy_g2",
+    "acc_motion_fraction",
+)
+
+#: Modalidades presentes en la rama *wearable* (sin respiración ni EMG).
+SLEEP_MODALITIES: frozenset[str] = frozenset({"ecg", "eda", "temp", "acc"})
+
+#: Razonamientos de los ejemplos de sueño. Se redactan sobre el **patrón**
+#: (arriba/abajo de la referencia de la noche) y no sobre cifras concretas,
+#: porque los valores se calculan en tiempo de ejecución desde los sujetos de
+#: desarrollo y no deben contradecirlos.
+SLEEP_FEW_SHOT_REASONING: dict[str, str] = {
+    "wake": (
+        "Movement well above the night reference together with a heart rate "
+        "above it indicates wake."
+    ),
+    "n1": (
+        "Movement and heart rate between those of wake and stable sleep, "
+        "without a distinctive autonomic pattern, is consistent with N1."
+    ),
+    "n2": (
+        "Minimal movement with heart rate below the night reference and no "
+        "skin conductance activity above it is consistent with stable N2 sleep."
+    ),
+    "rem": (
+        "Minimal movement with skin conductance activity at or above the night "
+        "reference, without the heart-rate elevation of wake, is consistent "
+        "with REM."
+    ),
+}
+
+
+def render_sleep_few_shot_examples(
+    exemplars: Mapping[str, Mapping[str, float]],
+    reasoning: Mapping[str, str] | None = None,
+) -> str:
+    """Renderiza ejemplos few-shot de estadios a partir de los sujetos de dev.
+
+    Los valores llegan ya calculados por el runner desde los sujetos de
+    desarrollo (``S002``, ``S010``, ``S026``) en la escala z intra-sujeto. No se
+    fijan aquí para que no puedan quedar desfasados de los datos ni convertirse
+    en una fuga de estadísticos de evaluación.
+    """
+    order = ("wake", "n1", "n2", "rem")
+    labels = {
+        "wake": "Wake",
+        "n1": "N1 (light transition)",
+        "n2": "N2 (stable non-REM)",
+        "rem": "REM",
+    }
+    lines = [
+        "Examples (illustrative within-subject standardized patterns, not fixed thresholds):",
+        "",
+    ]
+    index = 0
+    for label in order:
+        values = exemplars.get(label)
+        if not values:
+            continue
+        index += 1
+        features = ", ".join(
+            f"{name}={format_example_value(value, True)} SD"
+            for name, value in values.items()
+        )
+        lines.append(f"Example {index} - {labels[label]}:")
+        lines.append(f"Features: {features}")
+        lines.append(f"Decision: {label}")
+        if reasoning and reasoning.get(label):
+            lines.append(f"Reasoning: {reasoning[label]}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
 # Rúbrica de confianza graduada (P4). El modelo tiende a saturar la confianza
 # en un único valor (85 en 703/705 respuestas del corpus), lo que inutiliza la
 # calibración y el umbral selectivo. Esta rúbrica ancla la escala a la fuerza
@@ -554,6 +694,8 @@ def estimate_tokens(text: str) -> int:
 def filter_eda_hr_modalities(
     modalities: Mapping[str, dict[str, Any]],
     include_additional: bool = False,
+    allowed_modalities: Iterable[str] | None = None,
+    feature_allowlist: Iterable[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Filtra un bloque de modalidades para incluir solo EDA + HR.
 
@@ -567,8 +709,31 @@ def filter_eda_hr_modalities(
     definidas en ``ADDITIONAL_FEATURES``. Esto puede ayudar a diferenciar
     estados que EDA+HR sola no distingue (ej. baseline vs meditation).
 
+    ``allowed_modalities`` y ``feature_allowlist`` sustituyen ambos criterios y
+    los usan las tareas de otros datasets. En la tarea de sueño el acelerómetro
+    **sí** es evidencia (en WESAD era un confusor de movimiento), así que la
+    lista blanca incluye ``acc``.
+
     Las modalidades que no contienen ninguna feature permitida se omiten.
     """
+    if feature_allowlist is not None or allowed_modalities is not None:
+        allowed = set(feature_allowlist) if feature_allowlist is not None else None
+        modalities_allowed = (
+            set(allowed_modalities) if allowed_modalities is not None else None
+        )
+        filtered: dict[str, dict[str, Any]] = {}
+        for modality, feature_block in modalities.items():
+            if modalities_allowed is not None and modality not in modalities_allowed:
+                continue
+            kept = {
+                name: meta
+                for name, meta in feature_block.items()
+                if allowed is None or name in allowed
+            }
+            if kept:
+                filtered[modality] = kept
+        return filtered
+
     allowed = set(EDA_HR_FEATURES)
     if include_additional:
         allowed = allowed | set(ADDITIONAL_FEATURES)
@@ -614,6 +779,7 @@ def build_numeric_prompt(
     graded_confidence: bool = False,
     dataset_note: str | None = None,
     nonstress_classes: tuple[str, ...] | None = None,
+    extra_examples: str | None = None,
 ) -> str:
     """Construye un prompt en inglés a partir de una representación ``numeric_llm``.
 
@@ -646,6 +812,10 @@ def build_numeric_prompt(
         nonstress_classes: clases de WESAD que forman ``non-stress`` en el
             prompt binario. Por defecto, la variante ``schmidt``
             (``baseline`` + ``amusement``); ``meditation`` queda fuera.
+        extra_examples: bloque de ejemplos ya renderizado que sustituye a los
+            ejemplos afectivos o binarios. Lo usa la tarea de sueño, cuyos
+            ejemplares se calculan en tiempo de ejecución desde los sujetos de
+            desarrollo.
 
     Returns:
         string del prompt listo para enviar al LLM.
@@ -654,9 +824,17 @@ def build_numeric_prompt(
         ValueError: si el prompt estimado excede ``num_ctx`` (exclusión
             registrada, no se trunca).
     """
-    modalities = filter_eda_hr_modalities(
-        payload.get("modalities", {}), include_additional=include_additional
-    )
+    sleep = decision_mode == DECISION_MODE_SLEEP4
+    if sleep:
+        modalities = filter_eda_hr_modalities(
+            payload.get("modalities", {}),
+            allowed_modalities=SLEEP_MODALITIES,
+            feature_allowlist=SLEEP_FEATURES,
+        )
+    else:
+        modalities = filter_eda_hr_modalities(
+            payload.get("modalities", {}), include_additional=include_additional
+        )
 
     if decision_mode not in DECISION_MODES:
         raise ValueError(
@@ -673,7 +851,15 @@ def build_numeric_prompt(
     lines: list[str] = []
     lines.append("You are a physiological signal analysis assistant.")
     lines.append("")
-    if binary:
+    if sleep:
+        lines.append(SLEEP_TASK_NOTE)
+        features_header = (
+            "Input features (within-subject z-scores; 0 = subject mean, "
+            "±1 = 1 standard deviation):"
+            if standardized
+            else "Input features (wearable channels):"
+        )
+    elif binary:
         lines.append(
             render_task_note(classes)
             if decision_mode == DECISION_MODE_STRESS_BINARY
@@ -713,11 +899,17 @@ def build_numeric_prompt(
         lines.append(dataset_note)
         lines.append("")
 
-    lines.append(STANDARDIZED_NOTE if standardized else INTER_SUBJECT_NOTE)
+    lines.append(
+        (SLEEP_STANDARDIZED_NOTE if sleep else STANDARDIZED_NOTE)
+        if standardized
+        else INTER_SUBJECT_NOTE
+    )
     lines.append("")
 
     if use_few_shot:
-        if binary and decision_mode == DECISION_MODE_STRESS_BINARY:
+        if extra_examples:
+            lines.append(extra_examples)
+        elif binary and decision_mode == DECISION_MODE_STRESS_BINARY:
             lines.append(
                 render_binary_few_shot_examples(
                     FEW_SHOT_EXEMPLARS_STANDARDIZED
@@ -766,6 +958,8 @@ def build_numeric_prompt(
     lines.append("{")
     if binary:
         lines.append(f'  "decision": {BINARY_SCHEMAS[decision_mode]},')
+    elif sleep:
+        lines.append(f'  "decision": {SLEEP_SCHEMA_DECISION},')
     else:
         lines.append('  "decision": "baseline" | "stress" | "amusement" | "meditation" | "abstain",')
     lines.append('  "confidence": <integer 0-100>,')
@@ -787,6 +981,9 @@ def build_numeric_prompt(
             else BINARY_RULE_SETS[decision_mode]
         )
         for rule in rules:
+            lines.append(rule)
+    elif sleep:
+        for rule in SLEEP_RULES:
             lines.append(rule)
     else:
         lines.append("- Consider all four classes equally; do not bias toward any particular state.")
@@ -817,6 +1014,8 @@ def build_text_prompt(
     decision_mode: str = "affective",
     graded_confidence: bool = False,
     nonstress_classes: tuple[str, ...] | None = None,
+    extra_examples: str | None = None,
+    dataset_note: str | None = None,
 ) -> str:
     """Construye un prompt en inglés a partir de una representación ``text_llm``.
 
@@ -852,11 +1051,14 @@ def build_text_prompt(
         if nonstress_classes is not None
         else _DEFAULT_NONSTRESS_CLASSES
     )
+    sleep = decision_mode == DECISION_MODE_SLEEP4
 
     lines: list[str] = []
     lines.append("You are a physiological signal analysis assistant.")
     lines.append("")
-    if binary:
+    if sleep:
+        lines.append(SLEEP_TASK_NOTE)
+    elif binary:
         lines.append(
             render_task_note(classes)
             if decision_mode == DECISION_MODE_STRESS_BINARY
@@ -867,11 +1069,21 @@ def build_text_prompt(
                      "based on the physiological signal summary below.")
     lines.append("")
 
-    lines.append(STANDARDIZED_NOTE if standardized else INTER_SUBJECT_NOTE)
+    if dataset_note:
+        lines.append(dataset_note)
+        lines.append("")
+
+    lines.append(
+        (SLEEP_STANDARDIZED_NOTE if sleep else STANDARDIZED_NOTE)
+        if standardized
+        else INTER_SUBJECT_NOTE
+    )
     lines.append("")
 
     if use_few_shot:
-        if binary and decision_mode != DECISION_MODE_STRESS_BINARY:
+        if extra_examples:
+            lines.append(extra_examples)
+        elif binary and decision_mode != DECISION_MODE_STRESS_BINARY:
             use_few_shot = False
         elif binary:
             lines.append(
@@ -890,7 +1102,7 @@ def build_text_prompt(
         lines.append("")
         lines.append(
             "Now classify this window based only on the features below. "
-            "The input is a textual summary of the same chest features."
+            "The input is a textual summary of the same channels."
         )
         lines.append("")
 
@@ -925,6 +1137,8 @@ def build_text_prompt(
     lines.append("{")
     if binary:
         lines.append(f'  "decision": {BINARY_SCHEMAS[decision_mode]},')
+    elif sleep:
+        lines.append(f'  "decision": {SLEEP_SCHEMA_DECISION},')
     else:
         lines.append('  "decision": "baseline" | "stress" | "amusement" | "meditation" | "abstain",')
     lines.append('  "confidence": <integer 0-100>,')
@@ -946,6 +1160,9 @@ def build_text_prompt(
             else BINARY_RULE_SETS[decision_mode]
         )
         for rule in rules:
+            lines.append(rule)
+    elif sleep:
+        for rule in SLEEP_RULES:
             lines.append(rule)
     else:
         lines.append("- Consider all four classes equally; do not bias toward any particular state.")

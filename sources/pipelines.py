@@ -36,6 +36,7 @@ EXPERIMENTS: tuple[str, ...] = (
     "centering",
     "physionet",
     "kemocon",
+    "dreamt",
 )
 DEFAULT_EXPERIMENT = "controls"
 
@@ -84,10 +85,15 @@ def _load_script(name: str):
     return module
 
 
-def _run_script(name: str, argv: Sequence[str]) -> None:
-    """Ejecuta ``main(argv)`` de un script del repositorio."""
+def _run_script(name: str, argv: Sequence[str]) -> Any:
+    """Ejecuta ``main(argv)`` de un script del repositorio.
+
+    Devuelve lo que devuelva ``main`` (los runners nuevos devuelven un código
+    de salida; los antiguos, ``None``) para que el llamante pueda abortar si
+    una fase previa falló.
+    """
     module = _load_script(name)
-    module.main(list(argv))
+    return module.main(list(argv))
 
 
 def external_data_dir(name: str) -> str | None:
@@ -171,6 +177,20 @@ def build_generate_argv(
         _append_flag(argv, "--subjects", getattr(args, "subjects", None))
         _append_flag(argv, "--max-windows", getattr(args, "max_windows", None))
         _append_flag(argv, "--tag", getattr(args, "tag", None))
+    elif experiment == "dreamt":
+        # ``run_p4_dreamt`` es un runner con fases: la fase se deduce del --proc.
+        argv.insert(0, "generate")
+        argv.insert(0, "--phase")
+        _append_flag(argv, "--data-dir", external_data_dir("dreamt"))
+        _append_flag(argv, "--representation", getattr(args, "representation", None))
+        _append_flag(argv, "--conditions", getattr(args, "conditions", None))
+        _append_flag(argv, "--windows-per-class", getattr(args, "windows_per_class", None))
+        _append_flag(argv, "--seed", getattr(args, "seed", None))
+        _append_flag(argv, "--subjects", getattr(args, "subjects", None))
+        if getattr(args, "think", False):
+            argv.append("--think")
+        if getattr(args, "force", False):
+            argv.append("--force")
     return argv
 
 
@@ -180,6 +200,7 @@ def _script_for_generate(experiment: str) -> str | None:
         "centering": "run_e12_pilot",
         "physionet": "run_p3_physionet",
         "kemocon": "run_p3_kemocon",
+        "dreamt": "run_p4_dreamt",
     }.get(experiment)
 
 
@@ -222,6 +243,8 @@ def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
         _append_flag(argv, "--decision-mode", getattr(args, "decision_mode", None))
         _append_flag(argv, "--nonstress-variant", getattr(args, "nonstress_variant", None))
         _append_flag(argv, "--temperature", getattr(args, "temperature", None))
+        # Eje de relevancia de H5 (preregistro docs/h5_relevancia.md).
+        _append_flag(argv, "--coherence-set", getattr(args, "coherence_set", None))
         _append_flag(argv, "--compare-with", getattr(args, "compare_with", None))
         _append_flag(argv, "--split", getattr(args, "split", None))
         _append_flag(argv, "--output", output)
@@ -237,6 +260,22 @@ def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
         _append_flag(argv, "--data-dir", external_data_dir("kemocon"))
         _append_flag(argv, "--task", getattr(args, "task", None))
         _append_flag(argv, "--subjects", getattr(args, "subjects", None))
+    elif experiment == "dreamt":
+        # El runner calcula las métricas; el análisis no reimplementa nada.
+        argv.extend(["--phase", "evaluate"])
+        _append_flag(
+            argv,
+            "--model",
+            getattr(args, "model", None)
+            or ((processControl.defaults or {}).get("llm", {}) or {}).get(
+                "primary_model"
+            ),
+        )
+        _append_flag(argv, "--representation", getattr(args, "representation", None))
+        _append_flag(argv, "--data-dir", external_data_dir("dreamt"))
+        _append_flag(argv, "--conditions", getattr(args, "conditions", None))
+        if getattr(args, "reference", False):
+            argv.append("--reference")
     return argv
 
 
@@ -247,6 +286,7 @@ def _script_for_evaluate(experiment: str) -> str:
         "centering": "analyze_calibration",
         "physionet": "analyze_p3_physionet",
         "kemocon": "run_p3_kemocon",
+        "dreamt": "run_p4_dreamt",
     }[experiment]
 
 
@@ -361,6 +401,12 @@ def _subjects_for_plan(args: Any) -> list[str]:
     if subjects:
         return subjects
 
+    if experiment_of(args) == "dreamt":
+        # El split de DREAMT es propio (sujetos de 4 dígitos, ver preregistro §7).
+        from scripts.run_p4_dreamt import PILOT_SUBJECTS
+
+        return list(PILOT_SUBJECTS)
+
     single = str(getattr(args, "subject", None) or "").strip().upper()
     if single.startswith("S") and single[1:].isdigit():
         return [single]
@@ -375,6 +421,25 @@ def _subjects_for_plan(args: Any) -> list[str]:
 
 def _estimate_calls(experiment: str, subjects: Sequence[str], args: Any) -> int | None:
     """Estimación de llamadas al LLM (``None`` si no es calculable)."""
+    if experiment == "dreamt":
+        # El número de ventanas no sale de INGEST: se muestrea por clase desde
+        # las noches de DREAMT (2 épocas consecutivas puras por ventana).
+        per_class = int(getattr(args, "windows_per_class", None) or 5)
+        n_classes = 4
+        conditions_arg = str(getattr(args, "conditions", "") or "")
+        n_conditions = (
+            len([c for c in conditions_arg.split(",") if c.strip()])
+            if conditions_arg
+            else 6
+        )
+        representation = str(getattr(args, "representation", None) or "both")
+        n_views = 2 if representation == "both" else 1
+        windows = per_class * n_classes * max(len(subjects), 1)
+        cap = getattr(args, "max_windows", None)
+        if cap:
+            windows = min(windows, int(cap) * max(len(subjects), 1))
+        return windows * n_conditions * n_views
+
     counts = [n for n in (_n_windows(s) for s in subjects) if n is not None]
     if not counts and experiment != "physionet":
         return None
@@ -494,7 +559,7 @@ def _paths_info(experiment: str, args: Any) -> dict[str, Any]:
                 "(estructura esperada: results/input/<dataset>/S*/S*.pkl)"
             )
     # Datos de los experimentos externos: deben estar dentro del proyecto.
-    if experiment in ("physionet", "kemocon"):
+    if experiment in ("physionet", "kemocon", "dreamt"):
         from sources.external.paths import DEFAULT_DIRS, REQUIRED_FILES
 
         configured = external_data_dir(experiment)
@@ -539,6 +604,11 @@ def _plan(phase: str) -> dict[str, Any]:
         "repetitions": max(int(getattr(args, "repetitions", None) or 1), 1),
         "sample_windows": getattr(args, "sample_windows", None),
     }
+    if experiment == "dreamt":
+        plan["windows_per_class"] = int(
+            getattr(args, "windows_per_class", None) or 5
+        )
+        plan["phase"] = getattr(args, "phase", None) or phase
     if phase == "generate":
         plan["think"] = bool(getattr(args, "think", False))
         plan["estimated_llm_calls"] = _estimate_calls(
@@ -569,8 +639,10 @@ def _plan(phase: str) -> dict[str, Any]:
         plan["bootstrap"] = getattr(args, "bootstrap", None)
         # En evaluación, sin bandera el analizador deduce el diseño del propio
         # corpus (procedencia de las respuestas), no de un valor por defecto.
+        plan["decision_mode"] = getattr(args, "decision_mode", None) or "auto"
         plan["nonstress_variant"] = getattr(args, "nonstress_variant", None) or "auto"
         plan["temperature"] = getattr(args, "temperature", None) or "auto"
+        plan["coherence_set"] = getattr(args, "coherence_set", None) or "primary"
         if compare:
             # La evaluación de un modelo suelto no aplica: se comparan varios.
             plan["model"] = None
@@ -616,6 +688,27 @@ def run_generate() -> None:
         f"[GENERATE] experimento={experiment} → "
         f"scripts/{_script_for_generate(experiment)}.py {' '.join(argv)}",
     )
+
+    if experiment == "dreamt":
+        # La generación necesita los prompts que construye ``prepare`` (que
+        # además ejecuta el pre-chequeo P0 y sale con código 4 si falla).
+        rest = [
+            value
+            for index, value in enumerate(argv)
+            if not (index < 2 and value in ("--phase", "generate"))
+        ]
+        code = _run_script(
+            "run_p4_dreamt", ["--phase", "prepare", *rest]
+        )
+        if isinstance(code, int) and code != 0:
+            raise SystemExit(code)
+        code = _run_script(
+            "run_p4_dreamt", ["--phase", "generate", *rest]
+        )
+        if isinstance(code, int) and code != 0:
+            raise SystemExit(code)
+        return
+
     _run_script(_script_for_generate(experiment), argv)
 
 

@@ -5,16 +5,26 @@ from __future__ import annotations
 import pytest
 
 from sources.phase3.claims import (
+    COHERENCE_CATEGORIES,
+    MIN_CLAIMS_FOR_RATE,
     ClaimVerdict,
+    claim_coherence,
+    coherence_side,
     direction_compatible,
     expected_direction,
     magnitude_bucket,
     parse_prompt_features,
+    response_coherence,
+    summarize_coherence,
     summarize_verdicts,
     verify_claim,
     verify_claims,
 )
 from sources.phase3.certainty import linguistic_certainty
+from sources.phase3.signatures import (
+    PRIMARY_FEATURES,
+    SENSITIVITY_FEATURES,
+)
 
 PROMPT = """You are a physiological signal analysis assistant.
 
@@ -331,3 +341,285 @@ def test_recovery_accepts_cli_binary_alias():
     recovered = recover_llm_record(record, decision_mode="binary")
 
     assert recovered is not None and recovered["decision"] == "non-stress"
+
+
+# ---------------------------------------------------------------------------
+# Relevancia: coherencia del claim con la decisión (preregistro H5)
+# ---------------------------------------------------------------------------
+
+
+def _coherence_claim(metric: str = "ecg_hr_bpm", direction: str = "increase") -> dict:
+    return {
+        "metric": metric,
+        "channel": "ecg",
+        "direction": direction,
+        "magnitude": "medium",
+    }
+
+
+def _verdict(category: str = "supported", metric: str = "ecg_hr_bpm") -> ClaimVerdict:
+    return ClaimVerdict(
+        metric=metric,
+        channel="ecg",
+        direction="increase",
+        magnitude="medium",
+        category=category,
+        observed=1.0,
+        observed_unit="SD",
+        direction_ok=True,
+        magnitude_ok=True,
+    )
+
+
+def _pair(
+    subject: str = "S5",
+    side: str = "stress",
+    truth: str = "supported",
+    coherence: str = "coherent",
+) -> dict:
+    return {
+        "subject": subject,
+        "side": side,
+        "truth": truth,
+        "coherence": coherence,
+    }
+
+
+def test_coherence_categories_catalog():
+    assert COHERENCE_CATEGORIES == (
+        "coherent",
+        "contrary",
+        "neutral",
+        "no_signature",
+        "not_applicable",
+    )
+
+
+def test_coherence_side_maps_binary_and_affective_labels():
+    assert coherence_side("stress") == "stress"
+    assert coherence_side("non-stress") == "non-stress"
+    # Las 4 clases se reinterpretan con el mapa de la jerarquía Schmidt.
+    assert coherence_side("baseline") == "non-stress"
+    assert coherence_side("amusement") == "non-stress"
+    assert coherence_side("meditation") == "non-stress"
+    assert coherence_side("abstain") is None
+    assert coherence_side(None) is None
+    assert coherence_side("") is None
+
+
+def test_claim_coherence_stress_side():
+    coherent = claim_coherence(_coherence_claim("ecg_hr_bpm", "increase"), "stress")
+    contrary = claim_coherence(_coherence_claim("ecg_hr_bpm", "decrease"), "stress")
+    assert (coherent.category, coherent.sign, coherent.alignment) == ("coherent", 1, 1)
+    assert (contrary.category, contrary.alignment) == ("contrary", -1)
+    # Las features con firma negativa se invierten igual: SDNN baja es coherente con stress.
+    assert claim_coherence(_coherence_claim("ecg_sdnn_ms", "decrease"), "stress").category == (
+        "coherent"
+    )
+    assert claim_coherence(_coherence_claim("ecg_sdnn_ms", "increase"), "stress").category == (
+        "contrary"
+    )
+
+
+def test_claim_coherence_non_stress_is_mirror():
+    assert claim_coherence(_coherence_claim("ecg_hr_bpm", "decrease"), "non-stress").category == (
+        "coherent"
+    )
+    assert claim_coherence(_coherence_claim("ecg_hr_bpm", "increase"), "non-stress").category == (
+        "contrary"
+    )
+    assert claim_coherence(_coherence_claim("ecg_sdnn_ms", "increase"), "non-stress").category == (
+        "coherent"
+    )
+
+
+def test_claim_coherence_stable_is_neutral_on_both_sides():
+    for decision in ("stress", "non-stress"):
+        block = claim_coherence(_coherence_claim("ecg_hr_bpm", "stable"), decision)
+        assert block.category == "neutral"
+        assert block.alignment == 0
+
+
+def test_claim_coherence_metric_without_signature():
+    # 'temperature' se normaliza a temp_mean_degc, que está fuera de la firma.
+    block = claim_coherence(_coherence_claim("temperature", "increase"), "stress")
+    assert block.metric == "temp_mean_degc"
+    assert block.category == "no_signature"
+    assert block.sign == 0
+    assert block.alignment is None
+
+
+def test_claim_coherence_respects_the_feature_set():
+    claim = _coherence_claim("resp_interval_cv", "increase")
+    assert claim_coherence(claim, "stress", features=PRIMARY_FEATURES).category == "no_signature"
+    assert claim_coherence(claim, "stress", features=SENSITIVITY_FEATURES).category == "coherent"
+
+
+def test_claim_coherence_abstain_is_not_applicable():
+    block = claim_coherence(_coherence_claim(), "abstain")
+    assert block.category == "not_applicable"
+    assert block.side is None
+
+
+def test_claim_coherence_unknown_direction_is_not_signature():
+    block = claim_coherence(_coherence_claim("ecg_hr_bpm", "sideways"), "stress")
+    assert block.category == "no_signature"
+
+
+def test_response_coherence_counts_and_pairs():
+    claims = [
+        _coherence_claim("ecg_hr_bpm", "increase"),  # coherente
+        _coherence_claim("ecg_hr_bpm", "decrease"),  # contrario y verdadero
+        _coherence_claim("temperature", "increase"),  # sin firma
+    ]
+    verdicts = [
+        _verdict("supported"),
+        _verdict("supported"),
+        _verdict("supported", metric="temp_mean_degc"),
+    ]
+    block = response_coherence(claims, verdicts, "stress", subject="S7")
+
+    assert block["side"] == "stress"
+    assert block["n_claims"] == 3
+    assert block["n_signature_claims"] == 2
+    assert block["n_confirming"] == 1
+    assert block["n_against"] == 1
+    assert block["n_no_signature"] == 1
+    assert block["n_against_supported"] == 1
+    assert block["has_confirmation"] is True
+    assert block["evidence_conflict"] is False
+    assert [pair["subject"] for pair in block["pairs"]] == ["S7", "S7"]
+    assert [pair["coherence"] for pair in block["pairs"]] == ["coherent", "contrary"]
+
+
+def test_response_coherence_abstain_and_conflict_flags():
+    claims = [_coherence_claim("ecg_hr_bpm", "decrease")]
+    block = response_coherence(claims, [_verdict("supported")], "abstain")
+    assert block["n_not_applicable"] == 1
+    assert block["pairs"] == []
+    assert block["side"] is None
+
+    conflict = response_coherence(
+        [_coherence_claim("ecg_hr_bpm", "decrease")],
+        [_verdict("supported")],
+        "stress",
+    )
+    assert conflict["evidence_conflict"] is True
+    assert conflict["has_confirmation"] is False
+
+
+def test_summarize_coherence_rate_and_joint_table():
+    pairs = [
+        _pair(truth="supported", coherence="coherent"),
+        _pair(truth="supported", coherence="coherent"),
+        _pair(truth="supported", coherence="contrary"),
+        _pair(truth="contradicted", coherence="coherent"),
+    ]
+    block = summarize_coherence(pairs, min_claims=1)
+
+    assert block["n_pairs"] == 4
+    assert block["categories"] == {"coherent": 3, "contrary": 1, "neutral": 0}
+    assert block["coherence_rate"] == pytest.approx(0.75)
+    assert block["coherence_denominator"] == 4
+    assert block["insufficient"] is False
+    # 3 claims verdaderos; 1 de ellos contradice la propia decisión.
+    assert block["n_supported"] == 3
+    assert block["against_supported_share"] == pytest.approx(1 / 3)
+    assert block["joint"]["supported"] == {"coherent": 2, "contrary": 1, "neutral": 0}
+    assert block["joint"]["contradicted"] == {"coherent": 1, "contrary": 0, "neutral": 0}
+
+
+def test_summarize_coherence_insufficient_below_min_claims():
+    pairs = [_pair() for _ in range(MIN_CLAIMS_FOR_RATE - 1)]
+    assert summarize_coherence(pairs)["insufficient"] is True
+    pairs.append(_pair())
+    assert summarize_coherence(pairs)["insufficient"] is False
+    # El umbral se puede rebajar explícitamente (no se publica si es insuficiente).
+    assert summarize_coherence(pairs[:3], min_claims=3)["insufficient"] is False
+
+
+def test_summarize_coherence_by_side_does_not_aggregate():
+    pairs = [
+        _pair(side="stress", coherence="coherent"),
+        _pair(side="stress", coherence="coherent"),
+        _pair(side="stress", coherence="coherent"),
+        _pair(side="stress", coherence="contrary"),
+        _pair(side="non-stress", coherence="contrary"),
+        _pair(side="non-stress", coherence="contrary"),
+    ]
+    block = summarize_coherence(pairs, min_claims=1)
+
+    assert block["coherence_rate"] == pytest.approx(3 / 6)
+    assert block["by_side"]["stress"]["coherence_rate"] == pytest.approx(0.75)
+    assert block["by_side"]["stress"]["n_pairs"] == 4
+    assert block["by_side"]["non-stress"]["coherence_rate"] == pytest.approx(0.0)
+    assert block["by_side"]["stress"]["insufficient"] is False
+
+
+def test_summarize_coherence_response_rates():
+    responses = [
+        {
+            "side": "stress",
+            "n_signature_claims": 2,
+            "n_confirming": 1,
+            "n_against": 1,
+            "n_against_supported": 1,
+            "has_confirmation": True,
+            "evidence_conflict": False,
+            "n_no_signature": 0,
+            "n_not_applicable": 0,
+        },
+        {
+            "side": "stress",
+            "n_signature_claims": 1,
+            "n_confirming": 0,
+            "n_against": 1,
+            "n_against_supported": 0,
+            "has_confirmation": False,
+            "evidence_conflict": True,
+            "n_no_signature": 2,
+            "n_not_applicable": 0,
+        },
+        {
+            # Sin claims con firma: no cuenta en el denominador de confirmación.
+            "side": "stress",
+            "n_signature_claims": 0,
+            "n_confirming": 0,
+            "n_against": 0,
+            "n_against_supported": 0,
+            "has_confirmation": False,
+            "evidence_conflict": False,
+            "n_no_signature": 1,
+            "n_not_applicable": 0,
+        },
+        {
+            "side": "non-stress",
+            "n_signature_claims": 1,
+            "n_confirming": 1,
+            "n_against": 0,
+            "n_against_supported": 0,
+            "has_confirmation": True,
+            "evidence_conflict": False,
+            "n_no_signature": 0,
+            "n_not_applicable": 1,
+        },
+    ]
+    block = summarize_coherence([_pair()], responses=responses, min_claims=1)
+
+    assert block["responses"]["n"] == 4
+    assert block["responses"]["n_stress"] == 3
+    assert block["responses"]["n_non_stress"] == 1
+    # 1 de 2 respuestas de stress con claims con firma no tiene confirmación.
+    assert block["responses"]["zero_confirmation_share"] == pytest.approx(0.5)
+    assert block["responses"]["evidence_conflict_rate"] == pytest.approx(0.25)
+    # 1 claim contrario verdadero sobre 2 claims contrarios en total.
+    assert block["responses"]["contrary_supported_rate"] == pytest.approx(0.5)
+    assert block["n_no_signature_total"] == 3
+    assert block["n_not_applicable_total"] == 1
+
+
+def test_summarize_coherence_empty_is_defined():
+    block = summarize_coherence([])
+    assert block["n_pairs"] == 0
+    assert block["insufficient"] is True
+    assert block["coherence_denominator"] == 0

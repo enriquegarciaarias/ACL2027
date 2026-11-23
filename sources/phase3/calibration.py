@@ -30,6 +30,39 @@ def _clip(probs: Sequence[float]) -> np.ndarray:
     return np.clip(np.asarray(probs, dtype=float), _EPS, 1.0 - _EPS)
 
 
+def auroc_from_scores(
+    y_true: Sequence[float], scores: Sequence[float]
+) -> float:
+    """AUROC binario vía estadística U de Mann-Whitney (empates a 0,5).
+
+    Se usa para medir si la **confianza** del modelo separa aciertos de errores
+    (H2a): no es una métrica de discriminación de clase, es un ranking de
+    acierto. Devuelve ``nan`` si falta una de las dos clases.
+    """
+    y = np.asarray(y_true, dtype=float)
+    p = np.asarray(scores, dtype=float)
+    if y.size != p.size:
+        raise ValueError("y_true y scores deben tener la misma longitud")
+    positive = p[(y == 1.0) & ~np.isnan(p)]
+    negative = p[(y == 0.0) & ~np.isnan(p)]
+    n_pos, n_neg = positive.size, negative.size
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+    combined = np.concatenate([positive, negative])
+    order = np.argsort(combined, kind="mergesort")
+    sorted_scores = combined[order]
+    ranks = np.empty(combined.size, dtype=float)
+    i = 0
+    while i < sorted_scores.size:
+        j = i
+        while j + 1 < sorted_scores.size and sorted_scores[j + 1] == sorted_scores[i]:
+            j += 1
+        ranks[order[i : j + 1]] = (i + j) / 2.0 + 1.0
+        i = j + 1
+    u = float(ranks[:n_pos].sum()) - n_pos * (n_pos + 1) / 2.0
+    return u / (n_pos * n_neg)
+
+
 def brier_score(y_true: Sequence[int], probs: Sequence[float]) -> float:
     """Brier score binario: media de (p - y)²."""
     y = np.asarray(y_true, dtype=float)

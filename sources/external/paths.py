@@ -24,14 +24,22 @@ PHYSIONET2017_DIR: Path = EXTERNAL_ROOT / "physionet2017" / "training2017"
 #: K-EmoCon: tablas derivadas (features y asignación de periodos).
 KEMOCON_DIR: Path = EXTERNAL_ROOT / "KEMOCON"
 
-#: Fichero que debe existir para considerar utilizable cada dataset.
+#: DREAMT: dataset completo (descargado aparte por su licencia restringida).
+#: No vive bajo ``EXTERNAL_ROOT`` porque se distribuye como un ZIP con su
+#: propia estructura y licencia PhysioNet Restricted 1.5.0.
+DREAMT_DIR: Path = REPO_ROOT / "results" / "input" / "dreamt"
+
+#: Fichero o directorio que debe existir para considerar utilizable cada
+#: dataset externo.
 REQUIRED_FILES: dict[str, str] = {
     "physionet": "REFERENCE.csv",
     "kemocon": "kemocon_feature_table.csv",
+    "dreamt": "data_64Hz",
 }
 
 #: Directorio por defecto de cada experimento externo.
 DEFAULT_DIRS: dict[str, Path] = {
     "physionet": PHYSIONET2017_DIR,
     "kemocon": KEMOCON_DIR,
+    "dreamt": DREAMT_DIR,
 }

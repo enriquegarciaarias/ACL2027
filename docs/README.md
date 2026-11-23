@@ -48,18 +48,20 @@ Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 | [`degradacion_llm.md`](degradacion_llm.md) | Diseño del barrido de degradación con LLM (condiciones, referencia solo C0, coste) | Firme |
 | [`experimento_binario_jerarquia.md`](experimento_binario_jerarquia.md) | Preregistro de la jerarquía binaria: `schmidt` (baseline+amusement) como primaria, sensibilidades 355/498/567, exclusión de temperatura y bootstrap agrupado por sujeto | Firme (especificación) |
 | [`repetitions.md`](repetitions.md) | Repeticiones de prompt: diseño, regla de decisión y resultados del pre-piloto (C0 determinista; C5 con sd 0,044; la confianza es una etiqueta, no una probabilidad) | Firme (pre-piloto); piloto pendiente |
+| [`h5_relevancia.md`](h5_relevancia.md) | **Relevancia en H5**: tabla de firma por clase (12 features primarias, 10 sin firma, 1 en sensibilidad), regla de coherencia, métricas, predicciones P0–P4 y falsadores F1–F5. Implementado (`signatures.py`, `claims.py`, `--coherence-set`) | Firme (especificación congelada) |
+| [`piloto_dreamt.md`](piloto_dreamt.md) | **Segunda tarea: estadios de sueño (DREAMT, wearable)**. Preregistro congelado (mapa de canales, ventana de 60 s, exclusión de N3, matriz ausencia/degeneración, tabla de firma con P0, falsadores) **y resultados del piloto** (4 sujetos, 960 llamadas) | Ejecutado 2026-11-22 (n=4, dirección) |
 
 ### Resultados
 
 | Documento | Contenido | Estado |
 |---|---|---|
-| [`experimentos.md`](experimentos.md) | **Resumen ejecutivo, inventario (E0–E8) y detalle de todos los experimentos** (WESAD, K-EmoCon, PhysioNet); punto de entrada único | Firme |
+| [`experimentos.md`](experimentos.md) | **Resumen ejecutivo, inventario (E0–E12) y detalle de todos los experimentos** (WESAD, K-EmoCon, PhysioNet, DREAMT); punto de entrada único | Firme |
 | [`evolucion.md`](evolucion.md) | **Sinopsis de la evolución**: cómo cambió el experimento con cada resultado, reorientaciones y registro por sesión | Firme (memoria) |
 | [`resultados_degradacion.md`](resultados_degradacion.md) | H1–H6 y H3: corrección, abstención, claims, certeza, indicadores de calidad (4 clases, `qwen2.5:7b`) | **Final** |
 | [`resultados_jerarquia.md`](resultados_jerarquia.md) | **Diseño primario**: binario `schmidt` sin temperatura, 424 ventanas, `qwen2.5:7b` vs `qwen3:14b`; empate en limpio, abstención dependiente de la etiqueta del 14b, colapso opuesto con EDA destruida y trampa de la accuracy sobre decididas | **Final (clasificación y H1–H6)** |
 | [`resultados_binario.md`](resultados_binario.md) | Matriz 2 modelos × 2 tareas × 5 condiciones (**variante `all` con temperatura**): empate en limpio, fallos opuestos bajo destrucción, trampa accuracy/balanced, H2b dependiente de modelo×tarea y H6 como sustituto de la confianza. El primario `schmidt` sin temperatura está en [`resultados_jerarquia.md`](resultados_jerarquia.md) | **Final (variante `all`)** |
 | [`consistencia.md`](consistencia.md) | Compuerta de consistencia fisiológica: 0 % de falsos vetos en limpio, 100 % en datos incoherentes, robustez | Firme |
-| [`claims_h5.md`](claims_h5.md) | Verificador de claims y certeza lingüística: definiciones y resultados | Firme (método) |
+| [`claims_h5.md`](claims_h5.md) | Verificador de claims y certeza lingüística: definiciones y resultados; el eje de **relevancia** está preregistrado en [`h5_relevancia.md`](h5_relevancia.md) e implementado | Firme (método) |
 | [`p2_binario.md`](p2_binario.md) | Prompt binario stress/no-stress: resultados | **Exploratorio** |
 | [`e12_resultados.md`](e12_resultados.md) | Representación centrada por sujeto (E12) | **Exploratorio** |
 | [`p4_calibracion.md`](p4_calibracion.md) | Calibración, temperatura, conformal y rúbrica graduada | **Exploratorio** |

@@ -114,10 +114,11 @@ def manageArgs():
         default=None,
         choices=[
             'controls', 'degradation', 'centering', 'physionet', 'kemocon',
+            'dreamt',
         ],
         help="Experimento para GENERATE/EVALUATE: controls (C0 + controles "
-             "negativos), degradation (C0–C5), centering (E12), physionet o "
-             "kemocon. Por defecto: controls.",
+             "negativos), degradation (C0–C5), centering (E12), physionet, "
+             "kemocon o dreamt (estadios de sueño). Por defecto: controls.",
     )
     parser.add_argument(
         '--compare-models',
@@ -130,8 +131,9 @@ def manageArgs():
         '--representation',
         type=str,
         default=None,
-        choices=['numeric', 'text'],
-        help="Brazo de representación (experimento degradation).",
+        choices=['numeric', 'text', 'both'],
+        help="Brazo de representación. 'both' solo lo usa el experimento "
+             "dreamt (dos vistas x la misma evidencia).",
     )
     parser.add_argument(
         '--conditions',
@@ -165,6 +167,16 @@ def manageArgs():
         help="Incluir o excluir la temperatura de la evidencia del LLM. El "
              "experimento primario usa 'exclude' (confusor de orden del "
              "protocolo y única modalidad de pecho que no se degrada).",
+    )
+    parser.add_argument(
+        '--coherence-set',
+        type=str,
+        default=None,
+        choices=['primary', 'compact', 'sensitivity'],
+        help="EVALUATE degradation: conjunto de la firma preregistrada "
+             "(docs/h5_relevancia.md) para medir la coherencia de los claims "
+             "con la decisión. primary = 12 features; compact = 5 (neutraliza "
+             "el peso de EDA); sensitivity = primario + resp_interval_cv.",
     )
     parser.add_argument(
         '--hierarchy',
@@ -259,6 +271,25 @@ def manageArgs():
         help="EVALUATE degradation: directorio del otro brazo de representación "
              "(p. ej. degradation_text_binary_schmidt_notemp/qwen3_14b) para el "
              "contraste H3.",
+    )
+    parser.add_argument(
+        '--phase',
+        type=str,
+        default=None,
+        choices=("prepare", "generate", "evaluate"),
+        help="GENERATE/EVALUATE dreamt: fase del piloto de sueño (se rellena "
+             "automáticamente desde --proc si se omite).",
+    )
+    parser.add_argument(
+        '--windows-per-class',
+        type=int,
+        default=None,
+        help="Piloto dreamt: ventanas muestreadas por clase y sujeto (5).",
+    )
+    parser.add_argument(
+        '--reference',
+        action='store_true',
+        help="EVALUATE dreamt: añadir la referencia features-only (LOSO).",
     )
     parser.add_argument(
         '--noEmbeddings',

@@ -187,27 +187,9 @@ def _subject_arrays(
 
 def _auroc_from_scores(y: np.ndarray, p: np.ndarray) -> float:
     """AUROC vía estadística U de Mann-Whitney (empates a 0,5)."""
-    positive = np.asarray([score for score, label in zip(p, y) if label == 1.0], dtype=float)
-    negative = np.asarray([score for score, label in zip(p, y) if label == 0.0], dtype=float)
-    positive = positive[~np.isnan(positive)]
-    negative = negative[~np.isnan(negative)]
-    n_pos, n_neg = positive.size, negative.size
-    if n_pos == 0 or n_neg == 0:
-        return float("nan")
-    scores = np.concatenate([positive, negative])
-    order = np.argsort(scores, kind="mergesort")
-    sorted_scores = scores[order]
-    ranks = np.empty(scores.size, dtype=float)
-    i = 0
-    while i < sorted_scores.size:
-        j = i
-        while j + 1 < sorted_scores.size and sorted_scores[j + 1] == sorted_scores[i]:
-            j += 1
-        ranks[order[i : j + 1]] = (i + j) / 2.0 + 1.0
-        i = j + 1
-    rank_sum_positive = float(ranks[:n_pos].sum())
-    u = rank_sum_positive - n_pos * (n_pos + 1) / 2.0
-    return u / (n_pos * n_neg)
+    from sources.phase3.calibration import auroc_from_scores
+
+    return auroc_from_scores(y, p)
 
 
 def _metrics_from_arrays(

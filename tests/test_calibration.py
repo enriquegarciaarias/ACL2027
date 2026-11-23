@@ -7,6 +7,7 @@ import pytest
 
 from sources.phase3.calibration import (
     apply_temperature,
+    auroc_from_scores,
     brier_score,
     conformal_risk_threshold,
     evaluate_selective,
@@ -115,3 +116,32 @@ def test_wilson_interval_contains_proportion():
     low, high = wilson_interval(90, 100)
     assert low < 0.9 < high
     assert 0.0 <= low <= high <= 1.0
+
+
+def test_auroc_from_scores_ranks_hits_above_misses():
+    """H2a: la confianza separa aciertos (1) de errores (0)."""
+    assert auroc_from_scores([1, 1, 0, 0], [0.9, 0.8, 0.7, 0.6]) == pytest.approx(1.0)
+    assert auroc_from_scores([1, 1, 0, 0], [0.6, 0.7, 0.8, 0.9]) == pytest.approx(0.0)
+
+
+def test_auroc_from_scores_ties_count_as_half():
+    """Una confianza constante (el caso real del 7b) da 0,5, no 1,0."""
+    assert auroc_from_scores([1, 0, 1, 0], [0.85] * 4) == pytest.approx(0.5)
+
+
+def test_auroc_from_scores_needs_both_classes():
+    assert np.isnan(auroc_from_scores([1, 1], [0.9, 0.8]))
+
+
+def test_auroc_from_scores_rejects_length_mismatch():
+    with pytest.raises(ValueError):
+        auroc_from_scores([1, 0], [0.9])
+
+
+def test_binary_hierarchy_auroc_delegates_to_calibration():
+    """Sin dos implementaciones del mismo estadístico."""
+    from sources.phase3.binary_hierarchy import _auroc_from_scores
+
+    y = np.array([1.0, 0.0, 1.0, 0.0])
+    p = np.array([0.9, 0.2, 0.6, 0.5])
+    assert _auroc_from_scores(y, p) == pytest.approx(auroc_from_scores(y, p))

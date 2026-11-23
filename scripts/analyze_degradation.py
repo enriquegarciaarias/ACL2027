@@ -10,6 +10,11 @@ condición:
 - Calibración (ECE, Brier) y confianza media.
 - **Respaldo de afirmaciones** (H5): proporciones de claims respaldados,
   contradichos, no respaldados e indeterminados, y acierto de dirección.
+- **Relevancia de las afirmaciones** (H5, preregistro
+  ``docs/h5_relevancia.md``): ¿el claim favorece la clase predicha? Tasa de
+  coherencia con IC por sujeto, desglose por lado de la decisión y
+  ``against_supported_share``; incluye la comprobación **P0** (medianas de ``z``
+  por clase en ``C0``).
 - **Certeza lingüística** (H2b): hedges, boosters e índice por 100 palabras.
 - **Resolubilidad** con la referencia features-only sobre las mismas ventanas y
   features que vio el LLM (H1) y AUROC de confianza (H2a).
@@ -30,6 +35,7 @@ from __future__ import annotations
 import argparse
 import warnings
 import json
+import random
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -49,7 +55,14 @@ from sources.phase2.binary_variants import (  # noqa: E402
 )
 from sources.phase3.binary_hierarchy import provenance
 from sources.phase3.certainty import linguistic_certainty
-from sources.phase3.claims import summarize_verdicts, verify_claims
+from sources.phase3.claims import (
+    MIN_CLAIMS_FOR_RATE,
+    parse_prompt_features,
+    response_coherence,
+    summarize_coherence,
+    summarize_verdicts,
+    verify_claims,
+)
 from sources.phase2.response_schema import (
     DECISION_MODE_AFFECTIVE,
     DECISION_MODE_STRESS_BINARY,
@@ -60,6 +73,16 @@ from sources.phase3.degradation import (
 )
 from sources.phase3.records import evaluate_binary_records, evaluate_records
 from sources.phase3.recovery import apply_recovery
+from sources.phase3.signatures import (
+    FEATURE_SETS,
+    NON_STRESS,
+    PRIMARY_FEATURES,
+    STRESS,
+    excluded_table,
+    feature_set,
+    sign_of,
+    signature_table,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INGEST_DIR = REPO_ROOT / "results" / "output" / "WESAD" / "INGEST"
@@ -165,18 +188,37 @@ def _certainty_stats(items: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _claims_and_certainty(
     records: list[dict[str, Any]],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Respaldo de claims (H5) y certeza lingüística (H2b) de un grupo."""
+    coherence_set: str = "primary",
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Respaldo de claims (H5), certeza lingüística (H2b) y relevancia (H5).
+
+    La relevancia aplica la firma preregistrada
+    (``docs/h5_relevancia.md``): ¿la dirección del claim favorece la clase que
+    el modelo acaba prediciendo? Es independiente de que el claim sea cierto.
+    """
     verdicts: list[dict[str, Any]] = []
     certainties: list[dict[str, Any]] = []
     certainties_decided: list[dict[str, Any]] = []
     certainties_abstain: list[dict[str, Any]] = []
+    coherence_pairs: list[dict[str, Any]] = []
+    coherence_responses: list[dict[str, Any]] = []
+    allowed = feature_set(coherence_set)
     n_claims = 0
     for record in records:
         claims = record.get("claims") or []
         n_claims += len(claims)
         if claims:
-            verdicts.extend(verify_claims(claims, record.get("prompt", "")))
+            claim_verdicts = verify_claims(claims, record.get("prompt", ""))
+            verdicts.extend(claim_verdicts)
+            block = response_coherence(
+                claims,
+                claim_verdicts,
+                record.get("decision"),
+                features=allowed,
+                subject=str(record.get("subject") or ""),
+            )
+            coherence_pairs.extend(block["pairs"])
+            coherence_responses.append(block)
         certainty = linguistic_certainty(record.get("reasoning", "") or "")
         if certainty["n_words"] > 0:
             certainties.append(certainty)
@@ -194,7 +236,126 @@ def _claims_and_certainty(
         "decided": _certainty_stats(certainties_decided),
         "abstain": _certainty_stats(certainties_abstain),
     }
-    return claims_block, certainty_block
+    coherence_block = summarize_coherence(
+        coherence_pairs, responses=coherence_responses
+    )
+    coherence_block["set"] = coherence_set
+    coherence_block["bootstrap"] = _coherence_bootstrap_ci(coherence_pairs)
+    for side in (STRESS, NON_STRESS):
+        coherence_block["by_side"][side]["bootstrap"] = _coherence_bootstrap_ci(
+            coherence_pairs, side=side
+        )
+    return claims_block, certainty_block, coherence_block
+
+
+# ---------------------------------------------------------------------------
+# P0: ¿la firma preregistrada describe estos datos?
+# ---------------------------------------------------------------------------
+
+#: Condición usada para la comprobación P0 (señal intacta).
+P0_CONDITION = "C0_clean"
+
+
+def _median(values: list[float]) -> float:
+    return float(np.median(values)) if values else float("nan")
+
+
+def signature_check(
+    records: list[dict[str, Any]],
+    labels: dict[str, str],
+    *,
+    condition: str = P0_CONDITION,
+) -> dict[str, Any]:
+    """P0 del preregistro: signo observado de cada feature del conjunto primario.
+
+    Compara la mediana de ``z`` (la que el modelo vio en el prompt) entre
+    ventanas de ``stress`` y de ``non-stress`` en ``C0``. **No modifica la
+    tabla**: si falla, se publica como predicción fallida.
+    """
+    rows: list[dict[str, Any]] = []
+    observed: dict[str, dict[str, list[float]]] = {
+        metric: {"stress": [], "non-stress": []} for metric in PRIMARY_FEATURES
+    }
+    for record in records:
+        if record.get("condition_id") != condition:
+            continue
+        label = labels.get(record.get("window_id"))
+        if label not in {"stress", "baseline", "amusement", "meditation"}:
+            continue
+        side = "stress" if label == "stress" else "non-stress"
+        for metric, feature in parse_prompt_features(record.get("prompt", "")).items():
+            if metric in observed and feature.value is not None:
+                observed[metric][side].append(float(feature.value))
+
+    n_matching = 0
+    for metric in sorted(PRIMARY_FEATURES):
+        z_stress = _median(observed[metric]["stress"])
+        z_non = _median(observed[metric]["non-stress"])
+        expected = sign_of(metric, PRIMARY_FEATURES)
+        if np.isnan(z_stress) or np.isnan(z_non) or z_stress == z_non:
+            matches: bool | None = None
+        else:
+            matches = (z_stress - z_non) * expected > 0
+        if matches:
+            n_matching += 1
+        rows.append(
+            {
+                "metric": metric,
+                "expected_sign": expected,
+                "z_stress": z_stress,
+                "z_non_stress": z_non,
+                "matches": matches,
+                "n_stress": len(observed[metric]["stress"]),
+                "n_non_stress": len(observed[metric]["non-stress"]),
+            }
+        )
+    return {
+        "condition": condition,
+        "n_features": len(PRIMARY_FEATURES),
+        "n_matching": n_matching,
+        "passes": n_matching >= 10,
+        "threshold": 10,
+        "features": rows,
+    }
+
+
+def _coherence_bootstrap_ci(
+    pairs: list[dict[str, Any]],
+    *,
+    side: str | None = None,
+    n_boot: int = 2000,
+    seed: int = 0,
+) -> dict[str, float]:
+    """IC 95 % de ``coherence_rate`` por bootstrap agrupado por sujeto."""
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for pair in pairs:
+        if side is not None and pair.get("side") != side:
+            continue
+        groups[str(pair.get("subject") or "")].append(pair)
+    subjects = [subject for subject in sorted(groups) if groups[subject]]
+    if not subjects:
+        return {"lo": float("nan"), "hi": float("nan"), "n": 0}
+
+    def rate(items: list[dict[str, Any]]) -> float:
+        coherent = sum(1 for item in items if item.get("coherence") == "coherent")
+        contrary = sum(1 for item in items if item.get("coherence") == "contrary")
+        return coherent / (coherent + contrary) if (coherent + contrary) else float("nan")
+
+    rng = random.Random(seed)
+    samples: list[float] = []
+    for _ in range(max(int(n_boot), 0)):
+        chosen = [subjects[rng.randrange(len(subjects))] for _ in subjects]
+        pool = [pair for subject in chosen for pair in groups[subject]]
+        value = rate(pool)
+        if not np.isnan(value):
+            samples.append(value)
+    if not samples:
+        return {"lo": float("nan"), "hi": float("nan"), "n": 0}
+    return {
+        "lo": float(np.percentile(samples, 2.5)),
+        "hi": float(np.percentile(samples, 97.5)),
+        "n": len(samples),
+    }
 
 
 def _confidence_auroc(
@@ -232,7 +393,9 @@ def _confidence_auroc(
 
 
 def analyze_group_binary(
-    records: list[dict[str, Any]], labels: dict[str, str]
+    records: list[dict[str, Any]],
+    labels: dict[str, str],
+    coherence_set: str = "primary",
 ) -> dict[str, Any]:
     """Métricas de un grupo cuando el prompt es binario stress/non-stress.
 
@@ -256,7 +419,9 @@ def analyze_group_binary(
         for record in records
     }
     metrics = evaluate_binary_records(records, label_by_opaque)
-    claims_block, certainty_block = _claims_and_certainty(records)
+    claims_block, certainty_block, coherence_block = _claims_and_certainty(
+        records, coherence_set
+    )
     confidences = [
         float(record["confidence"])
         for record in records
@@ -292,13 +457,18 @@ def analyze_group_binary(
         "confidence_auroc_correctness": _confidence_auroc(records, labels, binary=True),
         "claims": claims_block,
         "certainty": certainty_block,
+        "coherence": coherence_block,
         # Sin desglose por clase: el endpoint binario ya lo resume la tabla propia.
         "per_class": {},
         "binary_mapped": metrics,
     }
 
 
-def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict[str, Any]:
+def analyze_group(
+    records: list[dict[str, Any]],
+    labels: dict[str, str],
+    coherence_set: str = "primary",
+) -> dict[str, Any]:
     """Métricas de corrección, calibración, claims y certeza de un grupo."""
     if not records:
         return {"n": 0}
@@ -317,7 +487,9 @@ def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict
     }
     metrics = evaluate_records(records, label_by_opaque)
 
-    claims_block, certainty_block = _claims_and_certainty(records)
+    claims_block, certainty_block, coherence_block = _claims_and_certainty(
+        records, coherence_set
+    )
     confidence_auroc = _confidence_auroc(records, labels, binary=False)
 
     confidences = [
@@ -390,6 +562,7 @@ def analyze_group(records: list[dict[str, Any]], labels: dict[str, str]) -> dict
         "binary_mapped": binary_mapped,
         "claims": claims_block,
         "certainty": certainty_block,
+        "coherence": coherence_block,
     }
 
 
@@ -481,6 +654,14 @@ def main(argv: list[str] | None = None) -> None:
         default="",
         choices=["", "include", "exclude"],
         help="Temperatura en la evidencia. Vacío = la que declare el corpus.",
+    )
+    parser.add_argument(
+        "--coherence-set",
+        default="primary",
+        choices=sorted(FEATURE_SETS),
+        help="Conjunto de la firma preregistrada para la coherencia: 'primary' "
+        "(12 features), 'compact' (5, neutraliza el peso de EDA) o "
+        "'sensitivity' (primario + resp_interval_cv).",
     )
     args = parser.parse_args(argv)
 
@@ -580,11 +761,20 @@ def main(argv: list[str] | None = None) -> None:
         "split": args.split,
         "n_records": len(records),
         "recovery": not args.no_recovery,
+        # Procedencia del eje de relevancia: la firma es la del preregistro
+        # (docs/h5_relevancia.md) y se registra con el informe para auditoría.
+        "coherence": {
+            "set": args.coherence_set,
+            "min_claims_for_rate": MIN_CLAIMS_FOR_RATE,
+            "preregistration": "docs/h5_relevancia.md",
+            "signature": signature_table(feature_set(args.coherence_set)),
+            "excluded": excluded_table(),
+        },
         "conditions": {},
     }
     for condition in conditions:
         report["conditions"][condition] = analyze_fn(
-            by_condition.get(condition, []), labels
+            by_condition.get(condition, []), labels, args.coherence_set
         )
 
     if not records:
@@ -593,6 +783,8 @@ def main(argv: list[str] | None = None) -> None:
         )
     subjects = sorted({record["subject"] for record in records})
     report["subjects"] = subjects
+    # P0 del preregistro de relevancia: ¿la firma describe estos datos?
+    report["signature_check"] = signature_check(records, labels)
     report["reference_by_condition"] = reference_by_condition(
         conditions,
         subjects,
@@ -676,6 +868,88 @@ def main(argv: list[str] | None = None) -> None:
             f"{claims['supported_rate']:7.3f} {claims['contradicted_rate']:7.3f} "
             f"{claims['unsupported_rate']:7.3f} {claims['indeterminate_rate']:7.3f} "
             f"{claims['direction_accuracy']:8.3f}"
+        )
+
+    print("\n=== Relevancia: ¿el claim favorece la decisión? (H5 · coherencia) ===")
+    print(
+        f"Conjunto de firma: {args.coherence_set} "
+        f"({len(feature_set(args.coherence_set))} features) | mínimo por celda: "
+        f"{MIN_CLAIMS_FOR_RATE} claims decididos"
+    )
+    print(
+        f"{'condición':16s} {'pares':>6s} {'coh':>6s} {'contra':>6s} {'neut':>5s} "
+        f"{'tasa':>6s} {'IC95%':>15s} {'a_favor':>8s}"
+    )
+    for condition in conditions:
+        entry = report["conditions"][condition]
+        coherence = (entry or {}).get("coherence") or {}
+        if not coherence.get("n_pairs"):
+            print(f"{condition:16s} (sin claims con firma)")
+            continue
+        rate = "  —  " if coherence["insufficient"] else f"{coherence['coherence_rate']:6.3f}"
+        ci = coherence.get("bootstrap") or {}
+        ci_text = (
+            f"[{ci['lo']:.3f}; {ci['hi']:.3f}]"
+            if ci.get("n")
+            else "      —       "
+        )
+        print(
+            f"{condition:16s} {coherence['n_pairs']:6d} "
+            f"{coherence['categories']['coherent']:6d} "
+            f"{coherence['categories']['contrary']:6d} "
+            f"{coherence['categories']['neutral']:5d} "
+            f"{rate} {ci_text:>15s} "
+            f"{coherence['against_supported_share']:8.3f}"
+        )
+    print(
+        "a_favor = share de claims verdaderos que contradicen la propia decisión "
+        "(la forma operativa de «narra bien y concluye mal»)."
+    )
+
+    print("\n--- Por lado de la decisión (no se agregan: ver preregistro §4.1) ---")
+    print(
+        f"{'condición':16s} {'lado':12s} {'pares':>6s} {'tasa':>6s} {'IC95%':>15s} "
+        f"{'a_favor':>8s}"
+    )
+    for condition in conditions:
+        entry = report["conditions"][condition]
+        by_side = ((entry or {}).get("coherence") or {}).get("by_side") or {}
+        for side in (STRESS, NON_STRESS):
+            block = by_side.get(side) or {}
+            if not block.get("n_pairs"):
+                continue
+            rate = "  —  " if block["insufficient"] else f"{block['coherence_rate']:6.3f}"
+            ci = block.get("bootstrap") or {}
+            ci_text = (
+                f"[{ci['lo']:.3f}; {ci['hi']:.3f}]"
+                if ci.get("n")
+                else "      —       "
+            )
+            print(
+                f"{condition:16s} {side:12s} {block['n_pairs']:6d} {rate} "
+                f"{ci_text:>15s} {block['against_supported_share']:8.3f}"
+            )
+
+    check = report.get("signature_check") or {}
+    if check.get("features"):
+        print(
+            f"\n=== P0: ¿la firma preregistrada describe los datos? "
+            f"({check['condition']}) ==="
+        )
+        print(
+            f"{'feature':28s} {'z stress':>9s} {'z no-str':>9s} {'firma':>6s} {'cumple':>7s}"
+        )
+        for row in check["features"]:
+            matches = row["matches"]
+            mark = "sí" if matches else ("no" if matches is False else "—")
+            print(
+                f"{row['metric']:28s} {row['z_stress']:9.2f} {row['z_non_stress']:9.2f} "
+                f"{row['expected_sign']:+6d} {mark:>7s}"
+            )
+        print(
+            f"Cumple {check['n_matching']}/{check['n_features']} "
+            f"(umbral {check['threshold']}): "
+            f"{'PASA' if check['passes'] else 'FALLA'}"
         )
 
     print("\n=== Certeza lingüística (H2b) ===")

@@ -223,6 +223,18 @@ La referencia es una regresión logística con CV agrupada por sujeto sobre las
   disminuida» es verdad) y la inferencia global es falsa. Es el hallazgo central
   de la tesis, replicado ahora en el diseño primario.
 
+**Eje de relevancia (implementado el 2026-11-21, resultados pendientes).** La
+tabla anterior mide **verdad** del claim, no **relevancia**: una afirmación
+verdadera que contradice la propia decisión cuenta como respaldada. El
+preregistro [`h5_relevancia.md`](h5_relevancia.md) fijó la firma por clase y la
+regla de coherencia antes de medir; el analizador ya la calcula
+(`--coherence-set primary|compact|sensitivity`) y publica, por condición, la
+tasa de coherencia con IC por sujeto, el desglose por lado de la decisión y la
+forma operativa del hallazgo: `against_supported_share` = proporción de claims
+**verdaderos** que contradicen la decisión. Las cifras del diseño primario van
+en una tabla nueva (§5.9) cuando se ejecute en el servidor; el pre-chequeo P0
+sobre el corpus histórico está en [`claims_h5.md`](claims_h5.md) §5.7.
+
 ### 5.4 H2a — la confianza como predictor de acierto
 
 | Condición | 7b AUROC | 7b conf. media | 7b sobreconf. | 14b AUROC | 14b conf. media | 14b sobreconf. |
@@ -353,6 +365,37 @@ y del corpus, y así hay que declararlo. La comparación entre modelos (§6)
 añade un tercer eje: **quién gana depende de la métrica** (accuracy bruta →
 14b; balanced → 7b; calibración → 7b; respaldo de claims y ranking de
 confianza → 14b).
+
+### 5.9 H5 · coherencia — pendiente de ejecución
+
+El eje de relevancia ([`h5_relevancia.md`](h5_relevancia.md)) está implementado
+y probado, pero **no se ha ejecutado sobre el diseño primario**: los artefactos
+viven en el servidor. La tabla se completa con este comando (por `srun --pty`,
+nunca en el nodo de login), una vez por brazo:
+
+```bash
+python main.py --proc EVALUATE --experiment degradation \
+  --model qwen3:14b --representation numeric \
+  --decision-mode binary --nonstress-variant schmidt --temperature exclude \
+  --coherence-set primary --output \
+  results/output/WESAD/PHASE2/evaluation_h5_coherence_qwen3_14b.json
+
+# sensibilidades declaradas
+#   --coherence-set compact      (5 features, neutraliza que EDA sea 8 de 12)
+#   --coherence-set sensitivity  (primario + resp_interval_cv)
+```
+
+Lo que hay que leer en el informe, por condición:
+
+| Campo | Pregunta que responde |
+|---|---|
+| `coherence_rate` + IC | ¿las afirmaciones apoyan la conclusión? |
+| `by_side.stress` / `by_side.non-stress` | separados: la asimetría de `non-stress` no se agrega |
+| `against_supported_share` | de los claims **verdaderos**, ¿cuántos contradicen la decisión? |
+| `responses.zero_confirmation_share` | ¿decide `stress` sin una sola afirmación a favor? |
+| `signature_check` (P0) | ¿la firma describe los datos de `C0`? |
+
+Predicciones y falsadores: [`h5_relevancia.md`](h5_relevancia.md) §6.
 
 ## 6. Comparación pareada `qwen2.5:7b` vs `qwen3:14b`
 

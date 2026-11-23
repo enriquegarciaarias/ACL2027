@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 # Decisiones permitidas (semánticas, no códigos numéricos de WESAD).
 ALLOWED_DECISIONS: frozenset[str] = frozenset(
@@ -49,18 +49,28 @@ RHYTHM_DECISIONS: frozenset[str] = frozenset(
     {"normal", "af", "other-rhythm", "noisy", "abstain"}
 )
 
+# Segunda tarea base (DREAMT): estadios de sueño de la rama wearable.
+# N3 se excluye del espacio de decisión (preregistro §6): 5,3 % de las épocas,
+# presente en 6 de 13 sujetos, y fusionarlo con N2 inyectaría ruido de etiqueta
+# justo en el eje de respaldo de claims.
+SLEEP_DECISIONS: frozenset[str] = frozenset(
+    {"wake", "n1", "n2", "rem", "abstain"}
+)
+
 #: Modos de decisión soportados por el prompt y el validador.
 DECISION_MODE_AFFECTIVE = "affective"
 DECISION_MODE_STRESS_BINARY = "stress_binary"
 DECISION_MODE_AROUSAL_BINARY = "arousal_binary"
 DECISION_MODE_VALENCE_BINARY = "valence_binary"
 DECISION_MODE_RHYTHM4 = "rhythm4"
+DECISION_MODE_SLEEP4 = "sleep4"
 DECISION_MODES: dict[str, frozenset[str]] = {
     DECISION_MODE_AFFECTIVE: ALLOWED_DECISIONS,
     DECISION_MODE_STRESS_BINARY: BINARY_DECISIONS,
     DECISION_MODE_AROUSAL_BINARY: AROUSAL_DECISIONS,
     DECISION_MODE_VALENCE_BINARY: VALENCE_DECISIONS,
     DECISION_MODE_RHYTHM4: RHYTHM_DECISIONS,
+    DECISION_MODE_SLEEP4: SLEEP_DECISIONS,
 }
 
 #: Variantes de escritura de ``non-stress`` que produce el modelo.
@@ -91,6 +101,23 @@ DECISION_ALIASES: dict[str, str] = {
     "other": "other-rhythm",
     "too noisy": "noisy",
     "noisy recording": "noisy",
+    # Estadios de sueño (DREAMT): abreviaturas y nombres alternativos.
+    "w": "wake",
+    "awake": "wake",
+    "wakefulness": "wake",
+    "stage w": "wake",
+    "r": "rem",
+    "rem sleep": "rem",
+    "stage r": "rem",
+    "stage rem": "rem",
+    "n 1": "n1",
+    "stage 1": "n1",
+    "stage1": "n1",
+    "stage n1": "n1",
+    "n 2": "n2",
+    "stage 2": "n2",
+    "stage2": "n2",
+    "stage n2": "n2",
 }
 
 # Direcciones permitidas para los claims.
@@ -184,6 +211,16 @@ CHANNEL_ALIASES: dict[str, str] = {
     "blood volume pulse": "bvp",
     "photoplethysmogram": "bvp",
     "ppg": "bvp",
+    # Movimiento. En WESAD estos alias no cambian nada (``acc`` no está en el
+    # conjunto de canales permitido y el claim se rechaza igual); existen para
+    # que la tarea de sueño no pierda las respuestas que citan el título de la
+    # sección textual («MOVEMENT (ACCELEROMETER)»).
+    "accelerometer": "acc",
+    "acceleration": "acc",
+    "movement": "acc",
+    "movement accelerometer": "acc",
+    "actigraphy": "acc",
+    "motion": "acc",
 }
 
 
@@ -269,12 +306,24 @@ def _normalize_direction(value: str) -> str:
     return direction
 
 
-def _validate_claim(claim: Any, index: int) -> tuple[Claim | None, str | None]:
+def _validate_claim(
+    claim: Any,
+    index: int,
+    allowed_channels: Iterable[str] | None = None,
+) -> tuple[Claim | None, str | None]:
     """Valida un claim individual.
+
+    Args:
+        claim: objeto crudo del modelo.
+        index: posición en la lista (para el mensaje de error).
+        allowed_channels: canales aceptados; por defecto el conjunto de pecho de
+            WESAD. La tarea de sueño pasa su propio conjunto porque el
+            acelerómetro allí es evidencia legítima (en WESAD era un confusor).
 
     Returns:
         (Claim, None) si es válido; (None, mensaje_error) si no.
     """
+    allowed = frozenset(allowed_channels) if allowed_channels is not None else ALLOWED_CLAIM_CHANNELS
     if not isinstance(claim, dict):
         return None, f"claim[{index}] no es un objeto"
 
@@ -338,11 +387,12 @@ def _validate_claim(claim: Any, index: int) -> tuple[Claim | None, str | None]:
     if magnitude not in ALLOWED_MAGNITUDES:
         return None, f"claim[{index}].magnitude '{magnitude}' no permitido"
 
-    # Los claims solo pueden referenciar canales del conjunto de pecho permitido.
-    if channel not in ALLOWED_CLAIM_CHANNELS:
+    # Los claims solo pueden referenciar canales del conjunto permitido para la
+    # tarea (pecho en WESAD; pecho + movimiento en la tarea de sueño).
+    if channel not in allowed:
         return None, (
             f"claim[{index}].channel '{channel}' no está en el conjunto "
-            f"de canales permitidos {sorted(ALLOWED_CLAIM_CHANNELS)}"
+            f"de canales permitidos {sorted(allowed)}"
         )
 
     return (
@@ -444,14 +494,19 @@ def _coerce_str(value: Any) -> str | None:
 def validate_llm_output(
     raw_output: str,
     decision_mode: str = DECISION_MODE_AFFECTIVE,
+    allowed_channels: Iterable[str] | None = None,
 ) -> LlmResponse:
     """Valida una salida cruda del LLM contra el esquema JSON.
 
     Args:
         raw_output: string con la respuesta cruda del modelo (puede contener
             texto adicional, markdown, etc.).
-        decision_mode: ``"affective"`` (4 clases + abstain) o
-            ``"stress_binary"`` (stress / non-stress / abstain).
+        decision_mode: ``"affective"`` (4 clases + abstain),
+            ``"stress_binary"`` (stress / non-stress / abstain) o
+            ``"sleep4"`` (wake / n1 / n2 / rem / abstain).
+        allowed_channels: canales aceptados en los claims; por defecto el
+            conjunto de pecho de WESAD (``ecg``, ``eda``, ``resp``, ``temp``).
+            La tarea de sueño añade ``acc``.
 
     Returns:
         LlmResponse con el estado de validación y, si es válido, los datos
@@ -574,7 +629,7 @@ def validate_llm_output(
 
     claims: list[Claim] = []
     for i, claim_raw in enumerate(claims_raw):
-        claim, err = _validate_claim(claim_raw, i)
+        claim, err = _validate_claim(claim_raw, i, allowed_channels)
         if err:
             return LlmResponse(
                 decision=decision,

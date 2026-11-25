@@ -1,6 +1,6 @@
 # Experimentos y resultados — visión general
 
-**Actualizado:** 2026-11-15
+**Actualizado:** 2026-11-25
 
 Este documento es el **punto de entrada único** al trabajo experimental del
 proyecto. Contiene, en este orden:
@@ -14,6 +14,10 @@ proyecto. Contiene, en este orden:
 
 Para el detalle metodológico completo de cada pieza, el documento enlazado en
 cada apartado es la referencia; este documento no lo reemplaza.
+
+> **Lectura cruzada.** La síntesis **entre modelos y entre datasets** —qué
+> replica, qué no, con qué cifras y qué se puede firmar en un paper— está en
+> [`conclusiones.md`](conclusiones.md).
 
 ---
 
@@ -654,8 +658,7 @@ de desarrollo).
 | E9 | **Modelos × tarea bajo degradación** | ¿Resiste mejor el modelo grande? ¿Cambia la tarea la abstención? | 2 modelos × {4 clases, binario} × C0,C1,C2,C4,C5; 12 sujetos eval. | 11.340 respuestas | balanced, cobertura, claims, certeza | En limpio empatan en binario (Δ +0,014 [−0,012; +0,040]); 14b en 4 clases tiene mejor acc (0,703 vs 0,611) pero por abstención (100 % en C5), no discriminación. Con EDA a cero fallan en direcciones opuestas (7b: bal 0,63 sobrerreclamando estrés; 14b: bal 0,50 diciendo non-stress) | **Firme** | [`resultados_binario.md`](resultados_binario.md) |
 | **E10** | **Jerarquía binaria Schmidt sin temperatura (diseño primario)** | ¿Se sostiene el binario al alinear la tarea con el paper y quitar el confusor térmico? | 2 modelos × 5 condiciones × 424 ventanas (12 sujetos eval.) | 5.670 respuestas | accuracy, acc*, cobertura, balanced, AUROC, H1–H6 | Empate en limpio (0,908 vs 0,915) e **igualdad con la referencia supervisada** (0,905); exceso de coste **+0,32/+0,21** (H1); el 14b se abstiene 22 % en C2 y predice estrés 1–3 veces en C4/C5 (balanced ≈0,51; `acc*` 0,70); respaldo de claims **sube** 0,768→0,811 y 0,876→0,915 (H5); H6 no se replica (ΔSQI inestable); la comparación entre modelos depende de la métrica (Δ acc +0,277 en C4 con Δ balanced −0,126) | **Firme** | [`resultados_jerarquia.md`](resultados_jerarquia.md) |
 | **E11** | **Repeticiones de prompt (varianza de muestreo)** | ¿Es la respuesta estable para el mismo prompt? ¿Cuántas repeticiones hacen falta? | 7b: S5–S7 · 12 ventanas · C5 · **R=20** (720). 14b: S5 · 12 ventanas · C0/C5 · R=5 (120). Ambos en el servidor | 840 respuestas | acuerdo modal, sd de accuracy, convergencia, confianza | **El agregado es estable; la ventana no.** 22/30 ventanas no cambian nunca y **0 de las 9 de estrés**; las 8 inestables son `non-stress` que a veces se reclaman como `stress`. Una pasada da accuracy 0,648 ± 0,043 (rango 0,533–0,700); k=20 la sube a 0,690 (+4,2 pp, ≈1 sd, no concluyente). **El caso decisivo**: una ventana sale 10/10 entre clases con **confianza 85 ± 0,0** en las 20 repeticiones → la confianza no codifica la incertidumbre, y repetir la revela pero no la arregla. 14b: 100 % determinista en la decisión y con confianza graduada (sd 0,64; 5 valores); su trampa de accuracy en C5 (1,000 acc / 0,500 balanced) es determinista | Firme (pilotos) · regla: R=3 para el agregado; sin corpus completo | [`repetitions.md`](repetitions.md) |
-
-| **E12** | **Piloto DREAMT: segunda tarea (estadios de sueño)** | ¿Se sostienen H1–H6 cuando cambian la tarea, la etiqueta y el sensor? | Piloto de 4 sujetos × 20 ventanas × 5 condiciones + `NC_absent` **y cohorte de escala de 12 sujetos** × 10 ventanas por clase × 6 condiciones, en numérico y texto; **tres modelos** | 2.880 (piloto) + 17.280 (escala) | balanced, cobertura, claims, coherencia, certeza | **Piloto**: LLM 0,300/0,275/0,350/0,362 en limpio frente a referencia 0,494. **Escala** (480 ventanas/condición, 12 sujetos): `C0` 0,300/0,296 (`qwen`), 0,285/0,298 (`llama`), 0,342/0,285 (`medgemma`) frente a referencia 0,408; `NC_absent` 100 % de abstención en 6/6 brazos; con el núcleo ausente `llama` decide con la temperatura (**0,523** numérico / **0,000** textual) y su balanced es 0,250 = azar exacto; la detección parcial es **espejo** (`qwen` EDA ausente en texto 0,996; `medgemma` cardíaco ausente 0,200 numérico); `unsupported` ≈ 0; **negativo en accuracy, positivo en el mecanismo** | Ejecutado (piloto sin intervalos; **escala con IC bootstrap sobre sujetos**) ([`escala_dreamt.md`](escala_dreamt.md)) | [`piloto_dreamt.md`](piloto_dreamt.md) · [`escala_dreamt.md`](escala_dreamt.md) |
+| **E12** | **Piloto DREAMT: segunda tarea (estadios de sueño)** | ¿Se sostienen H1–H6 cuando cambian la tarea, la etiqueta y el sensor? | Piloto de 4 sujetos × 20 ventanas × 5 condiciones + `NC_absent` **y cohorte de escala de 12 sujetos** × 10 ventanas por clase × 6 condiciones, en numérico y texto; **tres modelos** | 2.880 (piloto) + 17.280 (escala) | balanced, cobertura, claims, coherencia, certeza | **Piloto**: LLM 0,300/0,275/0,350/0,362 en limpio frente a referencia 0,494. **Escala** (480 ventanas/condición, 12 sujetos): `C0` 0,300/0,296 (`qwen`), 0,285/0,298 (`llama`), 0,342/0,285 (`medgemma`) frente a referencia 0,408; `NC_absent` 100 % de abstención en 6/6 brazos; con el núcleo ausente `llama` decide con la temperatura (**0,523** numérico / **0,000** textual) y su balanced es 0,250 = azar exacto; la detección parcial es **espejo** (`qwen` EDA ausente en texto 0,996; `medgemma` cardíaco ausente 0,200 numérico); `unsupported` ≈ 0; **negativo en accuracy, positivo en el mecanismo** | Ejecutado (piloto sin IC; **escala con IC bootstrap sobre sujetos**) | [`piloto_dreamt.md`](piloto_dreamt.md) · [`escala_dreamt.md`](escala_dreamt.md) |
 
 ### Ejecución y comparación por modelo
 
@@ -1352,6 +1355,15 @@ corrección cara —recalcular E1 con referencia de desarrollo— **no** se ejec
 8. **Validación humana de claims y hedges/boosters** pendiente: el verificador es
    determinista y correcto por construcción, pero nadie ha comprobado si un lector
    humano aceptaría sus etiquetas.
+9. **Motor (versión de Ollama)**: WESAD se generó con **0.40.6** y DREAMT y
+   PhysioNet con **0.30.7**. Con el mismo prompt y la misma semilla, la abstención
+   cambia (0 frente a 28), así que las comparaciones **entre datasets** son de
+   patrón, no de cifra. Las 403 respuestas de PhysioNet en disco son anteriores a
+   que el runner escribiera `run_provenance.json`; re-ejecutarlas en el servidor
+   es la forma de que sus cifras sean citables junto a WESAD.
+10. **n efectivo = 12 sujetos** en WESAD y en la escala de DREAMT: los IC son
+   bootstrap agrupado por sujeto, no por ventana. PhysioNet usa registros (no
+   sujetos) con muestreo balanceado por clase.
 
 ---
 

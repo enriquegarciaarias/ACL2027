@@ -65,6 +65,7 @@ Toda la documentación vive en **`docs/`**, con un índice pensado para dos lect
 |---|---|
 | **Entender la pregunta y las hipótesis de la tesis** | [`docs/hipotesis.md`](docs/hipotesis.md) |
 | **Ver qué se construyó, qué se midió y qué es firme** | [`docs/experimentos.md`](docs/experimentos.md) |
+| **Leer la síntesis entre modelos y datasets (para el paper)** | [`docs/conclusiones.md`](docs/conclusiones.md) |
 | **Revisar los resultados completos del experimento principal** | [`docs/resultados_degradacion.md`](docs/resultados_degradacion.md) |
 | **Entender cómo evolucionó el experimento (qué se descartó y por qué)** | [`docs/evolucion.md`](docs/evolucion.md) |
 | **Saber qué es firme y qué es exploratorio** | [`docs/split_dev_test.md`](docs/split_dev_test.md) |
@@ -89,7 +90,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip wheel
 pip install -r requirements.txt
 pip install -r requirements-dev.txt   # pytest (opcional, para tests)
-python -m pytest -q                   # 491 tests
+python -m pytest -q                   # 675 tests
 ```
 
 `requirements.txt` incluye `torch` y fija el índice de PyTorch en
@@ -399,7 +400,7 @@ ACL2027/
 │   ├── phase2/                  # prompts, LLM, esquema de respuesta, controles negativos, gate de consistencia
 │   ├── phase3/                  # evaluación, claims, certeza, calibración, degradación
 │   └── external/                # adaptadores K-EmoCon, PhysioNet 2017 y DREAMT
-├── tests/                       # 669 tests (sin dependencia de los datasets reales)
+├── tests/                       # 675 tests (sin dependencia de los datasets reales)
 └── results/                     # NO versionado: input/ y output/ por subject
 ```
 
@@ -411,7 +412,7 @@ ACL2027/
 python -m pytest -q
 ```
 
-**491 tests**: infraestructura, ingesta, features, representaciones, prompts, esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y adaptadores externos. No requieren descargar WESAD ni Ollama.
+**675 tests**: infraestructura, ingesta, features, representaciones, prompts, esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y adaptadores externos. No requieren descargar WESAD ni Ollama.
 
 ---
 

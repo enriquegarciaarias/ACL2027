@@ -655,7 +655,7 @@ de desarrollo).
 | **E10** | **Jerarquía binaria Schmidt sin temperatura (diseño primario)** | ¿Se sostiene el binario al alinear la tarea con el paper y quitar el confusor térmico? | 2 modelos × 5 condiciones × 424 ventanas (12 sujetos eval.) | 5.670 respuestas | accuracy, acc*, cobertura, balanced, AUROC, H1–H6 | Empate en limpio (0,908 vs 0,915) e **igualdad con la referencia supervisada** (0,905); exceso de coste **+0,32/+0,21** (H1); el 14b se abstiene 22 % en C2 y predice estrés 1–3 veces en C4/C5 (balanced ≈0,51; `acc*` 0,70); respaldo de claims **sube** 0,768→0,811 y 0,876→0,915 (H5); H6 no se replica (ΔSQI inestable); la comparación entre modelos depende de la métrica (Δ acc +0,277 en C4 con Δ balanced −0,126) | **Firme** | [`resultados_jerarquia.md`](resultados_jerarquia.md) |
 | **E11** | **Repeticiones de prompt (varianza de muestreo)** | ¿Es la respuesta estable para el mismo prompt? ¿Cuántas repeticiones hacen falta? | 7b: S5–S7 · 12 ventanas · C5 · **R=20** (720). 14b: S5 · 12 ventanas · C0/C5 · R=5 (120). Ambos en el servidor | 840 respuestas | acuerdo modal, sd de accuracy, convergencia, confianza | **El agregado es estable; la ventana no.** 22/30 ventanas no cambian nunca y **0 de las 9 de estrés**; las 8 inestables son `non-stress` que a veces se reclaman como `stress`. Una pasada da accuracy 0,648 ± 0,043 (rango 0,533–0,700); k=20 la sube a 0,690 (+4,2 pp, ≈1 sd, no concluyente). **El caso decisivo**: una ventana sale 10/10 entre clases con **confianza 85 ± 0,0** en las 20 repeticiones → la confianza no codifica la incertidumbre, y repetir la revela pero no la arregla. 14b: 100 % determinista en la decisión y con confianza graduada (sd 0,64; 5 valores); su trampa de accuracy en C5 (1,000 acc / 0,500 balanced) es determinista | Firme (pilotos) · regla: R=3 para el agregado; sin corpus completo | [`repetitions.md`](repetitions.md) |
 
-| **E12** | **Piloto DREAMT: segunda tarea (estadios de sueño)** | ¿Se sostienen H1–H6 cuando cambian la tarea, la etiqueta y el sensor? | 4 sujetos piloto × 20 ventanas de 60 s puras × 5 condiciones + `NC_absent`, en numérico y texto | 960 | balanced, cobertura, claims, coherencia, certeza | LLM 0,300/0,275 en limpio frente a referencia 0,494; abstención en `C1` 25 % numérico vs **98,8 %** texto; `unsupported` 0 en todas las condiciones; **negativo en accuracy**, positivo en el mecanismo | Ejecutado (piloto, sin datos de test) | [`piloto_dreamt.md`](piloto_dreamt.md) |
+| **E12** | **Piloto DREAMT: segunda tarea (estadios de sueño)** | ¿Se sostienen H1–H6 cuando cambian la tarea, la etiqueta y el sensor? | Piloto de 4 sujetos × 20 ventanas × 5 condiciones + `NC_absent` **y cohorte de escala de 12 sujetos** × 10 ventanas por clase × 6 condiciones, en numérico y texto; **tres modelos** | 2.880 (piloto) + 17.280 (escala) | balanced, cobertura, claims, coherencia, certeza | **Piloto**: LLM 0,300/0,275/0,350/0,362 en limpio frente a referencia 0,494. **Escala** (480 ventanas/condición, 12 sujetos): `C0` 0,300/0,296 (`qwen`), 0,285/0,298 (`llama`), 0,342/0,285 (`medgemma`) frente a referencia 0,408; `NC_absent` 100 % de abstención en 6/6 brazos; con el núcleo ausente `llama` decide con la temperatura (**0,523** numérico / **0,000** textual) y su balanced es 0,250 = azar exacto; la detección parcial es **espejo** (`qwen` EDA ausente en texto 0,996; `medgemma` cardíaco ausente 0,200 numérico); `unsupported` ≈ 0; **negativo en accuracy, positivo en el mecanismo** | Ejecutado (piloto sin intervalos; **escala con IC bootstrap sobre sujetos**) ([`escala_dreamt.md`](escala_dreamt.md)) | [`piloto_dreamt.md`](piloto_dreamt.md) · [`escala_dreamt.md`](escala_dreamt.md) |
 
 ### Ejecución y comparación por modelo
 
@@ -1136,6 +1136,36 @@ intervalos por sujeto), pero sí una dirección clara. Detalle en
 cerca del azar, con la referencia en 0,418). F1, F3, F4 y F5 no se activan: el
 modelo distingue `C1` de `C2` y el numérico del textual.
 
+**Segundo y tercer modelo (2026-11-23/24).** El piloto se repitió con
+`medgemma:4b` y `llama3.1:8b` sobre las **mismas 960 ventanas y prompts** para
+separar «propiedad de la tarea» de «propiedad del modelo». Resultado en
+[`piloto_dreamt.md`](piloto_dreamt.md) §19:
+
+- **Lo único que no cambia**: cuando **todas** las features están a
+  `not available` (`NC_absent`), los tres modelos se abstienen el **100 %** en
+  las dos vistas (6/6 brazos). Ese es el invariante.
+- **La ausencia del núcleo (`C4`) ya no es universal**: `qwen` y `medgemma` se
+  abstienen el 100 %, pero `llama3.1:8b` decide con la **temperatura** que queda
+  (51,2 % de abstención en numérico, **0 % en texto**) y su balanced es 0,250 =
+  azar exacto mientras su accuracy es 0,353, la más alta de la matriz.
+- **La detección de ausencia parcial es espejo**: `qwen` percibe la EDA ausente
+  solo en texto (25,0 % → 98,8 %); `medgemma` apenas (2,5 %) pero **sí** nota el
+  bloque cardíaco (26,3 %); `llama3.1:8b` no percibe ninguna parcial (0,0 %). Cada
+  modelo echa en falta el canal que no usa. **H4 es del par (modelo, canal,
+  representación)** y su único umbral compartido es «no hay ninguna feature».
+- **H5 se replica en los tres**: respaldo de claims similar en limpio
+  (0,679 / 0,690 / 0,585) y `unsupported` ≈ 0 (1 nombre no reconocido en 2.880
+  claims). Excepción informativa: en `C4` numérico `llama3.1:8b` tiene **27 de 42
+  claims contradichos** — cuando la única señal es un confusor, no solo decide,
+  afirma en la dirección equivocada. Aquí se descubrió y corrigió un **defecto
+  de medición** del verificador (§19.2); no afecta a ninguna cifra publicada de
+  WESAD.
+- **No es un ranking** (4,3 / 7 / 8 B): `medgemma` sube a 0,412 en limpio con un
+  predictor de dos clases (`n1` y `rem` a 0,00); `llama` se queda en 0,350 pero
+  reparte más (`n1` recall 0,30 num./0,50 txt.). **`rem` tiene recall 0 en las
+  12 configuraciones** y **H2a no mejora** con ninguno (confianzas 95/80
+  constantes; AUROC 0,500 y 0,518).
+
 **Decisiones fijadas.** Rama wearable (`data_64Hz/`, 14 GB; las etiquetas ya
 viajan en esos ficheros); ventana de 60 s con pureza 1,0; 4 clases
 (W/N1/N2/R) con **N3 excluido**; matriz de 5 condiciones separando **ausencia**
@@ -1164,7 +1194,53 @@ idéntica entre `C3`/`C4` y `C0`; numérico ≡ textual; y `C1` ≡ `C2` (el mod
 no distingue ausencia de valor imposible). Si se cumple cualquiera, el piloto
 se reporta como el resultado que es y no se escala.
 
-Detalle completo en [`piloto_dreamt.md`](piloto_dreamt.md).
+**Escala de 12 sujetos (2026-11-24).** Cohorte congelada **antes** de generar con
+una regla ciega a los resultados (≥ 12 ventanas puras por clase, exclusión de
+desarrollo y piloto, reparto uniforme sobre los 50 candidatos):
+`S008, S015, S021, S035, S039, S045, S061, S067, S071, S086, S093, S103`.
+10 ventanas por clase y sujeto (desviación declarada frente a las 20 del piloto),
+6 condiciones, 2 vistas: **5.760 llamadas por modelo**, 17.280 en total, con
+intervalos bootstrap sobre sujetos. Detalle en
+[`escala_dreamt.md`](escala_dreamt.md).
+
+| Condición | `qwen2.5:7b` num. | `llama3.1:8b` num. | `medgemma:4b` num. | `qwen2.5:7b` txt. | `llama3.1:8b` txt. | `medgemma:4b` txt. |
+|---|---:|---:|---:|---:|---:|---:|
+| `C0` limpio | 0,000 | 0,000 | 0,004 | 0,000 | 0,000 | 0,013 |
+| `C1` EDA ausente | 0,294 | 0,000 | 0,023 | **0,996** | 0,000 | 0,044 |
+| `C2` EDA a cero | 0,006 | 0,000 | **0,125** | 0,000 | 0,000 | 0,033 |
+| `C3` cardíaco ausente | 0,008 | 0,000 | **0,200** | 0,085 | 0,000 | 0,108 |
+| `C4` núcleo ausente | **1,000** | **0,523** | **1,000** | **1,000** | **0,000** | **1,000** |
+| `NC_absent` | 1,000 | 1,000 | 1,000 | 1,000 | 1,000 | 1,000 |
+
+(tabla de **abstención**; 480 ventanas por condición y modelo)
+
+1. **Lo que la escala añade es una no-conclusión sobre la precisión**: ningún
+   brazo se acerca a la referencia LOSO (0,408 de accuracy, 0,362 de balanced,
+   azar 0,250). `acc*` en `C0`: 0,300/0,296 (`qwen`), 0,285/0,298 (`llama`),
+   0,342/0,285 (`medgemma`). El 0,342 de `medgemma` es un predictor de **dos
+   clases** (`n1` y `rem` con recall 0,00). `rem` sigue sin recall en los tres.
+2. **El atajo de la temperatura es de `llama3.1:8b`, no de la tarea**: `qwen` y
+   `medgemma` se abstienen al 100 % en `C4` en las dos vistas; `llama` decide en
+   el 47,7 % de las ventanas numéricas con balanced **0,250 = azar exacto**. La
+   predicción falsable del piloto se cumplió.
+3. **Cada modelo tiene su canal sensible**: `qwen` la EDA en texto (0,996
+   [0,990; 1,000]), `medgemma` el bloque cardíaco en numérico (0,200 [0,167;
+   0,235], replicando el 26,3 % del piloto) y la degeneración (0,125 [0,048;
+   0,219]), `llama` ninguno salvo la ausencia total. **No hay detector genérico
+   de ausencia.**
+4. **`NC_absent` es el único invariante**: 100 % en 6/6 brazos modelo × vista.
+5. **H5 se mantiene**: `unsupported` ≈ 0 y respaldo en limpio 0,59–0,66; la
+   excepción sigue siendo `llama` en `C4` numérico (0,276, cita la temperatura).
+   `medgemma` se abstiene al 100 % y aun así respalda 0,409–0,607 de sus claims:
+   los claims son **locales** y no validan la decisión.
+
+**Lección metodológica de la escala.** Los tres modelos se ordenan al revés
+según la métrica: en `C4` numérico `llama` tiene la accuracy más alta y el
+balanced más bajo. Se reportan siempre **cobertura, abstención y balanced**; la
+accuracy sola premia al que contesta sin evidencia.
+
+Detalle completo en [`piloto_dreamt.md`](piloto_dreamt.md) y
+[`escala_dreamt.md`](escala_dreamt.md).
 
 ---
 
@@ -1197,12 +1273,20 @@ Detalle completo en [`piloto_dreamt.md`](piloto_dreamt.md).
   (`run_provenance.json`). Muestra de 30 ventanas: la inestabilidad está donde
   debe estar (0 de 9 ventanas de estrés) y la regla R=3 queda fijada en
   [`repetitions.md`](repetitions.md).
-- **E12 · Segundo eje de tarea (DREAMT, piloto)**: preregistro congelado antes
-  de generar y **960/960 respuestas** ejecutadas; P0 8/8. Firme como
-  **demostración de mecanismo** (100 % de abstención con el núcleo ausente,
-  `unsupported = 0`, H4 dependiente de la representación 25,0 % vs 98,8 %) y
-  como **resultado negativo de precisión** (LLM 0,300/0,275 frente a referencia
-  0,494). **No firme como medida de accuracy**: n = 4 sujetos, sin intervalos.
+- **E12 · Segundo eje de tarea (DREAMT)**: preregistro congelado antes de
+  generar y **2.880 respuestas** del piloto (960 por modelo con `qwen2.5:7b`,
+  `medgemma:4b` y `llama3.1:8b`, mismos prompts; P0 8/8) más **17.280
+  respuestas** de la cohorte de escala (12 sujetos congelados antes de generar,
+  480 ventanas por condición y modelo, IC bootstrap sobre sujetos). Firme como
+  **demostración de mecanismo** (`NC_absent` → 100 % de abstención en los seis
+  brazos, `unsupported` ≈ 0, claims verdaderos con inferencia errada) y como
+  **resultado negativo de precisión** (LLM 0,285–0,342 frente a referencia
+  0,408). Matices que aporta la escala: **H4 depende de (modelo, canal,
+  representación)** y su único umbral compartido es «ninguna feature
+  disponible»; el atajo de la temperatura en `C4` es de `llama3.1:8b`; **H2a no
+  mejora** (confianzas constantes); y `rem` no se detecta en ninguna
+  configuración. **No firme como medida de accuracy**: la tarea es débilmente
+  resoluble con la rama *wearable*.
 - **Infraestructura** (E0): corpus, SQI, degradación, procedencia.
 
 ## Exploratorio
@@ -1247,8 +1331,11 @@ corrección cara —recalcular E1 con referencia de desarrollo— **no** se ejec
 
 1. **Dos modelos, familias distintas.** Las conclusiones comparan `qwen2.5:7b`
    y `qwen3:14b`; no se puede separar efecto de tamaño de efecto de familia.
-   `qwen3:8b` está instalado y permitiría aislar el tamaño (pendiente, 2
-   condiciones ≈ 2 h).
+   Romper ese confusor exige un brazo de la **misma familia** con otro tamaño
+   (p. ej. `qwen3:8b` frente a `qwen3:14b`, o `qwen2.5:7b` frente a
+   `qwen2.5:14b`) ejecutado **en el servidor y con el mismo motor** que el resto:
+   los runs locales no se citan (§7.4 de [`repetitions.md`](repetitions.md)), así
+   que un `qwen3:8b` local no sería comparable con el corpus publicado.
 2. **Varianza de muestreo medida solo en parte**: E11 la estima para el 7b en
    C5 (30 ventanas, R=20) y para el 14b en C0/C5 (10 ventanas, R=5). El corpus
    principal sigue siendo de una sola semilla; la extrapolación a 424 ventanas
@@ -1277,12 +1364,19 @@ corrección cara —recalcular E1 con referencia de desarrollo— **no** se ejec
 3. Validación humana de una muestra de claims y de hedges/boosters (idealmente
    con un segundo anotador).
 4. **Ampliar E11 a S8–S10** (mismo R=20, 1.440 llamadas, ~50 min) si se quiere
-   citar el +0,064 de AUROC de confianza; y **brazo textual del diseño primario
-   (H3)**, que no existe para ninguno de los dos modelos (2.835 × 2 llamadas).
+   citar el +0,064 de AUROC de confianza. El brazo textual del diseño primario
+   (H3) ya está cerrado para los dos modelos (§5.7 de
+   [`resultados_jerarquia.md`](resultados_jerarquia.md)).
 5. Dataset externo con **inducción de estrés** (UBFC-Phys / SWELL-KW) para
    validez externa del endpoint.
 6. Análisis de sensibilidad del tamaño de ventana (30/120 s).
 7. Validar el umbral SCR y calibrar el SQI con anotación humana.
+8. **Completar el factorial familia × tamaño en el servidor** (≥ 2 tamaños por
+   familia, p. ej. `qwen2.5:7b`/`14b` y `qwen3:8b`/`14b`), todo con la misma
+   versión de Ollama, semilla y prompt; antes de lanzar, comprobar que la
+   versión y el digest del modelo coinciden con los del corpus ya publicado
+   (`run_provenance.json`), o re-ejecutar los brazos afectados. Un `qwen3:8b`
+   local **no** sirve para esto: cambiaría el motor y no sería comparable.
 
 ---
 

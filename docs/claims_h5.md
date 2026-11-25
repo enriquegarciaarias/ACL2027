@@ -260,3 +260,19 @@ python scripts/analyze_degradation.py
 # Solo condiciones concretas
 python scripts/analyze_degradation.py --conditions C0_clean,C4_total_eda
 ```
+
+### 7.1. Corrección de medición (2026-11-23)
+
+`verify_claims` normalizaba el prompt con el vocabulario del dataset pero la
+métrica de **cada claim** sin él: todo claim que citara la etiqueta legible que
+el modelo había leído («Movement fraction», «Mean conductance») se contaba como
+`unsupported` —«métrica ausente»— aunque estuviera en la entrada. Afectaba solo
+a los brazos que pasan `extra_aliases` (DREAMT); los análisis de WESAD no los
+pasan, así que **ninguna cifra publicada en este documento cambia**.
+
+Para que los dos significados de `unsupported` no vuelvan a mezclarse, el bloque
+de claims de DREAMT incluye ahora `unrecognized_metric_names`: cuántos claims
+citan un nombre que el verificador no conoce. Un `unsupported` con nombre
+reconocido es **evidencia ausente**; sin nombre reconocido es **vocabulario**.
+Residual tras ampliar la tabla: 1 claim de 960 llamadas. Detalle en
+[`piloto_dreamt.md`](piloto_dreamt.md) §19.2.

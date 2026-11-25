@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from sources.external.physionet2017 import (
@@ -71,3 +73,86 @@ def test_build_payload_has_only_ecg_and_all_features():
     assert set(payload["modalities"]["ecg"]) == set(CANONICAL_FEATURES)
     assert payload["window"]["duration_s"] == 30.0
     assert payload["window"]["window_id"].startswith("win_")
+
+
+# ---------------------------------------------------------------------------
+# Procedencia del motor y aborto si el modelo no está descargado
+# ---------------------------------------------------------------------------
+
+
+_VALID_RHYTHM_OUTPUT = (
+    '{"decision": "normal", "confidence": 80, '
+    '"claims": [{"metric": "ecg_hr_bpm", "channel": "ecg", '
+    '"direction": "stable", "magnitude": "low"}], '
+    '"reasoning": "Heart rate is near the population median."}'
+)
+
+
+def _one_record() -> RhythmRecord:
+    values = {name: 0.0 for name in CANONICAL_FEATURES}
+    return RhythmRecord(
+        record_id="A00001", label="normal", fs=300.0, duration_s=30.0, values=values
+    )
+
+
+def test_run_llm_writes_engine_provenance(tmp_path, monkeypatch):
+    from scripts import run_p3_physionet as pn
+
+    monkeypatch.setattr(pn, "check_model_available", lambda _model: True)
+    monkeypatch.setattr(
+        pn,
+        "ollama_run_provenance",
+        lambda model: {"model": model, "ollama_version": "0.40.6", "model_digest": "abc"},
+    )
+    monkeypatch.setattr(
+        pn,
+        "_call_ollama_chat",
+        lambda *a, **k: (_VALID_RHYTHM_OUTPUT, {"model": "qwen2.5:7b"}),
+    )
+
+    centers = {name: 0.0 for name in CANONICAL_FEATURES}
+    scales = {name: 1.0 for name in CANONICAL_FEATURES}
+    pn.run_llm(
+        [_one_record()],
+        output_dir=tmp_path,
+        centers=centers,
+        scales=scales,
+        model="qwen2.5:7b",
+        temperature=0.0,
+        seed=42,
+        max_records=None,
+        tag="fs",
+    )
+
+    prov = json.loads((tmp_path / "run_provenance_fs.json").read_text(encoding="utf-8"))
+    assert prov["ollama_version"] == "0.40.6"
+    assert prov["model"] == "qwen2.5:7b"
+    assert prov["task"] == "physionet2017_rhythm4"
+    assert prov["tag"] == "fs"
+    assert prov["config"]["model"] == "qwen2.5:7b"
+    # La respuesta se escribe aparte y sin etiqueta.
+    assert (tmp_path / "physionet2017_fs.responses.jsonl").is_file()
+
+
+def test_run_llm_aborts_when_model_is_not_available(tmp_path, monkeypatch):
+    from scripts import run_p3_physionet as pn
+
+    monkeypatch.setattr(pn, "check_model_available", lambda _model: False)
+
+    centers = {name: 0.0 for name in CANONICAL_FEATURES}
+    scales = {name: 1.0 for name in CANONICAL_FEATURES}
+    with pytest.raises(SystemExit) as exc:
+        pn.run_llm(
+            [_one_record()],
+            output_dir=tmp_path,
+            centers=centers,
+            scales=scales,
+            model="medgemma:27b",
+            temperature=0.0,
+            seed=42,
+            max_records=None,
+        )
+    assert "ollama pull" in str(exc.value)
+    # No se escribe ni una respuesta: no se cachean timeouts.
+    assert not list(tmp_path.glob("*.responses.jsonl"))
+    assert not (tmp_path / "run_provenance.json").exists()

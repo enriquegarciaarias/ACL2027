@@ -128,11 +128,13 @@ def test_evaluate_dreamt_argv_resolves_model_and_phase():
     """Sin --model la evaluación no podría leer la carpeta del modelo."""
     processControl.defaults = {"llm": {"primary_model": "qwen2.5:7b"}}
     argv = pipelines.build_evaluate_argv(
-        "dreamt", _args(model=None, reference=True)
+        "dreamt", _args(model=None, reference=True, subjects="S034")
     )
     assert argv[:2] == ["--phase", "evaluate"]
     assert "--model" in argv and "qwen2.5:7b" in argv
     assert "--reference" in argv
+    # La evaluación también debe poder restringirse a un subconjunto del piloto.
+    assert "--subjects" in argv and "S034" in argv
 
 
 def test_dreamt_call_estimate_counts_both_views():
@@ -581,3 +583,51 @@ def test_generate_argv_omits_compare_with_by_default():
         seed=None,
     )
     assert "--compare-with" not in build_evaluate_argv("degradation", args)
+
+
+def test_system_exit_with_message_keeps_it_visible(caplog):
+    """`raise SystemExit("texto")` no puede quedarse en un 1 mudo.
+
+    Todos los runners explican los errores controlados con SystemExit y una
+    cadena; si el mensaje se descarta, el usuario solo ve un código.
+    """
+    from main import _exit_code_from_system_exit
+
+    assert _exit_code_from_system_exit(SystemExit(0)) == 0
+    assert _exit_code_from_system_exit(SystemExit(None)) == 0
+    assert _exit_code_from_system_exit(SystemExit(2)) == 2
+    with caplog.at_level("ERROR"):
+        assert _exit_code_from_system_exit(SystemExit("motivo legible")) == 1
+    assert "motivo legible" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Cohorte de escala de DREAMT
+# ---------------------------------------------------------------------------
+
+
+def test_dreamt_argv_passes_the_cohort():
+    """``--cohort`` debe llegar al runner en las dos fases (pilot/scale)."""
+    gen = pipelines.build_generate_argv(
+        "dreamt", _args(cohort="scale", representation="both", windows_per_class=10)
+    )
+    assert "--cohort" in gen and "scale" in gen
+
+    processControl.defaults = {"llm": {"primary_model": "qwen2.5:7b"}}
+    ev = pipelines.build_evaluate_argv("dreamt", _args(cohort="scale", model=None))
+    assert "--cohort" in ev and "scale" in ev
+
+
+def test_dreamt_plan_uses_the_requested_cohort():
+    """El plan de ``--dry-run`` no debe contar los sujetos del piloto si se pide escala."""
+    from scripts.run_p4_dreamt import PILOT_SUBJECTS, SCALE_SUBJECTS
+
+    assert pipelines._subjects_for_plan(_args(experiment="dreamt")) == list(
+        PILOT_SUBJECTS
+    )
+    assert pipelines._subjects_for_plan(
+        _args(experiment="dreamt", cohort="scale")
+    ) == list(SCALE_SUBJECTS)
+    assert pipelines._subjects_for_plan(
+        _args(experiment="dreamt", cohort="scale", subjects="S008")
+    ) == ["S008"]

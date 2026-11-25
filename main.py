@@ -116,6 +116,25 @@ def _run() -> int:
     return 0
 
 
+def _exit_code_from_system_exit(exc: SystemExit) -> int:
+    """Código de salida de un ``SystemExit`` sin perder el mensaje.
+
+    ``raise SystemExit("explicación")`` deja el texto en ``exc.code``. Al
+    capturarlo aquí (en vez de dejar que llegue al intérprete) el texto se
+    perdía y solo quedaba un ``1`` opaco: un humo pedido con
+    ``--windows-per-class 1`` sobre prompts de 5 ventanas por clase salía con
+    código 1 y **sin decir por qué** (2026-11-23). Los runners usan ese patrón
+    para todos los errores controlados, así que el mensaje se registra.
+    """
+    code = exc.code
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return int(code)
+    writeLog("error", logger, str(code))
+    return 1
+
+
 def _shape_hint(exc: BaseException) -> str:
     """Sugerencia accionable para los fallos de preparación más frecuentes."""
     text = str(exc)
@@ -144,7 +163,7 @@ if __name__ == '__main__':
         writeLog("warning", logger, "Ejecución interrumpida por el usuario.")
         code = 130
     except SystemExit as exc:  # salidas controladas (p. ej. preflight)
-        code = int(exc.code) if isinstance(exc.code, int) else 1
+        code = _exit_code_from_system_exit(exc)
     except BaseException as exc:  # noqa: BLE001 - se registra y se propaga el fallo
         writeLog(
             "error",

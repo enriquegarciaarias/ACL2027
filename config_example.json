@@ -32,6 +32,7 @@
             "think": false,
             "temperature": 0.3,
             "max_tokens": 800,
+            "num_ctx": 32768,
             "llm_timeout": 120.0,
             "llm_keep_alive": "5m",
             "repetitions": 1,

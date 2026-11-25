@@ -269,6 +269,7 @@ de enviar el trabajo.
 | `main.py: error: unrecognized arguments: --` (código 2) | se coló un `--` **entre** los argumentos de la fase al copiar el comando; el separador va una sola vez, antes de la fase | desde 2026-11-13 `main.py` lo ignora con aviso y el lanzador avisa antes de enviar; aun así, revisa el comando |
 | El job termina en segundos y el log parece vacío | falta `config.json` o el dataset | `python main.py ... --dry-run` y revisa `paths` y `warnings` |
 | `Job completado` pero sin resultados | el pipeline devolvió error y el wrapper no lo miraba | ahora `run_ACL.sh` propaga el código y Slurm marca `FAILED` |
+| Un modelo de ~27-32B va a 2-5 tok/s y `ollama ps` dice *CPU/GPU split* | 17-20 GB de pesos **más** la caché KV de 32k tokens no caben en 24 GB | baja `defaults.llm.num_ctx` en `config.json` (los prompts rondan 1.000 tokens: 8192 sobra) y **restáuralo** después; el valor queda en `run_provenance.json`, así que la desviación es auditable |
 
 ---
 

@@ -287,9 +287,23 @@ def manageArgs():
         help="Piloto dreamt: ventanas muestreadas por clase y sujeto (5).",
     )
     parser.add_argument(
+        '--cohort',
+        type=str,
+        default=None,
+        choices=("pilot", "scale"),
+        help="dreamt: cohorte de evaluación congelada (pilot por defecto; "
+             "scale = 12 sujetos declarados en docs/escala_dreamt.md §2).",
+    )
+    parser.add_argument(
         '--reference',
         action='store_true',
         help="EVALUATE dreamt: añadir la referencia features-only (LOSO).",
+    )
+    parser.add_argument(
+        '--recovery',
+        action='store_true',
+        help="EVALUATE dreamt: recuperar decisión/confianza de respuestas con "
+             "claims mal formados (se cuenta aparte y no toca los datos).",
     )
     parser.add_argument(
         '--noEmbeddings',

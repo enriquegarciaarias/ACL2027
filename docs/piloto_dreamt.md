@@ -603,6 +603,13 @@ alcanzan la polisomnografía de la literatura.
 † Una sola ventana decidida de 80: la accuracy no es interpretable y por eso se
 publica con cobertura.
 
+> **Convención de los artefactos (2026-11-23).** Las cifras de §18.2 son de la
+> ejecución original, sin recuperación. Los `evaluation_*.json` actuales se
+> generan con `--recovery`, que conserva la decisión de las respuestas con claims
+> mal formados (3 en el brazo textual de `qwen2.5:7b`). La diferencia es de una a
+> tres ventanas: `C2` textual pasa a cobertura 100 % / accuracy 0,312 y `C3` a
+> 87,5 % / 0,241. No cambia ninguna lectura de §18.
+
 **H1 en limpio.** El LLM está **por debajo** de la referencia: exceso de coste
 −0,194 (numérico) y −0,219 (texto) en accuracy; −0,118 y −0,143 en balanced. No
 es un fallo de información (la referencia resuelve 0,49); es un fallo del lector.
@@ -638,26 +645,35 @@ porque `NC_zero` era inválido en escala centrada (§14, y `docs/e12_resultados.
 
 ### 18.4. H5: claims verdaderos, inferencia débil
 
+Tabla recalculada el 2026-11-23 con el verificador corregido (§19.2): el
+vocabulario del dataset llega ahora también a la normalización de la métrica de
+cada claim, no solo al parseo del prompt.
+
 | Vista | Condición | claims | respaldados | contradichos | `unsupported` | coherencia | contrarios verdaderos |
 |---|---|---:|---:|---:|---:|---:|---:|
 | numérico | `C0_clean` | 247 | 0,684 | 0,316 | 0 | 0,719 | 0,318 |
 | numérico | `C1_absent_eda` | 143 | 0,769 | 0,231 | 0 | 0,800 | 0,194 |
 | numérico | `C2_degenerate_eda` | 231 | 0,632 | 0,368 | 0 | 0,803 | 0,209 |
-| numérico | `C3_absent_hrv` | 229 | 0,651 | 0,349 | 0 | **0,491** | **0,537** |
-| texto | `C0_clean` | 236 | 0,496 | 0,504 | 0 | 0,881 | 0,113 |
-| texto | `C2_degenerate_eda` | 233 | 0,511 | 0,489 | 0 | 0,793 | 0,291 |
-| texto | `C3_absent_hrv` | 176 | 0,273 | 0,727 | 0 | 0,938 | 0,125 |
+| numérico | `C3_absent_hrv` | 229 | 0,651 | 0,341 | 0 | **0,491** | **0,537** |
+| texto | `C0_clean` | 236 | 0,564 | 0,436 | 0 | 0,881 | 0,113 |
+| texto | `C1_absent_eda` | 2 | 0,500 | 0,500 | 0 | 1,000 | 0,000 |
+| texto | `C2_degenerate_eda` | 234 | 0,637 | 0,363 | 0 | 0,794 | 0,291 |
+| texto | `C3_absent_hrv` | 177 | 0,492 | 0,277 | 0 | 0,914 | 0,179 |
 
-- **`unsupported = 0` en todas las condiciones**: el modelo no cita canales que
-  no están en la entrada. Deja de hablar de HR cuando HR desaparece. Es el
-  mismo comportamiento que en WESAD y PhysioNet.
+- **`unsupported = 0` en las doce celdas con claims**: el modelo no cita canales
+  que no están en la entrada. Deja de hablar de HR cuando HR desaparece. Es el
+  mismo comportamiento que en WESAD y PhysioNet. En `C3` lo que aparece son 41
+  claims `indeterminate` (23,1 %, textual): la métrica sigue nombrada en el
+  prompt con valor `not available`, que es una categoría distinta de «no
+  existe».
 - **C3 numérico es el caso nítido**: sin HR, la decisión se mantiene (53/80
   `n2`) pero los claims que quedan —movimiento y EDA— apoyan otras clases. La
   coherencia cae de 0,719 a **0,491** y **53,7 %** de los claims verdaderos van
   **contra** la conclusión.
-- **El texto es menos respaldado** (0,496 vs 0,684) y **más coherente**
+- **El texto es algo menos respaldado** (0,564 vs 0,684) y **más coherente**
   (0,881 vs 0,719): prosa con menos claims, mejor alineados con la decisión. Es
-  la misma disociación verdad/coherencia que en el eje afectivo.
+  la misma disociación verdad/coherencia que en el eje afectivo, con una brecha
+  menor de lo que sugería la medición defectuosa.
 - En `C1` textual solo quedan **2 claims** (98,8 % de abstención): abstenerse
   silencia las afirmaciones. Ausencia de evidencia → ausencia de claim → el
   sistema no puede alucinar sobre lo que no dice.
@@ -743,3 +759,260 @@ Lo que sí se sostiene sin depender de esa comparación: el **mecanismo**
 inferencia errada, confianza que no informa) y el hallazgo de que **H4 depende
 de la representación** (25,0 % vs 98,8 %).
 
+
+---
+
+## 19. Tres modelos: `medgemma:4b` y `llama3.1:8b` (ejecutado 2026-11-23/24)
+
+El piloto de §18 se hizo con un solo modelo. Si todo el resultado dependiera de
+`qwen2.5:7b`, un revisor podría atribuir el mecanismo a ese modelo y no a la
+tarea. Esta sección repite el piloto **con los mismos cuatro sujetos, las mismas
+ventanas y los mismos prompts** (960 llamadas por modelo) con dos modelos más de
+familias distintas.
+
+**Qué se puede y qué no se puede leer aquí.**
+
+- **Sí**: si el comportamiento (abstención, respaldo de claims, certeza,
+  colapso de clases) es una propiedad de la tarea o del modelo.
+- **No**: una clasificación de modelos. `medgemma:4b` es un modelo de 4,3 B
+  (gemma3, Q4_K_M, contexto 131 k), `llama3.1:8b` es de 8 B con plantilla
+  instruct nativa y `qwen2.5:7b` de 7 B; la diferencia de tamaño y de familia
+  impide ordenarlos por calidad.
+
+### 19.1. Ejecución y fidelidad de formato
+
+| Modelo | Brazo | Respuestas | Inválidas | Abstención válida | Ritmo |
+|---|---|---:|---:|---:|---:|
+| `qwen2.5:7b` | numérico | 480 | **0** (0,0 %) | 180 | ≈2 s/llamada |
+| `qwen2.5:7b` | texto | 480 | 3 (0,6 %) | 249 | |
+| `medgemma:4b` | numérico | 480 | **45** (9,4 %) | 183 | ≈1,1 s/llamada |
+| `medgemma:4b` | texto | 480 | **66** (13,8 %) | 130 | |
+| `llama3.1:8b` | numérico | 480 | **0** (0,0 %) | 79 | ≈3,5 s/llamada |
+| `llama3.1:8b` | texto | 480 | **0** (0,0 %) | 60 | |
+
+Las 111 inválidas de `medgemma` no son fallos de contenido sino de **forma**:
+
+| Defecto | Ocurrencias | Ejemplo |
+|---|---:|---|
+| `direction: "high"` / `"low"` (magnitud escrita en el campo de dirección) | 97 | `{"direction": "high", "magnitude": "high"}` |
+| `channel: "fraction"` (parte de un nombre compuesto) | 14 | `{"metric": "Movement fraction", "channel": "fraction"}` |
+| `channel: "activity"` (ídem, en `qwen`) | 3 | `{"channel": "activity"}` |
+
+Se **evalúa con `--recovery`**: la decisión y la confianza se conservan, los
+claims mal formados se descartan y el registro queda marcado (`recovered`). En
+`llama3.1:8b` no hubo nada que recuperar. No se añade un alias post hoc para
+`direction: "high"`, por el mismo criterio que en el brazo textual de WESAD: si
+se quiere medir «¿detecta el modelo una magnitud anómala?», merece un tipo de
+claim diseñado antes de recoger datos. **Coste declarado**: el análisis de claims
+de `medgemma` cubre solo los registros válidos (86–91 % según el brazo).
+
+### 19.2. Dos correcciones de medición descubiertas aquí
+
+Al comparar los brazos textuales apareció un `unsupported` de 55 % en
+`medgemma` que **no era alucinación**. Dos defectos del verificador:
+
+1. **`verify_claims` normalizaba el prompt con el vocabulario del dataset y el
+   claim sin él.** Todo claim que citara la etiqueta legible que el modelo había
+   leído («Movement fraction», «Mean conductance») se contaba como
+   `unsupported` —«métrica ausente»— aunque estuviera en la entrada. Afectaba
+   solo a los brazos que pasan `extra_aliases` (DREAMT): los análisis de WESAD
+   no los pasan, así que **ninguna cifra publicada de WESAD cambia**.
+   Efecto en `qwen` textual `C0`: respaldo 0,496 → **0,564**.
+2. **Alias incompletos**: `eda conductance`, `conductance`, `skin conductance`,
+   `mean_hr`, `acc_variability`, `eda_tonic_level`, `acc_95th_percentile`… y la
+   forma con guion bajo de una etiqueta (`acc_mean`). Se añadieron a
+   `SLEEP_METRIC_ALIASES` y `normalize_metric` reintenta con espacio ↔ guion
+   bajo **solo** en vocabularios con `extra_aliases`.
+
+Para que no vuelva a ocurrir, cada bloque de claims incluye ahora
+`unrecognized_metric_names`: cuántos claims citan un nombre que el verificador
+no conoce. Un `unsupported` con nombre reconocido es **evidencia ausente**; sin
+nombre reconocido es **vocabulario**. Tras la corrección el residual es **1
+claim de 2.880** («Skin conductance activity»); `llama3.1:8b` no produjo
+ninguno.
+
+### 19.3. Corrección y cobertura (4 sujetos × 20 ventanas por condición)
+
+Media entre los cuatro sujetos de la tasa por sujeto. `acc*` = accuracy con la
+abstención contada como error.
+
+**Vista numérica**
+
+| Condición | `qwen2.5:7b` acc / acc\* / cob. | `medgemma:4b` acc / acc\* / cob. | `llama3.1:8b` acc / acc\* / cob. |
+|---|---|---|---|
+| `C0_clean` | 0,300 / 0,300 / 100 % | **0,412** / 0,412 / 100 % | 0,350 / 0,350 / 100 % |
+| `C1_absent_eda` | 0,415 / 0,312 / 75,0 % | 0,438 / 0,425 / 97,5 % | **0,450** / **0,450** / 100 % |
+| `C2_degenerate_eda` | 0,338 / 0,338 / 100 % | 0,423 / 0,375 / 88,7 % | 0,438 / 0,438 / 100 % |
+| `C3_absent_hrv` | 0,300 / 0,300 / 100 % | 0,288 / 0,212 / 73,8 % | 0,312 / 0,312 / 100 % |
+| `C4_absent_core` | — / — / 0 % | — / — / 0 % | 0,353 / 0,175 / **48,8 %** |
+| `NC_absent` | — / — / 0 % | — / — / 0 % | — / — / 0 % |
+
+**Vista textual**
+
+| Condición | `qwen2.5:7b` acc / acc\* / cob. | `medgemma:4b` acc / acc\* / cob. | `llama3.1:8b` acc / acc\* / cob. |
+|---|---|---|---|
+| `C0_clean` | 0,275 / 0,275 / 100 % | 0,283 / 0,275 / 96,3 % | **0,362** / **0,362** / 100 % |
+| `C1_absent_eda` | 0,250 / 0,013 / 1,3 % | 0,302 / 0,263 / 87,5 % | 0,312 / 0,312 / 100 % |
+| `C2_degenerate_eda` | 0,312 / 0,312 / 100 % | 0,301 / 0,287 / 95,0 % | 0,350 / 0,350 / 100 % |
+| `C3_absent_hrv` | 0,241 / 0,212 / 87,5 % | 0,225 / 0,175 / 78,7 % | 0,263 / 0,263 / 100 % |
+| `C4_absent_core` | — / — / 0 % | — / — / 0 % | 0,250 / 0,250 / **100 %** |
+| `NC_absent` | — / — / 0 % | — / — / 0 % | — / — / 0 % |
+
+**Abstención: la tabla que decide H4**
+
+| Ausencia | `qwen` num. | `qwen` txt. | `medgemma` num. | `medgemma` txt. | `llama` num. | `llama` txt. |
+|---|---:|---:|---:|---:|---:|---:|
+| EDA (`C1`) | 25,0 % | **98,8 %** | 2,5 % | 12,5 % | 0,0 % | 0,0 % |
+| Cardíaco (`C3`) | 0,0 % | 12,5 % | **26,3 %** | 21,2 % | 0,0 % | 0,0 % |
+| Núcleo (`C4`) | 100 % | 100 % | 100 % | 100 % | **51,2 %** | **0,0 %** |
+| Todo (`NC_absent`) | 100 % | 100 % | 100 % | 100 % | **100 %** | **100 %** |
+
+### 19.4. Lo que no depende del modelo: nada disponible
+
+Solo hay **un invariante** en los 6 brazos (3 modelos × 2 vistas): cuando
+**todas** las features están a `not available` (`NC_absent`), los tres modelos
+se abstienen el **100 %** de las veces. Cobertura 0, cero claims.
+
+El resultado de dos modelos que se adelantó en la primera versión de esta
+sección —«con el núcleo ausente (`C4`) también es 100 %»— **no se sostiene con
+el tercero**: `llama3.1:8b` decide en `C4` usando la única señal que queda.
+
+| `C4` (EDA + cardíaco + ACC a `NaN`, temperatura intacta) | numérico | texto |
+|---|---:|---:|
+| `qwen2.5:7b` / `medgemma:4b` | 100 % abstención | 100 % abstención |
+| `llama3.1:8b` | 51,2 % abstención, resto `n2` con confianza 80 | **0 % abstención**, mayoritariamente `n1` |
+
+Su razonamiento, textual: *«Minimal movement is not directly available, but the
+high skin temperature standard deviation suggests stable sleep. Heart rate and
+other features are unavailable.»* Es decir: **convierte la ausencia de evidencia
+en una decisión a partir del canal que queda**, y ese canal es justamente el
+confusor de orden de la noche que §14.2 excluyó de la tabla de firma.
+
+- **Accuracy 0,353** en `C4` numérico: la más alta de toda la matriz numérica.
+  Su **balanced es 0,250 = azar exacto** (predice `n2` a todo lo que decide).
+  Tercera vez en el proyecto que la accuracy premia a un clasificador degenerado.
+- En texto predice `n1` (recall 0,75) y acierta 0,250: azar.
+- La certeza lingüística baja a −10,5 en esas respuestas, así que **el lenguaje
+  sí refleja la duda** aunque la decisión no la respete: es H2b otra vez.
+
+### 19.5. Lo que sí depende: qué canal se echa en falta
+
+- `qwen` percibe la ausencia de EDA **solo en texto** (25,0 % → 98,8 %).
+- `medgemma` apenas la percibe (2,5 %) pero **sí** nota el bloque cardíaco
+  ausente (26,3 % numérico, 21,2 % textual), que `qwen` numérico ignora (0 %).
+- `llama3.1:8b` **no percibe ninguna ausencia parcial** (0,0 % en `C1`, `C2` y
+  `C3`, en las dos vistas) y en `C4` depende de la representación (51,2 %
+  numérico frente a 0,0 % textual).
+
+Cada modelo reacciona al canal que **no** usa para decidir: `qwen` textual
+colapsa a `n2`; `medgemma` numérico decide con movimiento (recall `wake` 0,65) y
+nota cuando falta el cardíaco; `llama3.1:8b` acepta cualquier valor presente
+como evidencia. **Conclusión: la detección de ausencia es una propiedad del par
+(modelo, canal, representación), y el único umbral compartido es «no hay
+ninguna feature».** H4 no se puede enunciar como «el LLM se abstiene cuando
+falta evidencia» sin especificar qué evidencia, qué formato y qué modelo.
+
+### 19.6. Claims: verdad, coherencia y una excepción
+
+Respaldo (media por sujeto) y coherencia con la decisión:
+
+| Vista | Condición | `qwen` resp./coh. | `medgemma` resp./coh. | `llama` resp./coh. |
+|---|---|---|---|---|
+| numérico | `C0_clean` | 0,679 / 0,719 | 0,690 / **0,969** | 0,585 / 0,963 |
+| numérico | `C1_absent_eda` | **0,765** / 0,803 | 0,503 / 0,961 | 0,589 / 0,933 |
+| numérico | `C2_degenerate_eda` | 0,631 / 0,799 | 0,711 / 0,967 | 0,525 / 0,949 |
+| numérico | `C3_absent_hrv` | 0,649 / **0,508** | 0,693 / 0,942 | 0,623 / 0,972 |
+| numérico | `C4_absent_core` | sin claims | 0,388 | **0,335** (27/42 contradichos) |
+| texto | `C0_clean` | 0,565 / 0,879 | 0,598 / **0,980** | 0,482 / 0,921 |
+| texto | `C1_absent_eda` | 0,500 (2 claims) | 0,436 / 1,000 | 0,539 / 0,977 |
+| texto | `C2_degenerate_eda` | 0,637 / 0,793 | 0,537 / 0,956 | 0,446 / 0,928 |
+| texto | `C3_absent_hrv` | 0,489 / 0,920 | 0,472 / 0,975 | 0,571 / 0,887 |
+| texto | `C4_absent_core` | sin claims | 0,560 | 0,550 |
+
+- **En limpio los tres leen igual de bien** en numérico (0,679 / 0,690 / 0,585):
+  las diferencias de decisión no son de percepción.
+- **`unsupported` ≈ 0 en los tres** (1 nombre no reconocido en 2.880 claims):
+  ninguno cita un canal que no esté en la entrada. H5 se replica con un tercer
+  modelo.
+- **La coherencia separa dos modos de fallo**: `medgemma` y `llama` son
+  coherentes casi siempre (0,93–0,98) —sus claims apoyan su decisión—; `qwen`
+  numérico cae a **0,508** en `C3`. Uno se equivoca de forma consistente, el
+  otro de forma inconsistente. En ambos casos la decisión puede ser errónea.
+- **Excepción a «los claims son verdaderos»**: en `C4` numérico los claims de
+  `llama3.1:8b` son **27 de 42 contradichos** (0,335 respaldados). Cuando la
+  única señal disponible es un confusor (temperatura), el modelo no solo decide:
+  además **afirma en la dirección equivocada**. H5 no es «los claims siempre son
+  ciertos», es «los claims son localmente ciertos **sobre la evidencia que el
+  modelo elige mirar**».
+
+### 19.7. ¿Mejora alguno de los otros dos modelos la tarea?
+
+- `medgemma:4b` sube a **0,412** en limpio (Δ +0,112 sobre `qwen`) y coincide
+  con el balanced de la referencia supervisada (0,418), pero con un predictor de
+  **dos clases**: recall `wake` 0,65, `n2` **1,00**, `n1` 0,00, `rem` 0,00. Con
+  20 ventanas por clase, 13 + 20 aciertos de 80 son exactamente 0,4125: el
+  empate es aritmética del colapso.
+- `llama3.1:8b` se queda en 0,350 pero **reparte más las decisiones** (`n1`
+  recall 0,30 numérico y **0,50 textual**, frente a 0,10 de `qwen` y 0,00 de
+  `medgemma`). Es el único que se acerca a las clases difíciles, y a la vez el
+  que **menos se abstiene**. El techo de §18.1 (0,494 / 0,418) no se alcanza en
+  ninguna configuración.
+- **`rem` tiene recall 0 en los tres modelos y en las dos vistas** (0,00 de 12
+  configuraciones): con 18 features de muñeca a 60 s la clase no se detecta, y
+  el «modelo» efectivo es `wake`/`n1`/`n2`.
+- **H2a no mejora con ningún modelo**: `medgemma` responde 95 constante (AUROC
+  0,500); `llama3.1:8b` responde 80 en 79 de 80 ventanas (AUROC 0,518) con
+  sobreconfianza **+0,45**. Tres familias, tres confianzas degeneradas.
+
+### 19.8. Limitaciones de esta comparación
+
+1. **4 sujetos, sin intervalos** (regla de §11). El informe guarda media y rango
+   `[mín–máx]` entre sujetos; un bootstrap sobre cuatro sujetos fingiría
+   precisión.
+2. **No es un ranking de modelos**: 4,3 B, 7 B y 8 B, familias distintas.
+3. **Motor**: los seis brazos se ejecutaron con **Ollama 0.30.7 local**. Sirven
+   para compararse entre sí; no se mezclan con el corpus de WESAD (0.40.6).
+4. **Claims de `medgemma` sobre registros válidos** (86–91 %): las 111 inválidas
+   aportan decisión, no claims.
+5. **El vocabulario del verificador creció en esta sesión** (§19.2). El reparto
+   verdad/coherencia de los tres modelos se calcula con la tabla ampliada y se
+   declara como decisión post hoc, igual que los alias de canal de WESAD.
+6. **`rem` sin recall** en los tres modelos: la tarea medida es, en la práctica,
+   `wake`/`n1`/`n2`.
+
+### 19.9. Reproducción
+
+```sh
+# piloto con un modelo (960 llamadas, reanudable)
+python main.py --proc GENERATE --experiment dreamt --model llama3.1:8b
+
+# evaluación de cada modelo (sin LLM)
+python main.py --proc EVALUATE --experiment dreamt --model llama3.1:8b \
+  --representation both --recovery
+
+# comparación lado a lado (recalcula por sujeto con el mismo evaluador)
+python scripts/compare_dreamt_models.py \
+  --models qwen2.5:7b,medgemma:4b,llama3.1:8b \
+  --representation both --recovery \
+  --output results/output/DREAMT/PHASE2/pilot/model_comparison.json
+```
+
+---
+
+## 20. Escala de la cohorte (12 sujetos)
+
+El piloto de 4 sujetos deja una **dirección**, no una cifra con precisión. La
+ampliación está preregistrada en [`escala_dreamt.md`](escala_dreamt.md), con su
+cohorte **congelada antes de generar**: 12 sujetos elegidos por disponibilidad de
+datos (≥ 12 ventanas puras por clase), excluyendo desarrollo y piloto, y
+repartidos a lo largo del rango de identificadores. Diseño: 10 ventanas por
+clase y sujeto, las mismas 6 condiciones y las dos vistas → 5.760 llamadas por
+modelo, con intervalos bootstrap **sobre sujetos**.
+
+Las cifras del piloto (§18–§19) **no se reescriben** con la escala: son dos
+corpus con `n` distinto por sujeto y no se fusionan. Los resultados de la escala
+se publican en [`escala_dreamt.md`](escala_dreamt.md) §7 (los tres modelos,
+17.280 respuestas). En una línea: la abstención es **del par (modelo, canal,
+vista)** con `NC_absent` como único invariante (100 % en 6/6 brazos), el atajo
+de la temperatura en `C4` es de `llama3.1:8b` (balanced 0,250 = azar), y ningún
+brazo se acerca a la referencia de 0,408 de accuracy.

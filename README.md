@@ -376,6 +376,7 @@ ACL2027/
 │   ├── p3_kemocon.md            # Validación externa K-EmoCon (negativo documentado)
 │   ├── p3_physionet.md          # Validación externa PhysioNet 2017 (negativo documentado)
 │   ├── piloto_dreamt.md         # Segunda tarea: estadios de sueño (DREAMT), preregistro y resultados
+│   ├── escala_dreamt.md         # Escala de DREAMT: 12 sujetos, tres modelos, IC por sujeto
 │   ├── literatura_slip.md       # Análisis del corpus SLIP (E1–E14)
 │   └── README.md                # Índice completo de documentos por área
 ├── scripts/                     # Experimentos y análisis
@@ -385,6 +386,7 @@ ACL2027/
 │   ├── run_p3_physionet.py          # validación externa PhysioNet 2017
 │   ├── analyze_p3_physionet.py      # análisis de PhysioNet 2017 (claims, calidad, ablación)
 │   ├── run_p4_dreamt.py             # segunda tarea: estadios de sueño (prepare/generate/evaluate)
+│   ├── compare_dreamt_models.py     # comparación de modelos DREAMT con IC sobre sujetos
 │   ├── compare_models.py            # comparación de modelos (tabla + bootstrap por sujeto)
 │   ├── run_e12_pilot.py             # representación centrada (exploratorio)
 │   ├── resolvability_analysis.py    # separabilidad y confusor temporal
@@ -397,7 +399,7 @@ ACL2027/
 │   ├── phase2/                  # prompts, LLM, esquema de respuesta, controles negativos, gate de consistencia
 │   ├── phase3/                  # evaluación, claims, certeza, calibración, degradación
 │   └── external/                # adaptadores K-EmoCon, PhysioNet 2017 y DREAMT
-├── tests/                       # 623 tests (sin dependencia de los datasets reales)
+├── tests/                       # 669 tests (sin dependencia de los datasets reales)
 └── results/                     # NO versionado: input/ y output/ por subject
 ```
 

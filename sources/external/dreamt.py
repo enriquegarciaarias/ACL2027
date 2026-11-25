@@ -816,6 +816,12 @@ SLEEP_METRIC_ALIASES: dict[str, str] = {
 }
 
 #: Variantes que el modelo escribe sin ser la etiqueta exacta del texto.
+#: Las tres primeras son descripciones de **canal** en vez de la etiqueta que se
+#: leyó en el prompt («EDA conductance» en lugar de «Mean conductance»): se
+#: mapean a la conductancia media, que es lo que nombran sin cualificador. Sin
+#: estas entradas el verificador las cuenta como ``unsupported`` (métrica
+#: ausente) y la tasa de respaldo mide el vocabulario, no la conducta. El
+#: precedente es ``METRIC_ALIASES`` de WESAD (§17 de ``AGENTS.md``).
 SLEEP_METRIC_ALIASES.update(
     {
         "acc std": "acc_std_g",
@@ -826,6 +832,19 @@ SLEEP_METRIC_ALIASES.update(
         "mean acceleration": "acc_mean_g",
         "movement": "acc_std_g",
         "movement intensity": "acc_std_g",
+        "eda conductance": "eda_mean_us",
+        "conductance": "eda_mean_us",
+        "eda_mean_conductance": "eda_mean_us",
+        "mean conductance level": "eda_mean_us",
+        "skin conductance": "eda_mean_us",
+        # Variantes observadas en el brazo textual del piloto (2026-11-23):
+        # mismo concepto, otro nombre. Se añaden porque el verificador ya
+        # reconoce el resto y no hacerlo convertiría un acierto en ``unsupported``.
+        "mean_hr": "ecg_hr_bpm",
+        "mean heart rate": "ecg_hr_bpm",
+        "acc_variability": "acc_std_g",
+        "acc_95th_percentile": "acc_p95_g",
+        "eda_tonic_level": "eda_tonic_mean_us",
     }
 )
 

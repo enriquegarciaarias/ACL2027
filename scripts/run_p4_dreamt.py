@@ -37,7 +37,7 @@ import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 
@@ -69,12 +69,14 @@ from sources.phase2.response_schema import (
 )
 from sources.phase3.certainty import linguistic_certainty
 from sources.phase3.claims import (
+    normalize_metric,
     response_coherence,
     summarize_coherence,
     summarize_verdicts,
     verify_claims,
 )
 from sources.phase3.records import evaluate_records
+from sources.phase3.recovery import apply_recovery
 from sources.phase3.signatures import (
     SLEEP_CLASSES_WITH_SIGNATURE,
     SLEEP_SIGNATURE_RATIONALE,
@@ -91,6 +93,46 @@ PILOT_SUBJECTS: tuple[str, ...] = ("S034", "S051", "S076", "S084")
 #: WESAD (``S2``/``S3``/``S4``) y no existe en DREAMT. Los tres sujetos se
 #: reservaron en el preregistro §7 y no se usan para evaluar.
 DREAMT_DEV_SUBJECTS: tuple[str, ...] = ("S002", "S010", "S026")
+
+#: Cohorte de **escala** (declarada y congelada el 2026-11-24, antes de generar
+#: una sola llamada de esta cohorte).
+#:
+#: Regla de selección, ciega a los resultados: (1) sujetos con **≥ 12 ventanas
+#: puras en cada una de las cuatro clases** (criterio de disponibilidad de
+#: datos, medido solo con las etiquetas de sueño); (2) se excluyen los sujetos
+#: de desarrollo (``DREAMT_DEV_SUBJECTS``) y los del piloto
+#: (``PILOT_SUBJECTS``), y (3) de la lista ordenada resultante —50 sujetos— se
+#: toman **12 repartidos uniformemente** (``round(i*(n-1)/11)``), para no
+#: concentrar la cohorte en un tramo de identificadores (orden de reclutamiento).
+#:
+#: Nunca se usaron resultados del LLM para elegirla: la lista se calculó con
+#: recuentos de ventanas puras, que solo dependen del etiquetado de sueño.
+SCALE_SUBJECTS: tuple[str, ...] = (
+    "S008",
+    "S015",
+    "S021",
+    "S035",
+    "S039",
+    "S045",
+    "S061",
+    "S067",
+    "S071",
+    "S086",
+    "S093",
+    "S103",
+)
+
+#: Cohortes disponibles: la del piloto (preregistro §7) y la de escala.
+COHORTS: dict[str, tuple[str, ...]] = {
+    "pilot": PILOT_SUBJECTS,
+    "scale": SCALE_SUBJECTS,
+}
+
+#: Directorio de salida por defecto de cada cohorte: nunca se mezclan.
+DEFAULT_OUTPUTS: dict[str, Path] = {
+    "pilot": REPO_ROOT / "results" / "output" / "DREAMT" / "PHASE2" / "pilot",
+    "scale": REPO_ROOT / "results" / "output" / "DREAMT" / "PHASE2" / "scale",
+}
 
 #: Orden de clases del espacio de decisión (N3 excluido).
 CLASS_ORDER: tuple[str, ...] = ("wake", "n1", "n2", "rem")
@@ -115,7 +157,9 @@ FEW_SHOT_FEATURES: tuple[str, ...] = (
     "acc_motion_fraction",
 )
 
-DEFAULT_OUTPUT = REPO_ROOT / "results" / "output" / "DREAMT" / "PHASE2" / "pilot"
+#: Compatibilidad: el piloto sigue siendo el destino por defecto de la cohorte
+#: ``pilot`` (ver ``DEFAULT_OUTPUTS``).
+DEFAULT_OUTPUT = DEFAULT_OUTPUTS["pilot"]
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +215,159 @@ def available_subjects(data_dir: Path) -> list[str]:
         if dreamt.subject_path(subject, data_dir).is_file():
             present.append(subject)
     return present
+
+
+def parse_subject_filter(
+    raw: str | None,
+    cohort: str = "pilot",
+) -> tuple[str, ...] | None:
+    """Subconjunto de la cohorte pedido con ``--subjects`` (``S034,S051``).
+
+    Las cohortes están congeladas: ``pilot`` en el preregistro
+    ([`docs/piloto_dreamt.md`](../docs/piloto_dreamt.md) §7) y ``scale`` en
+    [`docs/escala_dreamt.md`](../docs/escala_dreamt.md) §2. Aquí **solo** se
+    permite elegir un subconjunto (para humos y reanudaciones parciales): pedir
+    un sujeto de desarrollo o cualquiera fuera de la cohorte es un error, porque
+    añadiría datos de evaluación no preregistrados o mezclaría desarrollo con
+    evaluación. Devuelve ``None`` cuando no se filtra.
+
+    Raises:
+        ValueError: si la cohorte no existe o algún sujeto no pertenece a ella.
+    """
+    if raw is None:
+        return None
+    names = [part.strip().upper() for part in str(raw).split(",") if part.strip()]
+    if not names:
+        return None
+    if cohort not in COHORTS:
+        raise ValueError(f"cohorte desconocida {cohort!r}; disponibles: {sorted(COHORTS)}")
+    members = COHORTS[cohort]
+    outside = [name for name in names if name not in set(members)]
+    if outside:
+        raise ValueError(
+            f"sujetos fuera de la cohorte {cohort!r} {members}: {outside}. "
+            "Las cohortes están congeladas; solo se puede elegir un subconjunto."
+        )
+    return tuple(name for name in members if name in set(names))
+
+
+def select_cohort_subjects(
+    present: Iterable[str],
+    requested: tuple[str, ...] | None = None,
+    cohort: str = "pilot",
+) -> list[str]:
+    """Sujetos disponibles de la cohorte, en el orden declarado."""
+    members = COHORTS[cohort]
+    present_set = set(present)
+    wanted = set(requested) if requested else None
+    return [
+        subject
+        for subject in members
+        if subject in present_set and (wanted is None or subject in wanted)
+    ]
+
+
+def select_pilot_subjects(
+    present: Iterable[str],
+    requested: tuple[str, ...] | None = None,
+) -> list[str]:
+    """Compatibilidad: cohorte ``pilot`` (ver ``select_cohort_subjects``)."""
+    return select_cohort_subjects(present, requested, cohort="pilot")
+
+
+def requested_subjects(args: argparse.Namespace) -> tuple[str, ...] | None:
+    """Filtro ``--subjects`` ya validado contra la cohorte, con error legible."""
+    cohort = getattr(args, "cohort", "pilot") or "pilot"
+    try:
+        return parse_subject_filter(getattr(args, "subjects", None), cohort=cohort)
+    except ValueError as exc:
+        raise SystemExit(f"[DREAMT] {exc}") from exc
+
+
+def cohort_of(args: argparse.Namespace) -> str:
+    """Cohorte pedida (``pilot`` por defecto)."""
+    return getattr(args, "cohort", "pilot") or "pilot"
+
+
+def filter_prompt_rows(
+    prompt_rows: Sequence[Mapping[str, Any]],
+    conditions: Sequence[str] | None,
+) -> list[Mapping[str, Any]]:
+    """Restringe los prompts a las condiciones pedidas.
+
+    Se aplica en la fase de generación porque los prompts ya contienen todas
+    las condiciones del muestreo: sin este filtro, un humo de dos condiciones
+    gastaba las seis (fallo real detectado el 2026-11-23).
+
+    Raises:
+        SystemExit: si se pide una condición que no está en los prompts.
+    """
+    if not conditions:
+        return list(prompt_rows)
+    available = {row["condition_id"] for row in prompt_rows}
+    absent = [condition for condition in conditions if condition not in available]
+    if absent:
+        raise SystemExit(
+            f"[DREAMT] Condiciones sin prompts: {absent}. "
+            f"Disponibles: {sorted(available)}"
+        )
+    wanted = set(conditions)
+    return [row for row in prompt_rows if row["condition_id"] in wanted]
+
+
+def prompts_sampling(
+    output_dir: Path, subject: str
+) -> tuple[int | None, set[str]]:
+    """Muestreo **efectivo** de los prompts de un sujeto, leído del disco.
+
+    Devuelve ``(ventanas por clase, condiciones)``. Se calcula desde el propio
+    fichero porque el manifiesto guarda lo que se *pidió*, no lo que quedó
+    escrito: tras un ``prepare`` que reutilizó prompts, el manifiesto quedaba
+    con el muestreo nuevo y la comparación no detectaba nada (fallo real del
+    2026-11-23).
+    """
+    rows = read_jsonl(output_dir / "prompts" / f"{subject}.prompts.jsonl")
+    if not rows:
+        return None, set()
+    windows_by_stage: dict[str, set[str]] = defaultdict(set)
+    conditions: set[str] = set()
+    for row in rows:
+        windows_by_stage[str(row.get("stage", ""))].add(str(row["window_id"]))
+        conditions.add(str(row["condition_id"]))
+    per_class = max((len(ids) for ids in windows_by_stage.values()), default=0)
+    return per_class, conditions
+
+
+def check_sampling_consistency(
+    output_dir: Path,
+    subjects: Sequence[str],
+    windows_per_class: int,
+    conditions: Sequence[str],
+) -> list[str]:
+    """Diferencias entre el muestreo pedido y el que tienen los prompts.
+
+    Los prompts se reutilizan mientras existan (``prepare`` no los regenera sin
+    ``--force``), así que ``--windows-per-class 1`` o una condición que no se
+    generó devolvían **en silencio** otro muestreo del pedido. Pedir **menos**
+    condiciones es legítimo (se filtra al generar); el resto se avisa.
+    """
+    issues: list[str] = []
+    for subject in subjects:
+        per_class, available = prompts_sampling(output_dir, subject)
+        if per_class is None:
+            continue
+        if int(per_class) != int(windows_per_class):
+            issues.append(
+                f"{subject}: windows_per_class: prompts con {per_class}, "
+                f"petición pide {windows_per_class}"
+            )
+        missing = [condition for condition in conditions if condition not in available]
+        if missing:
+            issues.append(
+                f"{subject}: condiciones sin prompts: {missing} "
+                f"(disponibles: {sorted(available)})"
+            )
+    return issues
 
 
 # ---------------------------------------------------------------------------
@@ -502,13 +699,15 @@ def phase_prepare(args: argparse.Namespace) -> int:
 
     present = set(available_subjects(data_dir))
     dev = [s for s in DREAMT_DEV_SUBJECTS if s in present]
-    pilot = [s for s in PILOT_SUBJECTS if s in present]
-    missing = [s for s in PILOT_SUBJECTS if s not in present]
+    requested = requested_subjects(args)
+    cohort = cohort_of(args)
+    members = select_cohort_subjects(present, requested, cohort=cohort)
+    missing = [s for s in (requested or COHORTS[cohort]) if s not in present]
     if missing:
-        print(f"[DREAMT] Aviso: sujetos del piloto sin datos: {missing}")
-    if not pilot:
+        print(f"[DREAMT] Aviso: sujetos de la cohorte sin datos: {missing}")
+    if not members:
         raise SystemExit(
-            f"[DREAMT] Ningún sujeto del piloto está en {data_dir}. "
+            f"[DREAMT] Ningún sujeto de la cohorte {cohort!r} está en {data_dir}. "
             "Comprueba --data-dir (results/input/dreamt/data_64Hz)."
         )
     if not dev:
@@ -516,15 +715,15 @@ def phase_prepare(args: argparse.Namespace) -> int:
             f"[DREAMT] Faltan los sujetos de desarrollo {DREAMT_DEV_SUBJECTS} en "
             f"{data_dir}: sin ellos no hay ejemplos few-shot ni pre-chequeo P0."
         )
-    print(f"[DREAMT] desarrollo {dev} | piloto {pilot}")
+    print(f"[DREAMT] cohorte {cohort} | desarrollo {dev} | evaluación {members}")
 
     names = feature_names()
-    for subject in dev + pilot:
+    for subject in dev + members:
         night_rows(subject, data_dir, output_dir / "features", cfg, force=args.force)
 
     centers: dict[str, dict[str, float]] = {}
     scales: dict[str, dict[str, float]] = {}
-    for subject in dev + pilot:
+    for subject in dev + members:
         rows = read_jsonl(output_dir / "features" / f"{subject}.night.jsonl")
         subject_centers, subject_scales = dreamt.night_reference(rows, names)
         centers[subject] = subject_centers
@@ -554,8 +753,28 @@ def phase_prepare(args: argparse.Namespace) -> int:
         part.strip() for part in args.conditions.split(",") if part.strip()
     )
 
+    drift = check_sampling_consistency(
+        output_dir, members, args.windows_per_class, conditions
+    )
+    if drift and not args.force:
+        raise SystemExit(
+            "[DREAMT] Los prompts existentes no corresponden a lo pedido:\n  - "
+            + "\n  - ".join(drift)
+            + "\n  Los prompts se reutilizan tal cual, así que la ejecución no "
+            "mediría lo que pides. Opciones:\n"
+            "    a) humo aislado: añade --output-dir <carpeta nueva>\n"
+            "    b) regenerar prompts: repite con --force (las respuestas ya "
+            "escritas de ese modelo no se borran: revísalas antes de evaluar)."
+        )
+    if drift:
+        print(
+            "[DREAMT] Aviso: se regeneran los prompts por --force ("
+            + "; ".join(drift)
+            + ")"
+        )
+
     summary = []
-    for subject in pilot:
+    for subject in members:
         summary.append(
             prepare_subject(
                 subject,
@@ -575,8 +794,10 @@ def phase_prepare(args: argparse.Namespace) -> int:
         "task": "sleep4",
         "dataset": "DREAMT (wearable branch, data_64Hz)",
         "generated_at": utc_now(),
+        "cohort": cohort,
         "dev_subjects": dev,
-        "pilot_subjects": pilot,
+        "cohort_subjects": list(members),
+        "pilot_subjects": list(members),
         "conditions": list(conditions),
         "classes": list(CLASS_ORDER),
         "n3_excluded": True,
@@ -642,8 +863,24 @@ def phase_generate(args: argparse.Namespace) -> int:
     write_json(output_dir / "run_provenance.json", provenance)
 
     present = set(available_subjects(data_dir))
-    subjects = [s for s in PILOT_SUBJECTS if s in present]
+    cohort = cohort_of(args)
+    subjects = select_cohort_subjects(present, requested_subjects(args), cohort=cohort)
+    if not subjects:
+        raise SystemExit(
+            f"[DREAMT] Ningún sujeto de la cohorte {cohort!r} está en {data_dir}: "
+            "no hay nada que generar."
+    )
+    print(f"[DREAMT] cohorte {cohort} | {len(subjects)} sujetos | {output_dir}")
     client = create_ollama_chat_client(config) if not args.dry_run else None
+
+    # ``--conditions`` también filtra en la generación: los prompts ya
+    # contienen todas las condiciones del muestreo, y sin este filtro un humo
+    # de dos condiciones gastaría las seis (fallo real, 2026-11-23).
+    requested_conditions = (
+        [part.strip() for part in str(args.conditions).split(",") if part.strip()]
+        if getattr(args, "conditions", None)
+        else None
+    )
 
     planned = 0
     done = 0
@@ -653,6 +890,12 @@ def phase_generate(args: argparse.Namespace) -> int:
         if not prompt_rows:
             print(f"[DREAMT] {subject}: sin prompts; se omite")
             continue
+        if requested_conditions:
+            prompt_rows = filter_prompt_rows(prompt_rows, requested_conditions)
+            print(
+                f"[DREAMT] {subject}: filtrado a {len(requested_conditions)} condiciones "
+                f"({len(prompt_rows)} prompts)"
+            )
         for representation in representations:
             path = responses_dir / f"{subject}.{representation}.jsonl"
             existing = {
@@ -822,6 +1065,7 @@ def _condition_block(
     claims_blocks = []
     certainties = []
     truth_counts: Counter[str] = Counter()
+    unrecognized = 0
     for record in records:
         truth_counts[labels.get(record.get("window_id_opaque", ""), "UNKNOWN")] += 1
         if record.get("status") not in ("valid_response", "valid_abstention"):
@@ -832,6 +1076,18 @@ def _condition_block(
                 record["claims"], record["prompt"], extra_aliases=dreamt.SLEEP_METRIC_ALIASES
             )
             verdicts.extend(record_verdicts)
+            # Diagnóstico del vocabulario: un ``unsupported`` puede significar
+            # «la métrica no está en la entrada» (evidencia ausente) o «el
+            # verificador no conoce ese nombre». Sin separarlos, la tasa de
+            # respaldo mide el alias más que la conducta del modelo.
+            unrecognized += sum(
+                1
+                for claim in record["claims"]
+                if normalize_metric(
+                    str(claim.get("metric", "")), dreamt.SLEEP_METRIC_ALIASES
+                )
+                is None
+            )
             claims_blocks.append(
                 response_coherence(
                     record["claims"],
@@ -847,6 +1103,7 @@ def _condition_block(
             certainties.append(certainty)
 
     metrics["claims"] = summarize_verdicts(verdicts) if verdicts else {"n_claims": 0}
+    metrics["claims"]["unrecognized_metric_names"] = unrecognized
     metrics["coherence"] = (
         summarize_coherence(
             [pair for block in claims_blocks for pair in block.get("pairs", [])],
@@ -970,7 +1227,8 @@ def phase_evaluate(args: argparse.Namespace) -> int:
     responses_dir = output_dir / "responses" / slug
 
     present = set(available_subjects(Path(args.data_dir)))
-    subjects = [s for s in PILOT_SUBJECTS if s in present]
+    cohort = cohort_of(args)
+    subjects = select_cohort_subjects(present, requested_subjects(args), cohort=cohort)
     labels = _load_labels(output_dir, subjects)
 
     report: dict[str, Any] = {
@@ -982,6 +1240,7 @@ def phase_evaluate(args: argparse.Namespace) -> int:
         "classes": list(CLASS_ORDER),
         "by_representation": {},
     }
+    recovery_counts: dict[str, int] = {}
 
     for representation in representations:
         records = []
@@ -990,6 +1249,17 @@ def phase_evaluate(args: argparse.Namespace) -> int:
         if not records:
             print(f"[DREAMT] {representation}: sin respuestas en {responses_dir}")
             continue
+        if getattr(args, "recovery", False):
+            # Un modelo que mezcla magnitud y dirección (``direction: "high"``)
+            # invalida la respuesta entera; la decisión y la confianza siguen
+            # siendo legibles. Se recuperan para el análisis —nunca se tocan los
+            # datos originales— y se cuentan aparte (medgemma:4b, 9 % inválidas).
+            records, recovered = apply_recovery(records, decision_mode="sleep4")
+            recovery_counts[representation] = recovered
+            print(
+                f"[DREAMT] {representation}: recuperadas {recovered} respuestas "
+                "inválidas (decisión conservada, claims mal formados descartados)"
+            )
         by_condition: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for record in records:
             by_condition[record["condition_id"]].append(record)
@@ -1005,6 +1275,9 @@ def phase_evaluate(args: argparse.Namespace) -> int:
 
     if args.reference:
         report["reference"] = _reference_classifier(output_dir, subjects)
+
+    if recovery_counts:
+        report["recovery"] = {"enabled": True, "recovered": recovery_counts}
 
     write_json(output_dir / f"evaluation_{slug}.json", report)
     _print_report(report)
@@ -1066,7 +1339,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--phase", choices=("prepare", "generate", "evaluate"), required=True)
     parser.add_argument("--data-dir", default=str(DREAMT_DIR))
-    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT))
+    parser.add_argument(
+        "--cohort",
+        choices=tuple(COHORTS),
+        default="pilot",
+        help="cohorte de evaluación congelada (pilot o scale)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        help="carpeta de trabajo (por defecto, la de la cohorte)",
+    )
     parser.add_argument("--representation", choices=("numeric", "text", "both"), default="both")
     parser.add_argument("--model", default=None, help="modelo de Ollama (por defecto, config.json)")
     parser.add_argument("--seed", type=int, default=42)
@@ -1075,7 +1358,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--windows-per-class", type=int, default=5)
     parser.add_argument("--max-windows", type=int, default=None, help="tope total de ventanas por sujeto")
     parser.add_argument("--conditions", default=None, help="lista separada por comas")
+    parser.add_argument(
+        "--subjects",
+        default=None,
+        help="subconjunto del piloto (p. ej. S034,S051); fuera del piloto es error",
+    )
     parser.add_argument("--reference", action="store_true", help="incluir referencia features-only")
+    parser.add_argument(
+        "--recovery",
+        action="store_true",
+        help="recuperar decisión/confianza de respuestas inválidas por claims mal formados",
+    )
     parser.add_argument("--allow-failed-p0", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -1086,6 +1379,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Punto de entrada del piloto."""
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "output_dir", None) is None:
+        args.output_dir = str(DEFAULT_OUTPUTS[args.cohort])
     if args.phase == "prepare":
         return phase_prepare(args)
     if args.phase == "generate":

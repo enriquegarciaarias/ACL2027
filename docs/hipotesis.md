@@ -243,13 +243,19 @@ Y la vista LLM (`numeric_llm`, `text_llm`) filtrará los canales `acc` y `emg` d
     etiquetas de experto y otro sensor (estadios de sueño, DREAMT), preregistrado
     en [`piloto_dreamt.md`](piloto_dreamt.md); el criterio de paso de su piloto
     son los falsadores F1–F5 de ese documento.
-    *Piloto ejecutado (2026-11-22, 960 llamadas):* el criterio de paso se
-    cumple (solo F2 se activa parcialmente) y el **mecanismo** se replica
-    (100 % de abstención con el núcleo ausente, `unsupported = 0`), pero la
-    **precisión no**: LLM 0,300/0,275 frente a la referencia supervisada 0,494.
-    La segunda tarea aporta el contraste ausencia vs degeneración y el hallazgo
-    de que **H4 depende de la representación** (25,0 % numérico vs 98,8 %
-    textual con EDA ausente). Detalle en `piloto_dreamt.md` §18.
+    *Piloto ejecutado (2026-11-22, 960 llamadas; ampliado a 2.880 con tres
+    modelos el 2026-11-24):* el criterio de paso se cumple (solo F2 se activa
+    parcialmente) y el **mecanismo** se replica (`unsupported ≈ 0` y claims
+    verdaderos con inferencia errada), pero la **precisión no**: LLM 0,300 /
+    0,275 / 0,350 / 0,362 frente a la referencia supervisada 0,494.
+    La segunda tarea aporta el contraste ausencia vs degeneración y dos
+    resultados sobre H4: la abstención con ausencia **parcial** depende de la
+    representación (25,0 % numérico vs 98,8 % textual con EDA ausente en
+    `qwen2.5:7b`) y su dependencia del **modelo** es todavía mayor —con el
+    núcleo ausente, `qwen` y `medgemma` se abstienen el 100 % y `llama3.1:8b`
+    solo el 51,2 % en numérico y el 0 % en texto—. El único umbral compartido
+    por los tres modelos es **«ninguna feature disponible»**. Detalle en
+    `piloto_dreamt.md` §18 y §19.
 2.  **Modelo de referencia** para la resolubilidad y margen *m*.
 3.  **Perturbaciones y niveles:** Tres tipos × tres niveles + condición original.
 4.  **Representaciones:** Secuencia numérica y resumen estadístico.

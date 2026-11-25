@@ -209,3 +209,122 @@ cascada (`cascade_enabled=False`).
   `scripts/compare_models.py` directamente) produce una tabla por condición (abstención, accuracy,
   balanced, ECE, respaldo de claims, certeza) y la **diferencia de accuracy con
   bootstrap agrupado por sujeto** (IC 95 %). El primer modelo es la referencia.
+
+---
+
+## 9. Compatibilidad de modelos nuevos: `cniongolo/biomistral` (verificado 2026-11-23)
+
+Antes de añadir un modelo a la matriz hay que comprobar que **emite el JSON del
+esquema** y que **reacciona a la evidencia**. Se verificó con el pipeline real
+(prompt de una ventana del piloto DREAMT, `validate_llm_output` con
+`decision_mode="sleep4"` y `SLEEP_CLAIM_CHANNELS`).
+
+**Disponible**: `cniongolo/biomistral:latest` (ID `e0733a4eee80`), 7B, Q4_K_M,
+4,4 GB, arquitectura `llama`, contexto 32768. El CLI ya lo acepta
+(`--model cniongolo/biomistral:latest` → slug `cniongolo_biomistral_latest`,
+artefactos aislados, `--dry-run` estima 960 llamadas).
+
+**No es un sustituto directo de Qwen**, por tres motivos medidos:
+
+| Comprobación | Resultado |
+|---|---|
+| `/api/chat` sin `format` (ruta actual del pipeline) | devuelve prosa (`"The input is a 60-second window…"`) → `invalid_output` |
+| Plantilla cargada | ChatML genérica (`<|im_start|>`); su formato nativo es Mistral `[INST] … [/INST]` |
+| `[INST]` + `format` (JSON schema) | JSON válido, pero **constante**: `rem`/80 en las 4 clases y en `C1`/`C4`; 1/4 aciertos (azar 1/4), **0 abstenciones** |
+| ChatML + `format` | JSON válido, constante `wake`/`rem` a 90; 0/4 aciertos, **0 abstenciones** |
+| Velocidad con `format` | 135–174 tokens en 2,5–3,4 s (≈55 tok/s) |
+| `num_ctx` 8192 | 100 % GPU (4,7 GB) |
+| `num_ctx` 32768 (el valor global de `config.json`) | 8,9 GB → **25 %/75 % CPU/GPU**, inutilizable en la RTX de 8 GB |
+
+Interpretación: es un modelo de **continuación** (BioMistral sobre PMC) con
+ajuste a instrucciones muy débil; no sigue el esquema en prosa y, cuando se le
+fuerza con decodificación restringida, responde con una etiqueta fija sin mirar
+las features. En esa situación **H1/H4/H5 no son medibles**: no hay degradación
+que separe condiciones porque la respuesta no depende de la entrada.
+
+**Qué haría falta para integrarlo** (si se decide usarlo como control):
+
+1. `format` (JSON schema) en el cliente de Ollama: hoy `_call_ollama_chat` no lo
+   envía. Es un parámetro neutro para Qwen y necesario para este modelo.
+2. Plantilla correcta: `[INST] … [/INST]` o un Modelfile propio
+   (`ollama create`) con `TEMPLATE` y `PARAMETER stop` de Mistral.
+3. `num_ctx` por modelo (8k) — hoy es global en `defaults.llm`.
+4. Y aun con todo eso, su papel razonable es **control negativo** («modelo sin
+   ajuste a instrucciones»), no un brazo experimental comparable a Qwen.
+
+### 9.1 No existe un «BioMistral instruct»
+
+Todos los tags de BioMistral publicados en Ollama (`cniongolo/biomistral`,
+`adrienbrault/biomistral-7b`, `jsk/bio-mistral`, `m/biomistral`,
+`f0rodo/bio-mistral-dare`) son **reempaquetados del mismo modelo base**
+(BioMistral-7B, continuación sobre PMC). Probar «BioMistral instruct» implica
+descargar **otro** modelo biomédico, no otro tag:
+
+| Modelo | Tamaño | Contexto | Nota |
+|---|---:|---:|---|
+| `medllama2:7b` | 3,8 GB | 4K | Llama 2 ajustado a QA médica |
+| `meditron:7b` | 3,8 GB | **2K** | justo: los prompts miden ~0,93k tokens (máx 0,95k) + salida |
+| `medgemma:4b` | 3,3 GB | 128K | Gemma 3 *instruct* para texto médico; cabe de sobra en 8 GB |
+| `medgemma:27b` | 17 GB | 128K | no cabe en la GPU local |
+
+### 9.2 El modelo adicional que **no** requiere descarga
+
+`llama3.1:8b` ya estaba instalado (8B, Q4_K_M, 131K, plantilla Llama 3.1
+correcta) y **pasa el pipeline tal cual**, sin `format` y sin cambios de código:
+4/4 `valid_response` en `C0` (claims verificados con `SLEEP_CLAIM_CHANNELS`) y
+`valid_abstention` en `C4_absent_core`. Con `format` también funciona y acierta
+2/4 en la muestra de una ventana por clase (n insuficiente: el 1/4 o 2/4 de
+cuatro ventanas no es un resultado). Sirve como **brazo de otra familia
+instruct** —el contraste que interesa— a coste cero.
+
+> **Corrección (2026-11-24).** El smoke de una ventana decía
+> `valid_abstention` en `C4_absent_core`; con las 80 ventanas del piloto se
+> abstiene el **51,2 %** en numérico y el **0 %** en texto (§9.4). Una ventana no
+> describe el comportamiento de una condición: es la lección ya registrada para
+> `--max-windows`.
+
+### 9.3 Veredicto: `medgemma:4b` es un brazo experimental utilizable
+
+No basta con que un modelo emita JSON válido (BioMistral lo hace con
+decodificación restringida y aun así no es medible). La prueba es si **la
+respuesta depende de la evidencia**. `medgemma:4b` se ejecutó sobre el piloto
+DREAMT completo (4 sujetos × 20 ventanas × 6 condiciones × 2 representaciones =
+960 llamadas, 2026-11-23) y cumple:
+
+| Criterio | `medgemma:4b` | Umbral |
+|---|---|---|
+| JSON válido sin `format` | 849/960 (88,4 %) | ≥ 80 % |
+| Abstención real en ausencia total (`C4`, `NC_absent`) | **100 %** en las dos vistas | > 0 |
+| Decisión dependiente de la condición | sí (§19.5 del piloto) | cambios entre `C0` y `C1`/`C3` |
+| Confianza con resolución | **no**: 95 constante en las 80 ventanas de `C0` (AUROC 0,500) | informativa |
+| Velocidad | ≈1,1 s/llamada en la RTX 4060 Ti | utilizable |
+
+**Veredicto**: válido como **brazo de otra familia**, con dos avisos que hay que
+declarar junto a sus cifras: (1) 11,6 % de respuestas con defecto de forma
+—`direction: "high"`— que exige `--recovery` para no perder decisiones, y (2) una
+confianza degenerada que **no** permite usar su AUROC para H2a. Detalle de
+resultados en [`piloto_dreamt.md`](piloto_dreamt.md) §19.
+
+### 9.4 `llama3.1:8b`: tercer brazo (piloto completo, 2026-11-24)
+
+Se ejecutó el piloto completo (960 llamadas, 0 inválidas, ≈3,5 s/llamada,
+57 min) para saber si el patrón de H4 era de dos modelos o del lector en general.
+Cumple los criterios de §9.3 con dos matices que **cambian la lectura del eje**:
+
+| Criterio | `llama3.1:8b` | Umbral |
+|---|---|---|
+| JSON válido sin `format` | **960/960 (100 %)** | ≥ 80 % |
+| Abstención en `NC_absent` (nada disponible) | **100 %** en las dos vistas | > 0 |
+| Abstención en `C4` (núcleo ausente, temperatura intacta) | **51,2 % num. / 0 % txt.**: decide con la temperatura | no decide sin evidencia |
+| Abstención con ausencia parcial (`C1`, `C3`) | **0 %** en ambas vistas: no la percibe | > 0 |
+| Confianza con resolución | **no**: 80 en 79 de 80 ventanas (AUROC 0,518); sobreconfianza +0,45 | informativa |
+| Velocidad | ≈3,5 s/llamada | utilizable |
+
+**Veredicto**: válido como brazo de otra familia y **el que más corrige**
+(`n1` recall 0,30 numérico y 0,50 textual, frente a 0,10 de `qwen` y 0,00 de
+`medgemma`), pero es también **el que menos se abstiene** y el que convierte la
+ausencia de evidencia en una decisión a partir del canal restante. Con él, el
+único invariante de abstención que queda es `NC_absent`; ver
+[`piloto_dreamt.md`](piloto_dreamt.md) §19.4–§19.5.
+
+**`cniongolo/biomistral`** queda como control negativo (§9), no como brazo.

@@ -61,6 +61,23 @@ def test_build_experiment_config_from_config_json(monkeypatch):
     assert cfg.keep_alive == "10m"
 
 
+def test_num_ctx_is_configurable_for_large_models(monkeypatch):
+    """`defaults.llm.num_ctx` permite bajar la caché KV en modelos grandes.
+
+    Con 24 GB de VRAM, un modelo de ~17-20 GB en Q4 no cabe si el contexto es
+    32k. Los prompts rondan 1.000 tokens, así que bajarlo no trunca nada.
+    """
+    _set_llm_defaults(monkeypatch, {"num_ctx": 8192})
+    assert build_experiment_config().num_ctx == 8192
+
+    # El argumento explícito sigue mandando sobre config.json.
+    assert build_experiment_config(num_ctx=4096).num_ctx == 4096
+
+    # Sin la clave, el default del proyecto no cambia.
+    _set_llm_defaults(monkeypatch, {})
+    assert build_experiment_config().num_ctx == 32768
+
+
 def test_build_experiment_config_explicit_overrides(monkeypatch):
     """Los parámetros explícitos sobrescriben config.json."""
     _set_llm_defaults(

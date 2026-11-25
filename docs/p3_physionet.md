@@ -378,6 +378,12 @@ desarrollo.
 - El detector de calidad de §5.7 es exploratorio: entrenado en desarrollo y
   evaluado en test, pero no preregistrado; su curva de compuerta sirve para
   dimensionar el problema, no como resultado confirmatorio.
+- **Procedencia del motor incompleta.** Las 403 respuestas se generaron en local
+  con Ollama 0.30.7 y el runner de entonces no escribía `run_provenance.json`
+  (ya corregido). El motor no es un detalle: con el mismo prompt y la misma
+  semilla dio 0 abstenciones en el servidor (Ollama 0.40.6) y 28 en local. Para
+  citar estas cifras junto a los corpus del servidor hay que **re-ejecutarlas
+  allí**, con la misma versión y semilla; son 400 llamadas (~20 min).
 
 ## 8. Reproducción
 
@@ -410,5 +416,14 @@ Salidas:
 - `physionet2017.labels.jsonl`
 - `physionet2017.features.json` (caché de features)
 - `physionet2017_summary.json` (resumen de la ejecución)
+- `run_provenance[_tag].json` (versión de Ollama, digest y tamaño del modelo,
+  parámetros por defecto y configuración experimental; se escribe **antes** de
+  generar, para que quede registrada aunque el job se corte)
 - `physionet2017_analysis.json` (informe del análisis: corrección, referencia,
   abstención, claims, certeza, señal de calidad, consistencia, ablación)
+
+El runner **aborta** si el modelo no está descargado (`ollama pull <modelo>`);
+antes escribía un `timeout` por registro que la reanudación reutilizaba. Para
+que las cifras del servidor sean comparables con las de WESAD y DREAMT, el
+motor debe ser el mismo: comprobar `ollama --version` y el `model_digest` de
+`run_provenance.json` antes de mezclar corpus.

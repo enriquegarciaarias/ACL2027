@@ -279,6 +279,44 @@ def test_metric_aliases_accept_canonical_movement_names():
     )
 
 
+def test_verify_claims_uses_dataset_vocabulary_for_claim_metrics():
+    """El vocabulario del dataset tiene que llegar también al claim, no solo al prompt.
+
+    Bug real del piloto 2026-11-23: el modelo citaba la etiqueta legible que
+    había leído («Movement variability») y el verificador la contaba como
+    ``unsupported`` (métrica ausente) porque normalizaba el prompt con alias y
+    el claim sin ellos.
+    """
+    zvalues = {name: 0.5 for name in pb.SLEEP_FEATURES}
+    prompt = "Signal summary:\n" + dreamt.render_sleep_text(zvalues)
+    claim = {
+        "metric": "Movement variability",
+        "channel": "acc",
+        "direction": "increase",
+        "magnitude": "low",
+    }
+    verdicts = claims.verify_claims([claim], prompt, dreamt.SLEEP_METRIC_ALIASES)
+    assert verdicts[0].metric == "acc_std_g"
+    assert verdicts[0].category == "supported"
+
+
+def test_metric_aliases_tolerate_channel_level_names():
+    """Caso real (piloto 2026-11-23): el modelo nombra el canal, no la métrica.
+
+    medgemma:4b escribe «EDA conductance» y qwen2.5:7b «eda_mean_conductance»;
+    sin alias se contarían como ``unsupported`` (métrica ausente) y la tasa de
+    respaldo mediría el vocabulario del verificador. El caso con guion bajo
+    («acc_mean») se resuelve por la forma alternativa del nombre.
+    """
+    aliases = dreamt.SLEEP_METRIC_ALIASES
+    assert claims.normalize_metric("EDA conductance", aliases) == "eda_mean_us"
+    assert claims.normalize_metric("Conductance", aliases) == "eda_mean_us"
+    assert claims.normalize_metric("eda_mean_conductance", aliases) == "eda_mean_us"
+    assert claims.normalize_metric("acc_mean", aliases) == "acc_mean_g"
+    # Fuera de un vocabulario de dataset el comportamiento no cambia.
+    assert claims.normalize_metric("acc_mean") is None
+
+
 # ---------------------------------------------------------------------------
 # Esquema de respuesta sleep4
 # ---------------------------------------------------------------------------
@@ -478,6 +516,60 @@ def test_condition_block_reports_confidence_diagnostics():
     assert block["confidence_values"] == {"70": 2, "75": 1, "85": 1}
 
 
+def test_condition_block_separates_unknown_names_from_absent_metrics():
+    """``unsupported`` mezcla dos cosas y el informe tiene que poder separarlas.
+
+    Un claim puede ser ``unsupported`` porque la métrica no está en la entrada
+    (evidencia ausente, lo que mide H5) o porque el verificador no conoce ese
+    nombre (vocabulario). Sin el diagnóstico, un alias que falte se leería como
+    alucinación. Caso real: el brazo textual del piloto de 2026-11-23.
+    """
+    from scripts.run_p4_dreamt import _condition_block
+
+    zvalues = {name: 1.0 for name in pb.SLEEP_FEATURES}
+    prompt = "Signal summary:\n" + dreamt.render_sleep_text(zvalues)
+
+    def record(index: int, claim: dict) -> dict:
+        return {
+            "window_id": f"S999:e{index:04d}",
+            "window_id_opaque": f"opaque-{index}",
+            "condition_id": "C0_clean",
+            "status": "valid_response",
+            "decision": "n2",
+            "confidence": 80,
+            "claims": [claim],
+            "prompt": prompt,
+            "reasoning": "evidence is consistent",
+        }
+
+    unknown = {
+        "metric": "banana_score",
+        "channel": "eda",
+        "direction": "increase",
+        "magnitude": "low",
+    }
+    # ``ecg_sdnn_ms`` existe en el vocabulario pero no en la rama wearable.
+    absent = {
+        "metric": "ecg_sdnn_ms",
+        "channel": "ecg",
+        "direction": "increase",
+        "magnitude": "low",
+    }
+    readable = {
+        "metric": "Mean conductance",
+        "channel": "eda",
+        "direction": "increase",
+        "magnitude": "medium",
+    }
+    block = _condition_block(
+        [record(0, unknown), record(1, absent), record(2, readable)],
+        {f"opaque-{i}": "n2" for i in range(3)},
+    )
+    assert block["claims"]["unrecognized_metric_names"] == 1
+    assert block["claims"]["categories"]["unsupported"] == 2
+    assert block["claims"]["categories"]["supported"] == 1
+
+
 def test_condition_block_ignores_abstentions_for_confidence():
     """Las abstenciones no tienen acierto/error: quedan fuera del AUROC."""
     from scripts.run_p4_dreamt import _condition_block
@@ -498,3 +590,190 @@ def test_condition_block_ignores_abstentions_for_confidence():
     assert np.isnan(block["confidence_auroc"])
     assert block["confidence_values"] == {}
     assert block["n_abstain"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Filtro de sujetos (--subjects): el CLI reenvía la bandera, el runner la aplica
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw", [None, "", "   ", ","])
+def test_subject_filter_empty_means_no_filter(raw):
+    """Sin valor no se filtra: el piloto congelado se usa entero."""
+    from scripts.run_p4_dreamt import parse_subject_filter
+
+    assert parse_subject_filter(raw) is None
+
+
+def test_subject_filter_accepts_subset_in_preregistered_order():
+    """El subconjunto conserva el orden del preregistro, no el del CLI."""
+    from scripts.run_p4_dreamt import parse_subject_filter
+
+    assert parse_subject_filter(" s084 , S034 ") == ("S034", "S084")
+
+
+@pytest.mark.parametrize("raw", ["S002", "S034,S002", "S999"])
+def test_subject_filter_rejects_outside_pilot(raw):
+    """Un sujeto de desarrollo o desconocido rompería el preregistro."""
+    from scripts.run_p4_dreamt import parse_subject_filter
+
+    with pytest.raises(ValueError):
+        parse_subject_filter(raw)
+
+
+def test_select_pilot_subjects_respects_filter_and_presence():
+    """Disponibilidad y filtro se combinan sin cambiar el orden."""
+    from scripts.run_p4_dreamt import PILOT_SUBJECTS, select_pilot_subjects
+
+    available = list(PILOT_SUBJECTS)
+    assert select_pilot_subjects(available) == list(PILOT_SUBJECTS)
+    assert select_pilot_subjects(available, ("S076",)) == ["S076"]
+    # Un sujeto del piloto sin datos no aparece aunque se pida.
+    assert select_pilot_subjects(["S034"], ("S076",)) == []
+
+
+def test_requested_subjects_turns_validation_into_exit_code():
+    """El CLI debe salir con mensaje, no con traza, ante un sujeto inválido."""
+    from argparse import Namespace
+
+    from scripts.run_p4_dreamt import requested_subjects
+
+    assert requested_subjects(Namespace(subjects="S034")) == ("S034",)
+    with pytest.raises(SystemExit):
+        requested_subjects(Namespace(subjects="S002"))
+
+
+def test_filter_prompt_rows_limits_conditions():
+    """Un humo de 2 condiciones no debe gastar las 6 (fallo del 2026-11-23)."""
+    from scripts.run_p4_dreamt import filter_prompt_rows
+
+    rows = [
+        {"window_id": f"w{i}", "condition_id": cond}
+        for i in range(3)
+        for cond in ("C0_clean", "C1_absent_eda", "C2_degenerate_eda")
+    ]
+    assert len(filter_prompt_rows(rows, None)) == 9
+    subset = filter_prompt_rows(rows, ["C0_clean", "C2_degenerate_eda"])
+    assert len(subset) == 6
+    assert {row["condition_id"] for row in subset} == {"C0_clean", "C2_degenerate_eda"}
+    with pytest.raises(SystemExit):
+        filter_prompt_rows(rows, ["C9_inexistente"])
+
+
+def test_sampling_consistency_reads_effective_prompts(tmp_path):
+    """El aviso se basa en los prompts escritos, no en lo que pidió el manifiesto."""
+    import json as _json
+
+    from scripts.run_p4_dreamt import check_sampling_consistency
+
+    assert check_sampling_consistency(tmp_path, ["S034"], 1, ("C0_clean",)) == []
+
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    rows = [
+        {"window_id": f"S034:e{i:04d}", "condition_id": cond, "stage": stage}
+        for stage in ("W", "N1", "N2", "R")
+        for i in range(5)
+        for cond in ("C0_clean", "C4_absent_core")
+    ]
+    with (prompts / "S034.prompts.jsonl").open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(_json.dumps(row) + "\n")
+    # El manifiesto miente a propósito: dice 1 cuando los prompts tienen 5.
+    (tmp_path / "manifest.json").write_text(
+        _json.dumps({"windows_per_class": 1, "conditions": ["C0_clean"]}), encoding="utf-8"
+    )
+
+    assert check_sampling_consistency(tmp_path, ["S034"], 5, ("C0_clean",)) == []
+    drift = check_sampling_consistency(tmp_path, ["S034"], 1, ("C0_clean", "NC_absent"))
+    assert len(drift) == 2
+    assert any("windows_per_class" in item for item in drift)
+    assert any("NC_absent" in item for item in drift)
+
+
+# ---------------------------------------------------------------------------
+# Cohorte de escala (declarada el 2026-11-24 antes de generar)
+# ---------------------------------------------------------------------------
+
+
+def test_scale_cohort_is_frozen_and_disjoint():
+    """12 sujetos, sin solape con desarrollo ni con el piloto."""
+    from scripts.run_p4_dreamt import (
+        DREAMT_DEV_SUBJECTS,
+        PILOT_SUBJECTS,
+        SCALE_SUBJECTS,
+    )
+
+    assert len(SCALE_SUBJECTS) == 12
+    assert len(set(SCALE_SUBJECTS)) == 12
+    assert list(SCALE_SUBJECTS) == sorted(SCALE_SUBJECTS)
+    assert not set(SCALE_SUBJECTS) & set(PILOT_SUBJECTS)
+    assert not set(SCALE_SUBJECTS) & set(DREAMT_DEV_SUBJECTS)
+
+
+def test_scale_cohort_is_spread_across_the_id_range():
+    """No debe ser un bloque de identificadores consecutivos (orden de reclutamiento)."""
+    from scripts.run_p4_dreamt import SCALE_SUBJECTS
+
+    numbers = [int(name[1:]) for name in SCALE_SUBJECTS]
+    assert min(numbers) < 20
+    assert max(numbers) >= 90
+    # Ningún par consecutivo del dataset (paso mínimo observado > 1).
+    assert all(b - a > 1 for a, b in zip(numbers, numbers[1:]))
+
+
+def test_cohorts_and_default_outputs_are_separate():
+    """Las dos cohortes existen y nunca escriben en la misma carpeta."""
+    from scripts.run_p4_dreamt import (
+        COHORTS,
+        DEFAULT_OUTPUTS,
+        PILOT_SUBJECTS,
+        SCALE_SUBJECTS,
+    )
+
+    assert set(COHORTS) == {"pilot", "scale"}
+    assert COHORTS["pilot"] == PILOT_SUBJECTS
+    assert COHORTS["scale"] == SCALE_SUBJECTS
+    assert DEFAULT_OUTPUTS["pilot"] != DEFAULT_OUTPUTS["scale"]
+    assert DEFAULT_OUTPUTS["pilot"].name == "pilot"
+    assert DEFAULT_OUTPUTS["scale"].name == "scale"
+
+
+def test_cohort_filter_validates_against_the_requested_cohort():
+    """Un sujeto del piloto no es válido en la cohorte de escala (y al revés)."""
+    from scripts.run_p4_dreamt import parse_subject_filter
+
+    assert parse_subject_filter("S008", cohort="scale") == ("S008",)
+    with pytest.raises(ValueError):
+        parse_subject_filter("S034", cohort="scale")
+    with pytest.raises(ValueError):
+        parse_subject_filter("S008", cohort="pilot")
+    with pytest.raises(ValueError):
+        parse_subject_filter("S008", cohort="nope")
+
+
+def test_select_cohort_subjects_respects_order_and_presence():
+    """El orden declarado manda y los sujetos sin datos desaparecen."""
+    from scripts.run_p4_dreamt import SCALE_SUBJECTS, select_cohort_subjects
+
+    available = list(reversed(SCALE_SUBJECTS))
+    assert select_cohort_subjects(available, cohort="scale") == list(SCALE_SUBJECTS)
+    first, second = SCALE_SUBJECTS[0], SCALE_SUBJECTS[1]
+    assert select_cohort_subjects(available, (second, first), cohort="scale") == [
+        first,
+        second,
+    ]
+    assert select_cohort_subjects([first], (second,), cohort="scale") == []
+
+
+def test_requested_subjects_accepts_cohort_namespace():
+    """El CLI traduce la cohorte antes de validar el filtro."""
+    from argparse import Namespace
+
+    from scripts.run_p4_dreamt import requested_subjects
+
+    assert requested_subjects(Namespace(subjects="S008", cohort="scale")) == ("S008",)
+    with pytest.raises(SystemExit):
+        requested_subjects(Namespace(subjects="S034", cohort="scale"))
+    # Sin cohorte explícita sigue siendo el piloto (compatibilidad).
+    assert requested_subjects(Namespace(subjects="S034")) == ("S034",)

@@ -185,6 +185,7 @@ def build_generate_argv(
         _append_flag(argv, "--representation", getattr(args, "representation", None))
         _append_flag(argv, "--conditions", getattr(args, "conditions", None))
         _append_flag(argv, "--windows-per-class", getattr(args, "windows_per_class", None))
+        _append_flag(argv, "--cohort", getattr(args, "cohort", None))
         _append_flag(argv, "--seed", getattr(args, "seed", None))
         _append_flag(argv, "--subjects", getattr(args, "subjects", None))
         if getattr(args, "think", False):
@@ -274,8 +275,12 @@ def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
         _append_flag(argv, "--representation", getattr(args, "representation", None))
         _append_flag(argv, "--data-dir", external_data_dir("dreamt"))
         _append_flag(argv, "--conditions", getattr(args, "conditions", None))
+        _append_flag(argv, "--cohort", getattr(args, "cohort", None))
+        _append_flag(argv, "--subjects", getattr(args, "subjects", None))
         if getattr(args, "reference", False):
             argv.append("--reference")
+        if getattr(args, "recovery", False):
+            argv.append("--recovery")
     return argv
 
 
@@ -402,10 +407,11 @@ def _subjects_for_plan(args: Any) -> list[str]:
         return subjects
 
     if experiment_of(args) == "dreamt":
-        # El split de DREAMT es propio (sujetos de 4 dígitos, ver preregistro §7).
-        from scripts.run_p4_dreamt import PILOT_SUBJECTS
+        # El split de DREAMT es propio (sujetos de 4 dígitos, ver preregistro §7
+        # y docs/escala_dreamt.md §2). La cohorte decide el conjunto.
+        from scripts.run_p4_dreamt import COHORTS
 
-        return list(PILOT_SUBJECTS)
+        return list(COHORTS[str(getattr(args, "cohort", None) or "pilot")])
 
     single = str(getattr(args, "subject", None) or "").strip().upper()
     if single.startswith("S") and single[1:].isdigit():

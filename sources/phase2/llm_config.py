@@ -139,7 +139,11 @@ def build_experiment_config(
         model: nombre del modelo (default: primary_model de config.json,
             o "qwen3:8b" si no está definido).
         temperature: temperatura de muestreo (default: 0.3).
-        num_ctx: tamaño de contexto en tokens (default: 32768).
+        num_ctx: tamaño de contexto en tokens (default: 32768, o
+            ``defaults.llm.num_ctx`` si está en config.json). Los prompts del
+            proyecto rondan 1.000 tokens, así que un modelo grande (≥ 20 GB en
+            Q4) cabe en 24 GB de VRAM solo si se baja este valor: la caché KV a
+            32k tokens ocupa varios GB.
         seed: semilla aleatoria fija (default: 42).
         top_p: probabilidad acumulada para muestreo (default: 0.9).
         max_tokens: tokens máximos de respuesta (default: 800).
@@ -168,7 +172,9 @@ def build_experiment_config(
         else float(cfg.get("temperature", _DEFAULT_TEMPERATURE))
     )
     resolved_num_ctx = (
-        int(num_ctx) if num_ctx is not None else int(_DEFAULT_NUM_CTX)
+        int(num_ctx)
+        if num_ctx is not None
+        else int(cfg.get("num_ctx", _DEFAULT_NUM_CTX))
     )
     resolved_seed = (
         int(seed) if seed is not None else int(_DEFAULT_SEED)

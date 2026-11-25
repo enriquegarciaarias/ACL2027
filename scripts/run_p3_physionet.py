@@ -26,6 +26,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from sources.common.llm_client import check_model_available, ollama_run_provenance
 from sources.common.provenance import utc_now
 from sources.external.paths import PHYSIONET2017_DIR
 from sources.external.physionet2017 import (
@@ -211,7 +212,32 @@ def run_llm(
         model=model, temperature=temperature, seed=seed,
         max_retries=3, cascade_enabled=False,
     )
+    # Un modelo sin descargar devolvería timeouts que la reanudación reutilizaría:
+    # es más informativo abortar aquí (mismo criterio que el barrido).
+    if check_model_available(config.model) is False:
+        raise SystemExit(
+            f"[PN17] El modelo {config.model!r} no está en Ollama. "
+            f"Descárgalo con 'ollama pull {config.model}' o usa --model."
+        )
     client = create_ollama_chat_client(config)
+
+    # Identidad del motor: el nombre del modelo no basta (Ollama 0.40.6 y 0.30.7
+    # difieren en la abstención con el mismo prompt y semilla). Se escribe antes
+    # de generar para que quede registrada aunque el job se corte.
+    provenance = ollama_run_provenance(config.model)
+    provenance.update(
+        {
+            "generated_at": utc_now(),
+            "task": "physionet2017_rhythm4",
+            "tag": tag or None,
+            "few_shot": few_shot,
+            "config": config.to_dict(),
+        }
+    )
+    (output_dir / f"run_provenance{suffix}.json").write_text(
+        json.dumps(provenance, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
 
     pending = [r for r in records if r.record_id not in existing]
     if max_records is not None:

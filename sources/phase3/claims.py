@@ -145,6 +145,16 @@ def normalize_metric(
         extra = {str(alias).strip().lower(): target for alias, target in extra_aliases.items()}
         if key in extra:
             return extra[key]
+        # Un vocabulario de otro dataset escribe la misma etiqueta con guiones
+        # bajos o con espacios («acc_mean» / «acc mean»). Se reintenta con la
+        # otra forma antes de rendirse: si no, un nombre reconocible se contaría
+        # como ``unsupported`` (métrica ausente) y la tasa de respaldo mediría el
+        # vocabulario del verificador, no la conducta del modelo. Alcance
+        # limitado a los vocabularios con ``extra_aliases``: el corpus de WESAD
+        # no cambia.
+        swapped = key.replace("_", " ") if "_" in key else key.replace(" ", "_")
+        if swapped in extra:
+            return extra[swapped]
         # Un vocabulario de otro dataset puede aportar nombres canónicos que no
         # existen en el de WESAD: ``acc_std_g`` estaba excluido de la vista del
         # LLM allí, así que no figura en ``CANONICAL_METRICS``. Si el nombre es
@@ -425,9 +435,18 @@ def verify_claims(
     prompt: str,
     extra_aliases: Mapping[str, str] | None = None,
 ) -> list[ClaimVerdict]:
-    """Verifica una lista de claims contra el prompt que las originó."""
+    """Verifica una lista de claims contra el prompt que las originó.
+
+    El vocabulario del dataset tiene que llegar a las **dos** partes: al parsear
+    el prompt (que convierte etiquetas legibles en nombres canónicos) y al
+    normalizar la métrica de cada claim. Se olvidó lo segundo hasta el piloto
+    DREAMT del 2026-11-23: el modelo citaba «Movement fraction» —una etiqueta
+    que sí estaba en la entrada— y el verificador la contaba como ``unsupported``
+    (métrica ausente). Inflaba el ``unsupported`` del brazo textual y no tocaba
+    el numérico, donde los nombres ya son canónicos.
+    """
     features = parse_prompt_features(prompt, extra_aliases)
-    return [verify_claim(claim, features) for claim in claims]
+    return [verify_claim(claim, features, extra_aliases) for claim in claims]
 
 
 def summarize_verdicts(verdicts: Sequence[ClaimVerdict]) -> dict[str, Any]:

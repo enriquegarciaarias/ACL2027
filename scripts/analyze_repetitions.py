@@ -101,16 +101,29 @@ def load_records(dirs: Sequence[Path]) -> list[dict[str, Any]]:
     return records
 
 
+_DECISION_MODE_ALIASES = {"binary": DECISION_MODE_STRESS_BINARY,
+                          "affective": DECISION_MODE_AFFECTIVE}
+
+
 def infer_metadata(
     records: Sequence[Mapping[str, Any]],
     decision_mode: str | None,
     nonstress_variant: str | None,
 ) -> tuple[str, str]:
-    """Deduce tarea y variante de la procedencia de las respuestas."""
+    """Deduce tarea y variante de la procedencia de las respuestas.
+
+    Acepta el vocabulario del CLI (``binary``) además del canónico
+    (``stress_binary``): el resto de la cadena —``--decision-mode`` del barrido,
+    del comparador y del analizador de degradación— usa ``binary``, y un corpus
+    escrito a mano o por una herramienta externa no debe abortar por el alias.
+    """
+    if decision_mode:
+        decision_mode = _DECISION_MODE_ALIASES.get(str(decision_mode), str(decision_mode))
     if not decision_mode:
         counts = Counter(str(r.get("decision_mode") or "") for r in records)
         counts.pop("", None)
-        decision_mode = counts.most_common(1)[0][0] if counts else DECISION_MODE_AFFECTIVE
+        inferred = counts.most_common(1)[0][0] if counts else DECISION_MODE_AFFECTIVE
+        decision_mode = _DECISION_MODE_ALIASES.get(inferred, inferred)
     if decision_mode not in (DECISION_MODE_AFFECTIVE, DECISION_MODE_STRESS_BINARY):
         raise SystemExit(f"decision_mode desconocido: {decision_mode!r}")
     if not nonstress_variant:
@@ -401,6 +414,20 @@ def analyze(
         if labels.get(str(r.get("window_id_opaque")), "UNKNOWN") in allowed
     ]
     n_dropped_variant = len(records) - len(kept)
+    if not kept:
+        missing_opaque = sum(1 for r in records if not r.get("window_id_opaque"))
+        hint = (
+            f"{missing_opaque} de {len(records)} registros no traen "
+            "`window_id_opaque`, el campo con el que se emparejan las etiquetas "
+            "(lo escribe el barrido)."
+            if missing_opaque
+            else f"los {len(records)} registros quedan fuera de la variante "
+            f"{nonstress_variant!r} (¿condiciones de otra tarea?)."
+        )
+        raise SystemExit(
+            f"[REP] No quedan ventanas evaluables en {[str(d) for d in dirs]}.\n"
+            f"      Motivo: {hint}"
+        )
 
     grouped: dict[str, dict[str, list[Mapping[str, Any]]]] = defaultdict(
         lambda: defaultdict(list)

@@ -358,6 +358,55 @@ def test_dry_run_plan_evaluate_hierarchy_uses_hierarchy_runner(monkeypatch):
     assert plan["hierarchy"] is True
 
 
+def test_evaluate_drift_argv_carries_primary_design():
+    args = _args(
+        proc="EVALUATE",
+        experiment="degradation",
+        drift=True,
+        model="qwen3:14b",
+        representation="text",
+        conditions="C0_clean,C4_total_eda",
+        decision_mode="binary",
+        nonstress_variant="schmidt",
+        temperature="exclude",
+        base_condition="C0_clean",
+        bootstrap=1000,
+    )
+    argv = pipelines.build_evaluate_argv("degradation", args)
+    assert "--model" in argv and "qwen3:14b" in argv
+    assert "--representation" in argv and "text" in argv
+    assert "--decision-mode" in argv and "binary" in argv
+    assert "--nonstress-variant" in argv and "schmidt" in argv
+    assert "--temperature" in argv and "exclude" in argv
+    assert "--base" in argv and "C0_clean" in argv
+    assert "--bootstrap" in argv and "1000" in argv
+    assert "--conditions" in argv
+
+
+def test_dry_run_plan_evaluate_drift_uses_drift_runner(monkeypatch):
+    monkeypatch.setattr(
+        processControl,
+        "args",
+        _args(proc="EVALUATE", experiment="degradation", drift=True),
+        raising=False,
+    )
+    plan = pipelines._plan("evaluate")
+    assert plan["runner"] == "scripts/analyze_drift.py"
+    assert plan["drift"] is True
+    assert plan["base_condition"] == "C0_clean"
+
+
+def test_evaluate_refuses_drift_and_hierarchy_together(monkeypatch):
+    monkeypatch.setattr(
+        processControl,
+        "args",
+        _args(proc="EVALUATE", experiment="degradation", drift=True, hierarchy=True),
+        raising=False,
+    )
+    with pytest.raises(SystemExit):
+        pipelines.run_evaluate()
+
+
 def test_process_registry_has_three_phases():
     from main import PROCESS_REGISTRY
 
@@ -631,3 +680,13 @@ def test_dreamt_plan_uses_the_requested_cohort():
     assert pipelines._subjects_for_plan(
         _args(experiment="dreamt", cohort="scale", subjects="S008")
     ) == ["S008"]
+
+
+def test_generate_argv_forwards_engine_change_opt_in():
+    """La guardia de motor aborta por defecto; el opt-in debe poder pasarse."""
+    argv = pipelines.build_generate_argv("degradation", _args())
+    assert "--allow-engine-change" not in argv
+    argv = pipelines.build_generate_argv(
+        "degradation", _args(allow_engine_change=True)
+    )
+    assert "--allow-engine-change" in argv

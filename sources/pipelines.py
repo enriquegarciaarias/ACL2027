@@ -158,6 +158,8 @@ def build_generate_argv(
             argv.append("--think")
         if getattr(args, "allowDev", False):
             argv.append("--allow-dev")
+        if getattr(args, "allow_engine_change", False):
+            argv.append("--allow-engine-change")
     elif experiment == "centering":
         _append_flag(argv, "--conditions", getattr(args, "conditions", None))
         _append_flag(argv, "--subjects", getattr(args, "subjects", None))
@@ -237,6 +239,21 @@ def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
             _append_flag(argv, "--output", output)
             if getattr(args, "from_affective", False):
                 argv.append("--from-affective")
+            return argv
+        if getattr(args, "drift", False):
+            _append_flag(argv, "--model", getattr(args, "model", None))
+            _append_flag(argv, "--representation", getattr(args, "representation", None))
+            _append_flag(argv, "--conditions", getattr(args, "conditions", None))
+            _append_flag(argv, "--decision-mode", getattr(args, "decision_mode", None))
+            _append_flag(
+                argv, "--nonstress-variant", getattr(args, "nonstress_variant", None)
+            )
+            _append_flag(argv, "--temperature", getattr(args, "temperature", None))
+            _append_flag(
+                argv, "--base", getattr(args, "base_condition", None)
+            )
+            _append_flag(argv, "--bootstrap", getattr(args, "bootstrap", None))
+            _append_flag(argv, "--output", output)
             return argv
         _append_flag(argv, "--model", getattr(args, "model", None))
         _append_flag(argv, "--representation", getattr(args, "representation", None))
@@ -607,6 +624,7 @@ def _plan(phase: str) -> dict[str, Any]:
         "temperature": getattr(args, "temperature", None) or "include",
         "force": bool(getattr(args, "force", False)),
         "allowDev": bool(getattr(args, "allowDev", False)),
+        "allow_engine_change": bool(getattr(args, "allow_engine_change", False)),
         "repetitions": max(int(getattr(args, "repetitions", None) or 1), 1),
         "sample_windows": getattr(args, "sample_windows", None),
     }
@@ -638,8 +656,13 @@ def _plan(phase: str) -> dict[str, Any]:
                 plan["paths"]["warnings"].append(str(exc).splitlines()[0])
         elif experiment == "degradation" and getattr(args, "hierarchy", False):
             plan["runner"] = "scripts/analyze_binary_hierarchy.py"
+        elif experiment == "degradation" and getattr(args, "drift", False):
+            plan["runner"] = "scripts/analyze_drift.py"
         else:
             plan["runner"] = f"scripts/{_script_for_evaluate(experiment)}.py"
+        plan["drift"] = bool(getattr(args, "drift", False))
+        if plan["drift"]:
+            plan["base_condition"] = getattr(args, "base_condition", None) or "C0_clean"
         plan["compare_models"] = getattr(args, "compare_models", "") or None
         plan["hierarchy"] = bool(getattr(args, "hierarchy", False))
         plan["bootstrap"] = getattr(args, "bootstrap", None)
@@ -723,6 +746,11 @@ def run_evaluate() -> None:
     args = processControl.args
     _warn_alias(getattr(args, "proc", ""), "EVALUATE")
     experiment = experiment_of(args)
+    if getattr(args, "drift", False) and getattr(args, "hierarchy", False):
+        raise SystemExit(
+            "[EVALUATE] --drift y --hierarchy son análisis distintos del mismo "
+            "corpus: ejecuta uno y luego el otro."
+        )
 
     if getattr(args, "dry_run", False):
         print(json.dumps(_plan("evaluate"), indent=2, ensure_ascii=False))
@@ -751,6 +779,8 @@ def run_evaluate() -> None:
         script = "analyze_repetitions"
     elif experiment == "degradation" and getattr(args, "hierarchy", False):
         script = "analyze_binary_hierarchy"
+    elif experiment == "degradation" and getattr(args, "drift", False):
+        script = "analyze_drift"
     argv = build_evaluate_argv(experiment, args)
     writeLog(
         "info",

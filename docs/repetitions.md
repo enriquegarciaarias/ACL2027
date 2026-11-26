@@ -113,7 +113,8 @@ Llamadas = sujetos × ventanas por sujeto × condiciones × R.
 
 No se ejecutó corpus completo: la regla de decisión lo descarta (§8.6). Si se
 quisiera una tasa de inestabilidad con más ventanas, el siguiente paso es
-**ampliar sujetos** (S8–S10), no repeticiones: 1.440 llamadas, ~50 min.
+**ampliar sujetos** (S8–S10), no repeticiones: 3 × 12 × 1 × 20 = **720
+llamadas**, ~25 min al ritmo medido del piloto (720 en 25 min 36 s).
 
 ---
 
@@ -150,6 +151,65 @@ Sin `--output-dir` (bandera del script, no del CLI), el barrido escribe en
 
 El análisis deduce la tarea y la variante de la procedencia de las respuestas y
 descarta las ventanas fuera de la variante (`meditation` en `schmidt`).
+
+### 7.1 Ampliación pendiente en el servidor (S8–S10)
+
+Lo que falta para citar el +0,064 de AUROC con intervalos es **más ventanas, no
+más repeticiones**: S8–S10 con la misma muestra sistemática (`--sample-windows
+12`, ciega a las etiquetas) y las mismas 20 semillas (42…61). El barrido es
+reanudable por `(ventana, condición, repetición)`, así que S5–S7 se omiten solos.
+
+```bash
+# 1) Preflight EN NODO DE CÁLCULO (en sirius numpy aborta con SIGILL)
+srun --partition=A5000 --gres=gpu:1 --cpus-per-task=8 --mem=16G --time=00:10:00 --pty bash
+cd ~/data/proyectos/ACL2027
+.venv/bin/python main.py --proc GENERATE --experiment degradation --subject WESAD \
+  --model qwen2.5:7b --decision-mode binary --nonstress-variant schmidt \
+  --temperature exclude --conditions C5_total_both \
+  --subjects S8,S9,S10 --sample-windows 12 --repetitions 20 --dry-run
+# → estimated_llm_calls: 720 (3 × 12 × 1 × 20)
+exit
+
+# 2) Generación
+~/data/launch_lsi.sh --proc run_ACL.sh --time 02:00:00 -- \
+  --proc GENERATE --experiment degradation --subject WESAD \
+  --model qwen2.5:7b --decision-mode binary --nonstress-variant schmidt \
+  --temperature exclude --conditions C5_total_both \
+  --subjects S8,S9,S10 --sample-windows 12 --repetitions 20
+
+# 3) Análisis (despachador; resuelve el directorio _rep20 solo)
+srun --partition=A5000 --gres=gpu:1 --cpus-per-task=8 --mem=16G --time=00:15:00 --pty bash
+cd ~/data/proyectos/ACL2027
+.venv/bin/python main.py --proc EVALUATE --experiment degradation --subject WESAD \
+  --model qwen2.5:7b --repetitions 20 --decision-mode binary \
+  --nonstress-variant schmidt \
+  --output results/output/WESAD/PHASE2/repetitions_rep20_qwen2_5_7b.json
+```
+
+Al analizar el corpus completo (S5–S10) el informe sale con 6 sujetos; si se
+lanza solo la ampliación y el informe se escribe en el mismo `--output`, se
+pierde el de S5–S7: usar un `--output` distinto y compararlos, o mover los
+`.jsonl` a un directorio que reúna las seis series.
+
+**Guardia de motor (nueva).** Antes de escribir `run_provenance.json`, el
+barrido compara `model`, `model_digest` y `ollama_version` con los del corpus
+existente; si difieren, **aborta** (código 2) en lugar de reanudar. Motivo: la
+caché de reanudación no indexa el motor, y en un experimento de varianza de
+muestreo un cambio de build sería indistinguible del ruido que se mide. Solo se
+omite con `--allow-engine-change` (explícito, para un caso declarado), también
+desde el despachador (`main.py … --allow-engine-change`). Además, un `timeout`
+nunca cuenta como respuesta cacheada y el barrido aborta si el modelo no está
+instalado. Antes de lanzar, comprobar que el corpus del piloto sigue allí y con
+qué motor:
+
+```bash
+ls results/output/WESAD/PHASE2/degradation_binary_schmidt_notemp_rep20/qwen2_5_7b/
+cat results/output/WESAD/PHASE2/degradation_binary_schmidt_notemp_rep20/qwen2_5_7b/run_provenance.json
+```
+
+Si el corpus se copió de otro entorno (p. ej. un piloto local con Ollama
+0.30.7), **muévelo o renómbralo** antes de reanudar: mezclar motores no se
+puede separar después con los datos.
 
 ---
 
@@ -298,3 +358,98 @@ de la accuracy del 14b (1,000 con balanced 0,500 y cobertura 0,70) es
   `_normalize_direction` (slight, sharply, markedly, somewhat…), con tests.
 - El corpus no registraba la versión de Ollama ni el digest del modelo:
   añadidos `ollama_run_provenance()` y `run_provenance.json`.
+
+---
+
+## 9. Plan completo pendiente (estado guardado, 2026-11-26)
+
+Esta sección fija **qué falta, con qué `R`, en qué brazos y a qué coste**, para
+que la campaña pueda lanzarse más tarde sin volver a deducir el diseño. No se ha
+ejecutado nada de lo que sigue salvo lo indicado como «hecho».
+
+### 9.1 `R` ya está determinado (y por objetivo)
+
+La regla del §4 está congelada y aplicada en §8.6. No hay un único `R`: depende
+de para qué se use la repetición.
+
+| Objetivo | `R` | Fundamento |
+|---|---:|---|
+| **Cifra agregada** (accuracy, balanced, cobertura, abstención) | **3** | Banda intermedia (acuerdo 0,935 en 7b `C5`): extrapolación a ±3 pp, mínimo 3. Verificado en el piloto: `sd` 0,043 → 0,025 con k=3. |
+| **Describir una ventana** (¿esta ventana es indecidible?) | **≈20** | La ventana 10/10 sigue 10/10; con menos `k` el empate no se ve. Y aun con 20 no hay respuesta estable que reportar. |
+| **Brazos deterministas** (acuerdo ≥ 0,98) | **1** (auditoría puntual) | 14b `C0`/`C5` y 7b `C0`/`C4`: la decisión no cambió ni una vez. Repetir no aporta; una confirmación basta. |
+| **Intervención sobre H2a** (¿promediar crea resolución?) | 20 | El +0,064 de AUROC de confianza es del promedio; con k=3 no es medible. |
+
+Si en la ampliación el acuerdo de un brazo cae por debajo de 0,98, se aplica la
+misma regla sin cambiarla (esto ya está predeclarado, no se decide después).
+
+### 9.2 Lo que se va a repetir y lo que no
+
+**No** se repiten todos los datasets × todos los modelos. Se repite donde la
+varianza puede cambiar una conclusión:
+
+| Se repite | No se repite | Motivo |
+|---|---|---|
+| WESAD numérico 7b `C5` (único brazo con acuerdo < 0,98) | 7b `C0`/`C4`, 14b (deterministas) | Nada que medir; el corpus de una pasada ya lo demuestra. |
+| WESAD **texto** (nunca auditado; 155 inválidas de formato en 7b) | WESAD muñeca/BVP (no está en la vista LLM) | El brazo textual puede tener otra varianza y otra tasa de inválidas. |
+| DREAMT `C5` y **`C3` de `medgemma`** (detección parcial 0,200 [0,167;0,235]) | DREAMT `C0`/`NC_absent` (0 % / 100 % deterministas) | Hay un hallazgo nuevo cuya estabilidad no se ha comprobado. |
+| PhysioNet (se re-ejecuta en el servidor de todos modos) | K-EmoCon (exploratorio, referencia ≈ azar) | Se aprovecha el mismo job; K-EmoCon no sostiene ninguna conclusión. |
+
+### 9.3 Matriz y coste
+
+Ritmos medidos: 7b ≈ 2,1 s/llamada; 14b ≈ 4,9 s; DREAMT ≈ 2,1 s; PhysioNet
+`qwen2.5:7b` ≈ 1,5 s.
+
+**Fase A — WESAD, sin código nuevo** (el barrido ya soporta todo):
+
+| # | Brazo | Sujetos | Ventanas | `R` | Llamadas | Tiempo | Para qué |
+|---|---|---|---:|---:|---:|---:|---|
+| A1 | 7b numérico `C5` | S8–S10 | 12/sujeto | 20 | 720 | ~25 min | Ampliar la auditoría de ventana a 6 sujetos; citar el +0,064 de AUROC. |
+| A2 | 7b numérico `C5` | 12 eval | **todas (567)** | 3 | 1.701 | ~1 h | Verificar a escala completa el `R=3` predeclarado. |
+| A3 | 14b numérico `C5` | S5–S7 | 12/sujeto | 20 | 720 | ~1 h | ¿La **dispersión** de confianza predice errores mejor que su nivel? (único modelo con confianza graduada). |
+| A4 | 7b texto `C5` | 12 eval | todas (567) | 3 | 1.701 | ~1 h | Varianza del brazo textual y estabilidad de las inválidas de formato. |
+
+Total Fase A ≈ **4.842 llamadas**, ~3,5 h. A2/A4 admiten un atajo declarado:
+copiar los registros de la repetición 0 desde el corpus base (mismo prompt y
+semilla 42) ahorra 567 llamadas por brazo; si se hace, se anota en el informe y
+se verifica con `scripts/verify_corpus_rebuild.py`.
+
+**Fase B — DREAMT, requiere implementar `--repetitions`** (hoy
+`scripts/run_p4_dreamt.py` no lo tiene; el diseño sería el mismo del barrido:
+prompt una vez, semillas 42+r, reanudación por `(ventana, condición, rep)`):
+
+| # | Brazo | Sujetos | Ventanas | `R` | Llamadas | Tiempo |
+|---|---|---|---:|---:|---:|---:|
+| B1 | `qwen2.5:7b` numérico `C5` | 12 escala | 480 | 3 | 1.440 | ~50 min |
+| B2 | `qwen2.5:7b` texto `C5` | 12 escala | 480 | 3 | 1.440 | ~50 min |
+| B3 | `medgemma:4b` numérico `C3` | 12 escala | 480 | 3 | 1.440 | ~1,5 h |
+
+**Fase C — PhysioNet, requiere `--repetitions` y el re-run del servidor**
+(400 registros × 3 = 1.200 llamadas; 800 nuevas sobre la pasada base, ~20 min).
+
+Coste total de las tres fases ≈ **9.300 llamadas**, ~6–7 h de GPU. Orden
+sugerido: A1 → A2 → B3 → A3 → A4 → B1/B2 → C. Criterio de parada por brazo: si
+el acuerdo modal sale ≥ 0,98 en la ampliación, el brazo se cierra con una nota
+(no se escala a más sujetos).
+
+### 9.4 Prerrequisitos y estado
+
+- [x] Guardia de identidad del motor en el barrido (`engine_conflicts`,
+  `--allow-engine-change`).
+- [x] Procedencia (`run_provenance.json`), `timeout` no cacheado, aborto si el
+  modelo falta, salida `_rep{R}` aislada y análisis en el despachador.
+- [x] Corpus del piloto en el servidor: 7b (S5–S7, `C5`, R=20; 720) y 14b (S5,
+  `C0`+`C5`, R=5; 120). En local solo el informe.
+- [ ] Fase B: `--repetitions` en `run_p4_dreamt.py` (y su análisis).
+- [ ] Fase C: `--repetitions` en `run_p3_physionet.py` + re-ejecución en el
+  servidor con el motor único.
+- [ ] Copia opcional de la repetición 0 desde el corpus base (A2/A4), con
+  verificación de prompts.
+
+### 9.5 Qué NO se puede afirmar con el plan actual
+
+- La varianza de la **representación textual** en WESAD (no auditada) ni la de
+  DREAMT/PhysioNet (sin repeticiones).
+- La tasa de inestabilidad con precisión: A1 la mejora (6 sujetos, 60 ventanas
+  aprox.), pero el n efectivo sigue siendo de sujetos, no de ventanas.
+- Nada de un brazo ejecutado con otro motor: la guardia impide reanudar, y el
+  `R` medido en Ollama 0.40.6 no se traslada a otro build.

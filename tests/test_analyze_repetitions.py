@@ -296,3 +296,44 @@ def test_analyzer_avoids_the_heavy_ingestion_import_chain():
     source = Path(ar.__file__).read_text(encoding="utf-8")
     assert "sources.ingestion.represent" not in source
     assert "neurokit" not in source
+
+
+# ---------------------------------------------------------------------------
+# Robustez de la lectura del corpus
+# ---------------------------------------------------------------------------
+def test_infer_metadata_accepts_cli_alias_binary():
+    """El CLI escribe ``binary``; el canónico es ``stress_binary``.
+
+    ``--decision-mode`` del barrido, del comparador y del despachador usan
+    ``binary``. Aceptar el alias evita que un corpus escrito por otra
+    herramienta (o a mano) aborte el análisis.
+    """
+    records = [_record("w", "stress", 85, 0)]
+    assert ar.infer_metadata(records, "binary", None) == ("stress_binary", "schmidt")
+    for record in records:
+        record["decision_mode"] = "binary"
+    assert ar.infer_metadata(records, None, None) == ("stress_binary", "schmidt")
+
+
+def test_analyze_explains_missing_opaque_id(tmp_path):
+    """Sin ``window_id_opaque`` no se puede emparejar la etiqueta: decirlo."""
+    record = _record("w", "stress", 85, 0)
+    record.pop("window_id_opaque")
+    (tmp_path / "S5.responses.jsonl").write_text(
+        json.dumps(record) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        ar.analyze([tmp_path])
+    assert "window_id_opaque" in str(excinfo.value)
+
+
+def test_analyze_explains_windows_outside_variant(tmp_path):
+    """Registros de otra variante no son un fallo del corpus, pero no evalúan."""
+    record = _record("win_ff", "stress", 85, 0)
+    (tmp_path / "S5.responses.jsonl").write_text(
+        json.dumps(record) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        ar.analyze([tmp_path], decision_mode="stress_binary",
+                   nonstress_variant="schmidt", labels={})
+    assert "fuera de la variante" in str(excinfo.value)

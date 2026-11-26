@@ -90,7 +90,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip wheel
 pip install -r requirements.txt
 pip install -r requirements-dev.txt   # pytest (opcional, para tests)
-python -m pytest -q                   # 675 tests
+python -m pytest -q                   # 683 tests
 ```
 
 `requirements.txt` incluye `torch` y fija el índice de PyTorch en
@@ -400,7 +400,7 @@ ACL2027/
 │   ├── phase2/                  # prompts, LLM, esquema de respuesta, controles negativos, gate de consistencia
 │   ├── phase3/                  # evaluación, claims, certeza, calibración, degradación
 │   └── external/                # adaptadores K-EmoCon, PhysioNet 2017 y DREAMT
-├── tests/                       # 675 tests (sin dependencia de los datasets reales)
+├── tests/                       # 683 tests (sin dependencia de los datasets reales)
 └── results/                     # NO versionado: input/ y output/ por subject
 ```
 
@@ -412,7 +412,7 @@ ACL2027/
 python -m pytest -q
 ```
 
-**675 tests**: infraestructura, ingesta, features, representaciones, prompts, esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y adaptadores externos. No requieren descargar WESAD ni Ollama.
+**683 tests**: infraestructura, ingesta, features, representaciones, prompts, esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y adaptadores externos. No requieren descargar WESAD ni Ollama.
 
 ---
 

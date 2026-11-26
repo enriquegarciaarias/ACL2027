@@ -46,7 +46,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -180,6 +180,39 @@ def ensure_model_available(model: str) -> None:
             f"      Instálalo con: ollama pull {model}\n"
             f"      (comprueba también OLLAMA_MODELS: el job usa $HOME/data/.ollama/models)"
         )
+
+
+def engine_conflicts(
+    stored: Mapping[str, Any] | None,
+    current: Mapping[str, Any] | None,
+) -> list[str]:
+    """Diferencias de identidad del motor entre el corpus y la ejecución actual.
+
+    El motor forma parte del experimento: dos builds del mismo nombre no dan el
+    mismo corpus (2026-11-18: 0 frente a 28 abstenciones con Ollama 0.40.6 y
+    0.30.7). La caché de reanudación se indexa por ``(ventana, condición,
+    repetición)``, **sin** identidad de motor, así que reanudar tras un cambio de
+    versión mezclaría corpora en silencio: en un experimento de varianza de
+    muestreo eso es indistinguible del ruido que se quiere medir.
+
+    Args:
+        stored: bloque ``ollama`` de un ``run_provenance.json`` previo.
+        current: bloque ``ollama`` de la ejecución actual.
+
+    Returns:
+        Lista de descripciones ``campo: antes -> ahora``. Vacía si no hay
+        diferencias comprobables (también si falta el campo en alguno de los dos,
+        porque entonces no se puede afirmar que haya cambiado).
+    """
+    if not stored or not current:
+        return []
+    conflicts: list[str] = []
+    for field in ("model", "model_digest", "ollama_version"):
+        before = stored.get(field)
+        after = current.get(field)
+        if before and after and str(before) != str(after):
+            conflicts.append(f"{field}: {before} -> {after}")
+    return conflicts
 
 
 def output_directory(
@@ -473,6 +506,13 @@ def main(argv: list[str] | None = None) -> None:
         "modalidad de pecho que no se degrada).",
     )
     parser.add_argument("--output-dir", default="")
+    parser.add_argument(
+        "--allow-engine-change",
+        action="store_true",
+        help="Reanudar aunque el motor (versión de Ollama o digest del modelo) "
+        "haya cambiado desde el corpus existente. Por defecto se aborta: mezclar "
+        "motores es indistinguible de la varianza de muestreo.",
+    )
     args = parser.parse_args(argv)
 
     subjects = [
@@ -528,7 +568,26 @@ def main(argv: list[str] | None = None) -> None:
     # registrada aunque el job se corte.
     provenance = ollama_run_provenance(config.model)
     output_dir.mkdir(parents=True, exist_ok=True)
-    with (output_dir / "run_provenance.json").open("w", encoding="utf-8") as fh:
+    provenance_path = output_dir / "run_provenance.json"
+    if provenance_path.is_file():
+        try:
+            previous = json.loads(provenance_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:          # archivo a medio escribir
+            previous = {}
+        conflicts = engine_conflicts(previous.get("ollama"), provenance)
+        if conflicts:
+            detail = "\n".join(f"  - {c}" for c in conflicts)
+            if not args.allow_engine_change:
+                raise SystemExit(
+                    f"[DEG] El corpus de {output_dir} se generó con otro motor o "
+                    f"modelo:\n{detail}\n"
+                    f"      Reanudar mezclaría corpora y, en un experimento de "
+                    f"varianza de muestreo, el cambio de motor sería\n"
+                    f"      indistinguible del ruido que se mide. Mueve o renombra "
+                    f"el corpus existente, o pasa --allow-engine-change."
+                )
+            print(f"[DEG] AVISO: cambio de motor con --allow-engine-change:\n{detail}")
+    with provenance_path.open("w", encoding="utf-8") as fh:
         json.dump(
             {
                 "generated_at": utc_now(),

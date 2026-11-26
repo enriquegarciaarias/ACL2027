@@ -397,6 +397,43 @@ Lo que hay que leer en el informe, por condición:
 
 Predicciones y falsadores: [`h5_relevancia.md`](h5_relevancia.md) §6.
 
+### 5.10 Deriva de la decisión — instrumento listo, ejecución pendiente
+
+Qué se mide, cómo se lee y por qué **no** se usa la desviación respecto al
+equilibrio de clases: [`deriva.md`](deriva.md).
+
+- Módulo `sources/phase3/drift.py`, informe `scripts/analyze_drift.py`, CLI
+  `EVALUATE --experiment degradation --drift` (con `--base-condition`).
+- Aporta tres cosas que §5.1–§5.6 no pueden dar, porque miran cada condición por
+  separado: **qué ventanas cambian y hacia dónde**, **qué parte del error induce
+  la degradación** (`induced_error_share` sobre los pares decididos) y si la
+  deriva es de la **información** o de la **política de decisión**, contrastada
+  con la referencia sobre las mismas features.
+- Preliminar **exploratorio** (corpus legado de 4 clases, con temperatura):
+  `C0 → C4` el LLM cambia **220 de 359** pares decididos y **los 220 van a
+  `stress`** (accuracy 0,638 → 0,315); la referencia cambia 112 y de forma
+  difusa (0,817 → 0,746; solo 4 ventanas `baseline → stress`). Además, 47
+  ventanas que se abstenían en limpio pasan a decidir `stress`. **No es el
+  diseño primario** y el propio LLM nunca predice `amusement`/`meditation`, así
+  que la comparación de espacios no es simétrica hasta que se ejecuta en
+  binario.
+
+Comando (por brazo, en nodo de cálculo):
+
+```bash
+python main.py --proc EVALUATE --experiment degradation --drift \
+  --model qwen3:14b --representation numeric \
+  --decision-mode binary --nonstress-variant schmidt --temperature exclude \
+  --bootstrap 2000 --output \
+  results/output/WESAD/PHASE2/drift_qwen3_14b_numeric.json
+```
+
+Lo que hay que leer, por condición: `claim_rate` por clase, `matrix_decided`,
+`decomposition.induced_error_share` con IC por sujeto, `by_truth.*.
+drifted_destination` y `abstain_flow`; y, en paralelo, la misma tabla de la
+referencia (`report["reference"]`). Si la referencia no deriva y el LLM sí, la
+conclusión es de política, no de información.
+
 ## 6. Comparación pareada `qwen2.5:7b` vs `qwen3:14b`
 
 Bootstrap agrupado por **sujeto** (2.000 remuestras, 12 sujetos) sobre las mismas

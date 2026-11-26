@@ -95,6 +95,15 @@ def manageArgs():
         help="Permitir sujetos de desarrollo (S2-S4) en PHASE2; por defecto solo se advierte",
     )
     parser.add_argument(
+        '--allow-engine-change',
+        dest='allow_engine_change',
+        action='store_true',
+        help="Reanudar el barrido de degradación aunque haya cambiado la versión "
+             "de Ollama o el digest del modelo desde el corpus existente. Por "
+             "defecto se aborta: mezclar motores no se puede separar después de "
+             "la varianza de muestreo.",
+    )
+    parser.add_argument(
         '--model',
         type=str,
         default=None,
@@ -195,6 +204,21 @@ def manageArgs():
         type=int,
         default=None,
         help="EVALUATE --hierarchy: número de remuestras del bootstrap por sujeto.",
+    )
+    parser.add_argument(
+        '--drift',
+        action='store_true',
+        help="EVALUATE degradation: analiza la deriva de la decisión bajo "
+             "degradación (marginal frente al prior, matriz pareada C0→Cx, "
+             "error inducido frente a preexistente) y la contrasta con la "
+             "referencia supervisada sobre las mismas features.",
+    )
+    parser.add_argument(
+        '--base-condition',
+        type=str,
+        default=None,
+        help="EVALUATE --drift: condición de referencia de las tablas pareadas "
+             "(por defecto C0_clean).",
     )
     parser.add_argument(
         '--split',

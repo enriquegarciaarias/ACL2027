@@ -205,3 +205,49 @@ def test_estimate_calls_respects_sample_windows(monkeypatch):
         "degradation", ["S5", "S6"], _args(sample_windows=12, repetitions=10)
     )
     assert calls == 2 * 12 * 5 * 10
+
+
+# ---------------------------------------------------------------------------
+# Identidad del motor
+# ---------------------------------------------------------------------------
+def test_engine_conflicts_detects_version_and_digest():
+    stored = {"model": "qwen2.5:7b", "model_digest": "aaa", "ollama_version": "0.40.6"}
+    current = {"model": "qwen2.5:7b", "model_digest": "bbb", "ollama_version": "0.42.0"}
+    conflicts = sweep.engine_conflicts(stored, current)
+    assert len(conflicts) == 2
+    assert any("model_digest" in c for c in conflicts)
+    assert any("ollama_version" in c for c in conflicts)
+
+
+def test_engine_conflicts_ignores_missing_fields():
+    """Sin dato en uno de los dos lados no se puede afirmar que haya cambiado."""
+    assert sweep.engine_conflicts({"ollama_version": "0.40.6"}, {"model": "x"}) == []
+    assert sweep.engine_conflicts(None, {"ollama_version": "0.40.6"}) == []
+    assert sweep.engine_conflicts({}, {}) == []
+
+
+def test_engine_conflicts_same_engine_is_clean():
+    provenance = {"model": "qwen2.5:7b", "model_digest": "aaa", "ollama_version": "0.40.6"}
+    assert sweep.engine_conflicts(provenance, dict(provenance)) == []
+
+
+def test_sweep_aborts_on_engine_change(tmp_path, monkeypatch):
+    """Reanudar tras cambiar de motor mezclaría corpora en silencio."""
+    (tmp_path / "run_provenance.json").write_text(
+        json.dumps({"ollama": {"model_digest": "viejo", "ollama_version": "0.40.6"}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "S5.responses.jsonl").write_text("", encoding="utf-8")
+    monkeypatch.setattr(sweep, "ensure_model_available", lambda model: None)
+    monkeypatch.setattr(
+        sweep,
+        "ollama_run_provenance",
+        lambda model: {"model": model, "model_digest": "nuevo", "ollama_version": "0.40.6"},
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        sweep.main([
+            "--subjects", "S5", "--conditions", "C5_total_both",
+            "--output-dir", str(tmp_path), "--model", "qwen2.5:7b",
+            "--decision-mode", "binary",
+        ])
+    assert "otro motor" in str(excinfo.value)

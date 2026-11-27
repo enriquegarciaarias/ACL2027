@@ -27,7 +27,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sources.common.llm_client import check_model_available, ollama_run_provenance
-from sources.common.provenance import utc_now
+from sources.common.paths import atomic_write_json
+from sources.common.provenance import engine_from_provenance, utc_now
 from sources.external.paths import PHYSIONET2017_DIR
 from sources.external.physionet2017 import (
     CANONICAL_FEATURES,
@@ -212,6 +213,36 @@ def run_llm(
         model=model, temperature=temperature, seed=seed,
         max_retries=3, cascade_enabled=False,
     )
+
+    pending = [r for r in records if r.record_id not in existing]
+    if max_records is not None:
+        pending = pending[:max_records]
+
+    # Identidad del motor: el nombre del modelo no basta (Ollama 0.40.6 y 0.30.7
+    # difieren en la abstención con el mismo prompt y semilla). La procedencia
+    # solo se escribe cuando esta ejecución **genera** algo: si todas las
+    # respuestas ya existen y no se pidió un --tag nuevo, reescribirla
+    # etiquetaría con el motor actual un corpus producido con otro (pasó al
+    # copiar al servidor el corpus local de 0.30.7).
+    provenance_path = output_dir / f"run_provenance{suffix}.json"
+    if not pending:
+        previous = engine_from_provenance(provenance_path)
+        print(
+            f"[PN17] Todas las respuestas ya existen ({len(existing)}). "
+            "No se llama al LLM."
+        )
+        if previous:
+            print(
+                f"[PN17] Motor registrado ({provenance_path.name}): Ollama "
+                f"{previous}; no se reescribe."
+            )
+        else:
+            print(
+                "[PN17] Sin procedencia del motor para estas respuestas: usa "
+                "--tag para una corrida nueva."
+            )
+        return [existing[r.record_id] for r in records if r.record_id in existing]
+
     # Un modelo sin descargar devolvería timeouts que la reanudación reutilizaría:
     # es más informativo abortar aquí (mismo criterio que el barrido).
     if check_model_available(config.model) is False:
@@ -221,9 +252,7 @@ def run_llm(
         )
     client = create_ollama_chat_client(config)
 
-    # Identidad del motor: el nombre del modelo no basta (Ollama 0.40.6 y 0.30.7
-    # difieren en la abstención con el mismo prompt y semilla). Se escribe antes
-    # de generar para que quede registrada aunque el job se corte.
+    # Se escribe antes de generar para que quede registrada aunque el job se corte.
     provenance = ollama_run_provenance(config.model)
     provenance.update(
         {
@@ -234,16 +263,15 @@ def run_llm(
             "config": config.to_dict(),
         }
     )
-    (output_dir / f"run_provenance{suffix}.json").write_text(
-        json.dumps(provenance, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
-
-    pending = [r for r in records if r.record_id not in existing]
-    if max_records is not None:
-        pending = pending[:max_records]
-    if not pending:
-        print(f"[PN17] Todas las respuestas ya existen ({len(existing)}).")
+    previous = engine_from_provenance(provenance_path)
+    current = provenance.get("ollama_version")
+    if previous and current and previous != current:
+        print(
+            f"[PN17] AVISO: {provenance_path.name} se generó con Ollama "
+            f"{previous} y este proceso usa {current}; el corpus mezclará "
+            "motores (usa --tag para separarlos)."
+        )
+    atomic_write_json(provenance_path, provenance)
 
     for index, record in enumerate(pending, start=1):
         scores = z_scores(record.values, centers, scales)
@@ -492,9 +520,14 @@ def main(argv: list[str] | None = None) -> None:
     print(f"  certeza: {metrics['certainty']['certainty_index_mean']:.2f}")
 
     summary_path = output_dir / f"physionet2017{('_' + file_tag) if file_tag else ''}_summary.json"
-    with summary_path.open("w", encoding="utf-8") as fh:
-        json.dump(report, fh, indent=2, ensure_ascii=False)
+    atomic_write_json(summary_path, report)
     print(f"\nResumen: {summary_path}")
+    provenance_file = output_dir / f"run_provenance{('_' + file_tag) if file_tag else ''}.json"
+    engine = engine_from_provenance(provenance_file)
+    if engine:
+        print(f"Motor: Ollama {engine} ({provenance_file.name})")
+    else:
+        print(f"Motor: no registrado en {provenance_file.name} (corrida previa a la procedencia)")
 
 
 if __name__ == "__main__":

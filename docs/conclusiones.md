@@ -7,11 +7,12 @@ informes de resultados (enlazados al final): es la lectura conjunta.
 Todo lo que sigue son cifras de los corpus en disco, no estimaciones. Cuando algo
 es exploratorio o está contaminado, se dice en la misma frase.
 
-**Volumen**: 42.288 respuestas de LLM registradas en `results/output` —21.502 en
-WESAD (incluye los corpus exploratorios de E12), 20.160 en DREAMT (3 modelos ×
-[piloto 960 + escala 5.760]), 486 en PhysioNet/CinC 2017 y 140 en K-EmoCon. Los
-corpora del diseño primario de WESAD se generaron en el servidor y se citan desde
-sus informes de evaluación.
+**Volumen**: 42.288 respuestas de LLM registradas en `results/output` en local
+—21.502 en WESAD (incluye los corpus exploratorios de E12), 20.160 en DREAMT
+(3 modelos × [piloto 960 + escala local 5.760]), 486 en PhysioNet/CinC 2017 y 140
+en K-EmoCon— **más 17.280 de la re-ejecución de la escala de DREAMT en el
+servidor, que es la que se cita**. Los corpora del diseño primario de WESAD se
+generaron también en el servidor y se citan desde sus informes de evaluación.
 
 ---
 
@@ -21,13 +22,17 @@ sus informes de evaluación.
 |---|---|---|---|---|---|
 | **WESAD** | binario `stress` / `non-stress` (`schmidt`: baseline + amusement), sin temperatura | `qwen2.5:7b`, `qwen3:14b` | `C0`, `C1` resp, `C2` EDA parcial, `C4` EDA a cero, `C5` ambas | 424 ventanas, 12 sujetos (S5–S17 sin S12) | servidor, Ollama 0.40.6 |
 | **WESAD** | 4 clases afectivas (baseline/amusement/stress/meditation) | los mismos 2 | las mismas 5 | 567 ventanas, 12 sujetos | servidor, Ollama 0.40.6 |
-| **DREAMT** | 4 estadios (wake/n1/n2/rem), N3 excluido | `qwen2.5:7b`, `llama3.1:8b`, `medgemma:4b` | `C0`, `C1` EDA ausente, `C2` EDA degenerada, `C3` cardíaco ausente, `C4` núcleo ausente, `NC_absent` | 480 ventanas/condición, 12 sujetos, 2 vistas | local, Ollama 0.30.7 |
-| **PhysioNet 2017** | 4 ritmos (normal/af/other/noisy) | `qwen2.5:7b` | una sola (limpia) + clase `noisy` de experto | 403 registros | local, Ollama 0.30.7 |
+| **DREAMT** | 4 estadios (wake/n1/n2/rem), N3 excluido | `qwen2.5:7b`, `llama3.1:8b`, `medgemma:4b` | `C0`, `C1` EDA ausente, `C2` EDA degenerada, `C3` cardíaco ausente, `C4` núcleo ausente, `NC_absent` | 480 ventanas/condición, 12 sujetos, 2 vistas | servidor, Ollama 0.40.6 |
+| **PhysioNet 2017** | 4 ritmos (normal/af/other/noisy) | `qwen2.5:7b` | una sola (limpia) + clase `noisy` de experto | 403 registros | local, Ollama 0.30.7 (re-ejecución lista, pendiente de lanzar) |
 
-Los dos motores **no se mezclan**: con el mismo prompt y la misma semilla,
-Ollama 0.40.6 dio 0 abstenciones y 0.30.7 dio 28. Por eso las comparaciones
-entre modelos se hacen **dentro** de cada dataset, y las comparaciones entre
-datasets se hacen sobre el **patrón**, nunca sobre el número.
+Los motores **no se mezclan**: con el mismo prompt y la misma semilla, Ollama
+0.40.6 dio 0 abstenciones y 0.30.7 dio 28. WESAD y DREAMT comparten ya el motor
+del servidor; PhysioNet sigue en 0.30.7 y su re-ejecución está pendiente (el
+runner y el analizador ya soportan `--tag srv` para aislarla, ver
+[`p3_physionet.md`](p3_physionet.md) §8.1), así que sus cifras se citan como
+**patrón**. Las comparaciones entre modelos se hacen
+**dentro** de cada dataset, y las comparaciones entre datasets se hacen sobre el
+**patrón**, nunca sobre el número.
 
 ---
 
@@ -38,8 +43,8 @@ Es el hallazgo más consistente de los tres datasets y el que da forma a H4.
 | Situación de la entrada | WESAD | DREAMT | PhysioNet |
 |---|---|---|---|
 | Todas las features ausentes (`null`) | **100 %** abstención (`NC_nan`/`NC_absent`, corpus de 4 clases) | **100 %** en 6/6 brazos modelo × vista (`NC_absent`) | no aplicable |
-| Canal clave **a cero** (valor imposible) | 0 % (`C4`: 7b 0,0 %; 14b 14,4 %) | 0–20 % (`C2`: 0,6 / 0,0 / 12,5 %) | — |
-| Canal clave **degenerado o ausente** | 22,2 % (`C2`, 14b) | 0–20 % (`C3`: 0,8 / 0,0 / 20,0 %) | — |
+| Canal clave **a cero** (valor imposible) | 0 % (`C4`: 7b 0,0 %; 14b 14,4 %) | 0–31 % (`C2`, num.: 31,0 / 0,0 / 25,4 %) | — |
+| Canal clave **ausente** (parcial) | 22,2 % (`C2`, 14b) | 0–88 % (`C1` num.: 87,9 / 1,3 / 17,1 %) y 0–57 % (`C3` num.: 45,8 / 0,2 / 56,5 %) | — |
 | Valores **presentes pero inutilizables** | — | — | **0/103** en `noisy` (0–3,6 % IC Wilson) |
 
 Lectura: los modelos detectan la **sintaxis de la ausencia** (campos vacíos) y no
@@ -50,7 +55,8 @@ Dos consecuencias prácticas:
 
 1. **No existe un detector genérico de «no puedo decidir»**. La abstención depende
    del par (modelo, canal) y de la vista: `qwen` en WESAD se retira con la EDA
-   destruida, `llama3.1:8b` en DREAMT contesta con el núcleo ausente.
+   destruida; en DREAMT, con el canal cardíaco ausente, `qwen` se abstiene el 46 %
+   y `medgemma` el 57 %, mientras `llama3.1:8b` decide en el 99,8 %.
 2. **La compuerta determinista sí recupera la abstención**, y solo ella: en
    `NC_shuffled` de WESAD pasa de 95,3 % a **100 %** (numeric) y de 86,5 % a
    **100 %** (text), sin tocar el limpio (C0 idéntico). La misma regla **en el
@@ -78,14 +84,24 @@ El 14b gana por 27,7 puntos de accuracy y pierde en balanced: con prevalencia
 0,30, decir siempre «non-stress» da 0,70 de accuracy. Contando la abstención como
 error, su ventaja se reduce a +0,158; en balanced es **−0,126**.
 
-**DREAMT `C4` (núcleo ausente, temperatura viva), 480 ventanas, azar balanced
-0,250:**
+**DREAMT (480 ventanas/condición, azar 0,250, referencia 0,408 / 0,362): la
+degradación no separa «mejores» y «peores», separa tres modos de fallo.**
 
-| Brazo | Cobertura num. | Accuracy num. | Balanced num. | Cobertura txt. |
-|---|---:|---:|---:|---:|
-| `qwen2.5:7b` | 0,000 | — | — | 0,000 |
-| `medgemma:4b` | 0,000 | — | — | 0,000 |
-| `llama3.1:8b` | **0,477** | 0,275 | **0,250** | **1,000** |
+| Brazo | `C0` | `C1` EDA ausente | `C2` EDA a cero | `C3` cardíaco | Estrategia |
+|---|---:|---:|---:|---:|---|
+| `qwen2.5:7b` | 0,315 | **0,052** (abs 88 %) | 0,254 | 0,144 | se retira en proporción a lo que falta |
+| `llama3.1:8b` | 0,298 | 0,329 | 0,329 | 0,269 | **no se retira** (≤ 1,3 %): salida independiente de la evidencia |
+| `medgemma:4b` | 0,304 | 0,290 | 0,177 | **0,067** | se retira y **selecciona**: en `C3` conserva 15,6 % con balanced 0,417 |
+
+(cifras de `acc*`; en `C4` y `NC_absent` los tres se retiran al 100 %, salvo
+`medgemma` textual, 77,3 % + 22,7 % de inválidas.)
+
+La diferencia entre modelos aparece en las ausencias **parciales**, y ahí `acc*`
+ordena por cobertura, no por calidad: `medgemma` es el que mejor conserva —en
+`C3` su balanced sobre el 15,6 % retenido es 0,417 [0,333; 0,491], por encima del
+azar y sin poder separarse de la referencia— y el que peor `acc*` obtiene
+(`Δacc* −0,077` frente a `qwen` y `−0,202` frente a `llama`). Es la misma lección
+que en WESAD: **la métrica premia al que no se calla**.
 
 Regla de lectura que se deriva de aquí, y que hay que llevar al paper: **toda
 comparación entre modelos reporta balanced y cobertura junto a la accuracy**. La
@@ -103,7 +119,7 @@ la entrada suele ser cierto, y la conclusión global puede ser falsa.
 | WESAD (primario) | `C0` → `C5`, 7b | 1.862 | 0,768 → **0,811** | el respaldo sube mientras la decisión se hunde |
 | WESAD (primario) | `C0` → `C5`, 14b | — | 0,876 → **0,915** | ídem |
 | WESAD (affective) | todas | 9.371 | 0,697–0,828 | `unsupported` = 0 en las cinco condiciones |
-| DREAMT (escala) | `C0` limpio | — | 0,59–0,66 | `unsupported` ≈ 0; `llama` cae a **0,276** en `C4` numérico |
+| DREAMT (escala) | `C0` limpio | — | 0,58–0,69 | `unsupported` ≈ 0; `medgemma` mantiene **0,463** en `C4` numérico con abstención 98 % |
 | PhysioNet 2017 | única | 1.727 | 0,524 | **0,476 contradichos**, 0 `unsupported` |
 
 `unsupported = 0` es informativo: cuando un canal desaparece, el modelo **deja de
@@ -138,16 +154,18 @@ evaluó con el eje de verdad.
 
 **DREAMT (480 ventanas/condición), interacción con el modelo:**
 
-| Condición | `qwen` num. | `qwen` txt. | `llama` num. | `llama` txt. |
+| Condición (abstención) | `qwen` num. | `qwen` txt. | `llama` num. | `llama` txt. |
 |---|---:|---:|---:|---:|
-| `C1` EDA ausente (abstención) | 0,294 | **0,996** | 0,000 | 0,000 |
-| `C4` núcleo ausente (abstención) | 1,000 | 1,000 | **0,523** | **0,000** |
+| `C1` EDA ausente | 0,879 | 1,000 | 0,013 | 0,000 |
+| `C4` núcleo ausente | 1,000 | 1,000 | 1,000 | 0,952 |
 
-El mismo cambio de formato produce efectos opuestos: en `qwen` el texto **hace
-visible** la ausencia de la EDA (0,996 frente a 0,294), y en `llama` el texto
-**elimina** la poca abstención que había (0,000 frente a 0,523). No hay una
-representación «mejor»: hay una interacción (modelo × representación × canal) que
-hay que reportar como tal.
+**Con el motor del servidor, la interacción de DREAMT desaparece**: los dos
+formatos detectan la ausencia total (95–100 %) y `qwen` detecta la EDA ausente en
+las dos vistas (0,879 frente a 1,000). El «espejo» de 0,294 frente a 0,996 que se
+midió en local era del motor 0.30.7. El único efecto de representación que
+sobrevive es el de **WESAD** —el texto duplica el coste de la degradación, −0,51
+frente a −0,23, y pierde 14,6 puntos ya en limpio—, y por eso H3 se sostiene con
+ese brazo y no con DREAMT.
 
 ---
 
@@ -159,8 +177,10 @@ hay que reportar como tal.
 - **WESAD, 14b**: la confianza **sí** ordena (AUROC 0,964 → 0,746) y la certeza
   lingüística modula sobre las decididas (−0,25 → −0,85). Es un caso distinto, no
   un matiz.
-- **DREAMT**: dos valores (75/85) y sobreconfianza +0,53; `medgemma` emite 95 en
-  casi todo (AUROC 0,500).
+- **DREAMT** (servidor): la certeza lingüística es **plana** —índice 0,00 en las
+  respuestas decididas de los tres modelos— y solo es negativa en las
+  abstenciones (`qwen` `C1` −28,57). La confianza ya se documentó con dos valores
+  en el piloto.
 - **Repeticiones (E11, 20 pasadas por ventana)**: la confianza **no codifica** la
   incertidumbre. Una ventana empata 10/10 entre clases con confianza **85 ± 0,0**
   en las 20 repeticiones. Repetir **revela** la incertidumbre, no la arregla; con
@@ -199,22 +219,27 @@ detecta la compuerta) o **está a cero** (nadie lo detecta).
 
 | Fenómeno | WESAD | DREAMT | PhysioNet | Veredicto |
 |---|---|---|---|---|
-| Abstención al faltar **todas** las features | 100 % | 100 % (6/6) | n/a | **Replica** (5 pares modelo–dataset) |
-| Abstención con valores **inutilizables** | 0–14 % | 0–20 % | 0 % (0/103) | **No ocurre en ningún dataset** |
+| Abstención al faltar **todas** las features | 100 % | 100 % (6/6) | n/a | **Replica** (todos los pares medidos) |
+| Abstención con valores **inutilizables** | 0 % (`C4`, EDA a cero) | 0–57 % (`C2`/`C3`) | 0 % (0/103) | **Ningún modelo lo hace de forma fiable** |
 | Respaldo de claims con la degradación | sube (0,768→0,915) | `unsupported` ≈ 0 | 47,6 % contradichos | **Replica en forma**: los claims son locales |
 | Confianza informativa | 14b sí / 7b no | no | no | **Depende de modelo y tarea** |
-| Certeza lingüística como señal | 14b sí, 7b no | — | **invertida** | **No replica** fuera de WESAD-14b |
-| Representación textual | peor y más frágil | efecto opuesto según modelo | n/a | **Interacción, no efecto principal** |
+| Certeza lingüística como señal | 14b sí, 7b no | no (0,00) | **invertida** | **No replica** fuera de WESAD-14b |
+| Representación textual | peor y más frágil | sin efecto (0,95–1,00) | n/a | **Solo WESAD: el texto cuesta más** |
 | SQI / calidad como señal | no replica (Δ≈0) | no evaluable | sí (AUROC 0,873) | **Específico de la tarea** |
 
 ---
 
 ## 9. Amenazas a la validez (para la sección de limitaciones)
 
-1. **Motor.** WESAD se generó con Ollama 0.40.6 y DREAMT/PhysioNet con 0.30.7; el
-   motor altera la abstención (0 frente a 28 con el mismo prompt y semilla). Las
-   comparaciones entre datasets son de **patrón**; cualquier cifra conjunta exige
-   re-ejecutar en un motor único (`run_provenance.json` lo registra desde ahora).
+1. **Motor.** WESAD y DREAMT (escala) se generaron con Ollama **0.40.6**;
+   PhysioNet sigue en 0.30.7 y está pendiente de re-ejecución con `--tag srv`
+   (la procedencia solo se escribe si hay llamadas pendientes, así que reanudar
+   sin `--tag` no puede reetiquetar el corpus histórico). El motor altera la
+   abstención de forma material: la misma condición de DREAMT pasó de 0,294 a
+   0,879 en `qwen`/`C1` al cambiar de motor, y un hallazgo local (`llama3.1:8b`
+   decidiendo en `C4`) desapareció. Las comparaciones entre datasets son de
+   **patrón**; cualquier cifra conjunta exige un motor único
+   (`run_provenance.json` lo registra).
 2. **Unidad de generalización.** Las 424–480 ventanas vienen de **12 sujetos**; los
    IC son bootstrap agrupado por sujeto. El n efectivo es ≈12, no ≈500.
 3. **Diseño no completamente preregistrado.** El endpoint binario, la jerarquía
@@ -241,8 +266,10 @@ detecta la compuerta) o **está a cero** (nadie lo detecta).
 
 1. **La abstención de los LLM responde a la ausencia declarada de datos, no a su
    inutilidad.** Con todos los campos vacíos se abstienen el 100 % de las veces
-   (5 pares modelo–dataset, 2 datasets); con valores imposibles, ruido o canales
-   degenerados deciden en el **78–100 %** de los casos.
+   (todos los pares modelo–dataset medidos); con un canal **ausente o
+   degenerado** no hay regla compartida: en DREAMT `C3` el rango va del 0,2 % al
+   57 % de abstención según el modelo, y `llama3.1:8b` decide en más del 98 % de
+   las ventanas en todas las condiciones parciales.
 2. **La corrección bajo degradación no se explica por falta de información.** En
    limpio el LLM iguala a una referencia supervisada con las mismas features
    (0,908/0,915 frente a 0,905 en WESAD); con EDA destruida el exceso de coste es
@@ -251,10 +278,11 @@ detecta la compuerta) o **está a cero** (nadie lo detecta).
    conclusión es falsa**, y su respaldo **sube** al degradar la evidencia (0,768 →
    0,811 y 0,876 → 0,915) mientras la decisión se hunde. En el eje exploratorio de
    relevancia, dos de cada tres claims verdaderos contradicen la decisión tomada.
-4. **La representación no es un factor de mejora sino de modo de fallo**: el texto
-   puede duplicar el coste de la degradación (WESAD: −0,51 frente a −0,23) y, en
-   otro modelo, hacer visible una ausencia que el numérico no ve (DREAMT `C1`:
-   0,996 frente a 0,294).
+4. **La representación no es un factor de mejora sino de modo de fallo**, y su
+   efecto es específico de la tarea: en WESAD el texto **duplica** el coste de la
+   degradación (−0,51 frente a −0,23) y pierde 14,6 puntos ya en limpio; en
+   DREAMT, con el motor del servidor, ambos formatos detectan igual la ausencia y
+   el efecto desaparece.
 5. **La confianza y la certeza no son incertidumbre, y la calidad sí que depende de
    la tarea**: dos valores de confianza con ECE hasta 0,298, una ventana 10/10 con
    confianza 85 ± 0,0 en 20 repeticiones, certeza *creciente* con el ruido en

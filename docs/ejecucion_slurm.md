@@ -46,9 +46,15 @@ con `sbatch --export=ALL,ACL2027_PROJECT=...`) o con la variable de entorno
 `ACL2027_PROJECT` al usar `sbatch` directamente:
 
 ```bash
-ACL2027_PROJECT=~/data/proyectos/ACL2027 \
-  sbatch ~/data/run_ACL.sh --proc INGEST --subject WESAD
+ACL2027_PROJECT=~/data/proyectos/ACL2027 sbatch ~/data/run_ACL.sh --proc INGEST --subject WESAD
 ```
+
+> **Los ejemplos de este documento van en una sola línea a propósito.** Si se
+> parte un comando con `\` y al pegar queda un espacio detrás de la barra, el
+> `\` escapa el espacio en lugar del salto de línea: la primera parte se ejecuta
+> truncada y el resto se interpreta como comandos sueltos
+> (`--chdir=...: No such file or directory`). Vale también para los `--` del
+> lanzador: si el `\` falla, el trabajo se queda sin argumentos.
 
 ## 1. Lanzador `launch_lsi.sh`
 
@@ -66,12 +72,10 @@ siempre detrás de `--`. El comando dice exactamente qué se lanza.
 ~/data/launch_lsi.sh --proc run_ACL.sh --interval 15 -- --proc INGEST --subject WESAD
 
 # respuestas del LLM (12 h: el barrido completo supera las 4 h del script)
-~/data/launch_lsi.sh --proc run_ACL.sh --time 12:00:00 -- \
-    --proc GENERATE --experiment degradation --subject WESAD
+~/data/launch_lsi.sh --proc run_ACL.sh --time 12:00:00 -- --proc GENERATE --experiment degradation --subject WESAD
 
 # empezar de cero
-~/data/launch_lsi.sh --proc run_ACL.sh -- \
-    --proc INGEST --subject WESAD --fresh --yes
+~/data/launch_lsi.sh --proc run_ACL.sh -- --proc INGEST --subject WESAD --fresh --yes
 
 # otro script (p. ej. SLIP)
 ~/data/launch_lsi.sh --proc ~/data/run_slip_gpu.sh --interval 15
@@ -172,6 +176,59 @@ El arranque es **el mismo que ya funcionaba en el servidor** (`run_slip_gpu.sh`)
    Al salir se cierran los hijos (`pkill -P`) y el servidor, con traps
    `EXIT/INT/TERM/HUP`, de modo que `scancel` también limpia.
 
+### Ollama: dónde están los modelos y cómo añadirlos
+
+El store **no** es `~/.ollama/models`. `run_ACL.sh` exporta
+`OLLAMA_MODELS="${OLLAMA_MODELS:-$HOME/data/.ollama/models}"`, así que los
+modelos viven en `~/data/.ollama/models` y ese es el directorio que hay que
+mirar (y el que comparten todos los trabajos, porque está en `$HOME`).
+
+```bash
+# inventario sin necesidad de que Ollama esté corriendo
+for d in ~/data/.ollama/models/manifests/registry.ollama.ai/library/*; do
+  for t in "$d"/*; do printf '%s:%s\n' "$(basename "$d")" "$(basename "$t")"; done
+done
+du -sh ~/data/.ollama/models
+```
+
+**Consulta el inventario antes de hacer un `pull`.** Un `pull` puede fallar por
+DNS (`dial tcp: lookup registry.ollama.ai: i/o timeout`) aunque el modelo **ya
+esté instalado**; en ese caso el fallo no significa nada. Solo hay que descargar
+lo que no aparezca en la lista de arriba.
+
+Para añadir uno, el `pull` va **donde haya red** (los nodos de cálculo y a veces
+el propio login dan `no resuelve DNS`). En `sirius` el binario no está en el
+`PATH` del shell: lo añade el propio trabajo (`run_ACL.sh`), así que la receta
+incluye los tres `export` para que el pull escriba en el store compartido.
+
+```bash
+export PATH="$HOME/data/.local/bin:$PATH"
+export LD_LIBRARY_PATH="$HOME/data/.local/lib/ollama:${LD_LIBRARY_PATH:-}"
+export OLLAMA_MODELS="$HOME/data/.ollama/models"
+mkdir -p "$OLLAMA_MODELS" ~/data/logs
+
+command -v ollama && ollama --version     # ~/data/.local/bin/ollama, cliente 0.40.6
+
+ollama serve > ~/data/logs/ollama_pull.log 2>&1 &
+sleep 5
+ollama pull <modelo:tag>                  # solo si NO aparece en el inventario
+ollama list                               # antes del kill: necesita el serve vivo
+kill %1
+```
+
+Sin `OLLAMA_MODELS` exportado, la descarga cae en `~/.ollama/models` (otro
+store) y el trabajo no la ve. La sugerencia de `snap install ollama` que imprime
+el shell no sirve: requiere administrador y crearía una instalación distinta.
+
+Si el modelo no está, `GENERATE` aborta al empezar con el `ollama pull` en el
+mensaje; no se escriben `timeout` que luego se reutilizarían al reanudar.
+
+**Inventario del store (2026-11-26)**: `qwen2.5:7b` (4,7 GB), `qwen3:8b`
+(5,2 GB), `qwen3:14b` (9,3 GB), `llama3.1:8b` (4,9 GB), `llama3.2:3b` (2,0 GB),
+`medgemma:4b` (3,3 GB) y `mxbai-embed-large` (0,7 GB). Es decir, los cuatro
+brazos de WESAD y los tres de DREAMT se pueden ejecutar sin descargar nada; el
+cliente de Ollama del servidor es **0.40.6** (motor de los resultados citables).
+
 ### Ollama: cuándo es obligatorio
 
 | Fase | ¿Necesita Ollama? | Si no arranca |
@@ -215,27 +272,59 @@ sbatch ~/data/run_ACL.sh --proc EVALUATE --experiment degradation --subject WESA
 recalcula. Sin él, `INGEST` reutiliza en segundos lo que no ha cambiado
 (ver [`ingestion.md`](ingestion.md#empezar-de-cero)).
 
-`EVALUATE` no usa GPU ni Ollama (solo lee artefactos), así que puede ejecutarse
-**en el nodo de login** sin cola. Para el comparador, el comando corto es:
+### `--subject` es obligatorio también con los datasets externos
+
+`run_ACL.sh` exige `--subject` (código 2 sin él) porque es el destino por
+defecto en `results/output/{subject}/`. Los runners externos **no lo usan**
+—escriben en una ruta fija bajo `results/output/`—, pero el argumento hay que
+pasarlo igualmente. Valor recomendado, el mismo que su carpeta de salida:
+
+| Experimento | `--subject` | Salida |
+|---|---|---|
+| WESAD (cualquier experimento) | `WESAD` | `results/output/WESAD/` |
+| `--experiment dreamt` | `DREAMT` | `results/output/DREAMT/PHASE2/{pilot,scale}/` |
+| `--experiment physionet` | `PHYSIONET2017` | `results/output/PHYSIONET2017/P3/` |
+| `--experiment kemocon` | `KEMOCON` | `results/output/KEMOCON/P3/` |
 
 ```bash
+# DREAMT, cohorte de escala (5.760 llamadas por modelo; reanudable)
+sbatch ~/data/run_ACL.sh --proc GENERATE --experiment dreamt --subject DREAMT --cohort scale --windows-per-class 10 --model qwen2.5:7b
+
+# PhysioNet 2017 (400 llamadas)
+sbatch ~/data/run_ACL.sh --proc GENERATE --experiment physionet --subject PHYSIONET2017
+```
+
+Sin `--subject`, el trabajo muere en el preflight con `[ERROR] falta --subject`
+y `ExitCode: 2:0`: es correcto, no un fallo del entorno.
+
+`EVALUATE` no usa GPU ni Ollama (solo lee artefactos) y tarda minutos, pero **no
+puede correrse en el nodo de login**: importa numpy y `sirius` aborta con
+`Illegal instruction` (ver §5). Va en un nodo de cálculo, sin cola larga:
+
+```bash
+srun --partition=A5000 --gres=gpu:1 --cpus-per-task=4 --mem=8G --time=00:15:00 --pty bash
+cd ~/data/proyectos/ACL2027 && source .venv/bin/activate
 python scripts/compare_models.py --models qwen2.5:7b,qwen3:14b
 ```
 
 ### Qué se lanza con Slurm y qué se corre en la terminal
 
 Regla: **en el servidor, por defecto se lanza con `~/data/launch_lsi.sh`**.
-Solo se ejecuta a mano en la terminal SSH lo que es pequeño (sin GPU, sin
-Ollama, minutos) y no compite por la partición. El nodo de login es compartido.
+En la terminal SSH (`sirius`) solo se ejecuta lo que **no importa Python del
+proyecto** y tarda segundos. Todo lo que importe numpy —y eso incluye
+`--dry-run`, `scripts/analyze_*.py`, `scripts/compare_models.py` y
+`main.py --proc EVALUATE`— va a un nodo de cálculo con `srun --pty` (corto) o
+con el lanzador (largo). El nodo de login es compartido: nada largo ni
+intensivo allí.
 
 | Tarea | Cómo |
 |---|---|
 | `INGEST`, `GENERATE` (cualquier experimento) | lanzador (Slurm) |
 | `GENERATE --think`, barridos de degradación, pilotos con LLM | lanzador (Slurm) |
-| `EVALUATE` largo (p. ej. `physionet` con 8.5k registros) | lanzador (Slurm) |
-| `--dry-run` de cualquier fase | terminal SSH |
-| `scripts/compare_models.py`, `scripts/analyze_*.py` | terminal SSH (minutos, solo leen) |
-| `bash -n`, `ls`, `grep`, inspección de artefactos | terminal SSH |
+| `EVALUATE` (cualquier experimento, también los análisis) | `srun --pty` (minutos) o lanzador (horas) |
+| `--dry-run` de cualquier fase | `srun --pty` |
+| `scripts/compare_models.py`, `scripts/analyze_*.py` | `srun --pty` |
+| `bash -n`, `ls`, `grep`, `du`, `sha256sum -c`, `rsync`/`scp` | terminal SSH |
 
 ---
 
@@ -266,8 +355,10 @@ de enviar el trabajo.
 | `bind: address already in use` | quedó un Ollama de un job anterior | el script lo detecta y lo reutiliza; si es de otro usuario, `scancel` el job o espera |
 | Lanzas `ollama serve` a mano y el job "se arregla" | el manual ocupa el puerto; el del job falla al bindear | no lances uno en paralelo: espera los 2 min del script |
 | El job muere a las 4 h en mitad de un barrido | el `#SBATCH --time` del script es de 4 h y 2.835 llamadas rondan las 5 | `--time 12:00:00`; el barrido reanuda por `(ventana, condición)` |
+| `Illegal instruction (core dumped)` al importar numpy en el nodo de login | la CPU de `sirius` no soporta las instrucciones del wheel (el mismo `.venv` funciona en los nodos de cálculo) | no es el entorno: ejecuta desde `srun --pty` (o con el lanzador); en el login solo shell puro |
+| `ls ~/.ollama/models` sale vacío pero los modelos existen | el store del trabajo es **`$HOME/data/.ollama/models`** (`OLLAMA_MODELS` en `run_ACL.sh`), no `~/.ollama` | lista con `ls ~/data/.ollama/models/manifests/registry.ollama.ai/library/*/` (y evita `2>/dev/null`, que oculta el «No such file») |
 | `main.py: error: unrecognized arguments: --` (código 2) | se coló un `--` **entre** los argumentos de la fase al copiar el comando; el separador va una sola vez, antes de la fase | desde 2026-11-13 `main.py` lo ignora con aviso y el lanzador avisa antes de enviar; aun así, revisa el comando |
-| El job termina en segundos y el log parece vacío | falta `config.json` o el dataset | `python main.py ... --dry-run` y revisa `paths` y `warnings` |
+| El job termina en segundos y el log parece vacío | falta `config.json` o el dataset | `python main.py ... --dry-run` en un nodo de cálculo (no en `sirius`) y revisa `paths` y `warnings` |
 | `Job completado` pero sin resultados | el pipeline devolvió error y el wrapper no lo miraba | ahora `run_ACL.sh` propaga el código y Slurm marca `FAILED` |
 | Un modelo de ~27-32B va a 2-5 tok/s y `ollama ps` dice *CPU/GPU split* | 17-20 GB de pesos **más** la caché KV de 32k tokens no caben en 24 GB | baja `defaults.llm.num_ctx` en `config.json` (los prompts rondan 1.000 tokens: 8192 sobra) y **restáuralo** después; el valor queda en `run_provenance.json`, así que la desviación es auditable |
 

@@ -762,7 +762,16 @@ de la representación** (25,0 % vs 98,8 %).
 
 ---
 
-## 19. Tres modelos: `medgemma:4b` y `llama3.1:8b` (ejecutado 2026-11-23/24)
+## 19. Tres modelos: `medgemma:4b` y `llama3.1:8b` (local, Ollama 0.30.7 — solo desarrollo)
+
+> **Aviso de procedencia.** Toda esta sección se ejecutó en **local con Ollama
+> 0.30.7**. El motor forma parte del experimento: la re-ejecución en el servidor
+> (0.40.6) con la cohorte de 12 sujetos cambia el **nivel** de abstención en las
+> condiciones parciales y **elimina** el atajo de la temperatura de `llama3.1:8b`
+> en `C4`. Las cifras citables son las de
+> [`escala_dreamt.md`](escala_dreamt.md) §7; esta sección se conserva como
+> registro de desarrollo y de las correcciones de medición que se descubrieron
+> aquí (§19.2).
 
 El piloto de §18 se hizo con un solo modelo. Si todo el resultado dependiera de
 `qwen2.5:7b`, un revisor podría atribuir el mecanismo a ese modelo y no a la
@@ -875,7 +884,15 @@ se abstienen el **100 %** de las veces. Cobertura 0, cero claims.
 
 El resultado de dos modelos que se adelantó en la primera versión de esta
 sección —«con el núcleo ausente (`C4`) también es 100 %»— **no se sostiene con
-el tercero**: `llama3.1:8b` decide en `C4` usando la única señal que queda.
+el tercero** en el motor 0.30.7: `llama3.1:8b` decide en `C4` usando la única
+señal que queda.
+
+> **Corrección (servidor, 0.40.6).** Con el motor del servidor `llama3.1:8b`
+> **también se retira** en `C4`: abstención 1,000 en numérico y 0,952 en texto.
+> El atajo de la temperatura era del motor, no del modelo. `C4` deja de depender
+> del modelo y pasa a ser parte del invariante compartido junto con
+> `NC_absent`; lo que discrimina entre modelos es la **ausencia parcial**
+> (`C1`/`C2`/`C3`). Ver [`escala_dreamt.md`](escala_dreamt.md) §7.4 y §7.6.
 
 | `C4` (EDA + cardíaco + ACC a `NaN`, temperatura intacta) | numérico | texto |
 |---|---:|---:|
@@ -911,6 +928,10 @@ como evidencia. **Conclusión: la detección de ausencia es una propiedad del pa
 (modelo, canal, representación), y el único umbral compartido es «no hay
 ninguna feature».** H4 no se puede enunciar como «el LLM se abstiene cuando
 falta evidencia» sin especificar qué evidencia, qué formato y qué modelo.
+
+La re-ejecución en el servidor conserva el fondo y lo precisa: los umbrales
+compartidos son **dos** condiciones (`C4` y `NC_absent`) y lo que depende del
+par son las ausencias **parciales**.
 
 ### 19.6. Claims: verdad, coherencia y una excepción
 
@@ -971,7 +992,10 @@ Respaldo (media por sujeto) y coherencia con la decisión:
    precisión.
 2. **No es un ranking de modelos**: 4,3 B, 7 B y 8 B, familias distintas.
 3. **Motor**: los seis brazos se ejecutaron con **Ollama 0.30.7 local**. Sirven
-   para compararse entre sí; no se mezclan con el corpus de WESAD (0.40.6).
+   para compararse entre sí; no se mezclan con el corpus de WESAD (0.40.6). La
+   cohorte de escala se re-ejecutó en el servidor (0.40.6) y es la que se cita;
+   el contraste entre motores está en `escala_dreamt.md` §7.6 y muestra que el
+   nivel de abstención **no** es transportable entre motores.
 4. **Claims de `medgemma` sobre registros válidos** (86–91 %): las 111 inválidas
    aportan decisión, no claims.
 5. **El vocabulario del verificador creció en esta sesión** (§19.2). El reparto
@@ -1010,9 +1034,21 @@ clase y sujeto, las mismas 6 condiciones y las dos vistas → 5.760 llamadas por
 modelo, con intervalos bootstrap **sobre sujetos**.
 
 Las cifras del piloto (§18–§19) **no se reescriben** con la escala: son dos
-corpus con `n` distinto por sujeto y no se fusionan. Los resultados de la escala
-se publican en [`escala_dreamt.md`](escala_dreamt.md) §7 (los tres modelos,
-17.280 respuestas). En una línea: la abstención es **del par (modelo, canal,
-vista)** con `NC_absent` como único invariante (100 % en 6/6 brazos), el atajo
-de la temperatura en `C4` es de `llama3.1:8b` (balanced 0,250 = azar), y ningún
-brazo se acerca a la referencia de 0,408 de accuracy.
+corpus con `n` distinto por sujeto y no se fusionan. La escala se ejecutó en el
+**servidor** (Ollama 0.40.6) y es la que se cita: 17.280 respuestas (3 modelos ×
+5.760). Los resultados completos, con intervalos, están en
+[`escala_dreamt.md`](escala_dreamt.md) §7. En una línea:
+
+1. **Invariante compartido**: solo «nada disponible» (`C4` y `NC_absent`), 100 %
+   de abstención en los seis brazos.
+2. **Tres modos de fallo distintos** bajo la misma degradación: `qwen2.5:7b` se
+   retira en proporción a lo que falta (y pierde toda la utilidad en `C1`),
+   `llama3.1:8b` **no se retira nunca** y queda al nivel del azar en todas las
+   condiciones, y `medgemma:4b` **selecciona**: se retira sobre todo en `C3` y
+   conserva la mejor corrección sobre lo que decide (balanced 0,417
+   [0,333; 0,491] con cobertura 0,156).
+3. **Ningún brazo se acerca a la referencia** (0,408 / 0,362) en limpio: `acc*`
+   0,315 / 0,298 / 0,304, y `rem` sigue con recall ≈ 0 en los tres.
+4. **El atajo de la temperatura no replica**: con el motor del servidor
+   `llama3.1:8b` se abstiene 1,000 / 0,952 en `C4`. Era un artefacto del 0.30.7
+   local, y por eso las cifras de esta sección no se citan.

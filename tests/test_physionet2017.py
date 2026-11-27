@@ -156,3 +156,146 @@ def test_run_llm_aborts_when_model_is_not_available(tmp_path, monkeypatch):
     # No se escribe ni una respuesta: no se cachean timeouts.
     assert not list(tmp_path.glob("*.responses.jsonl"))
     assert not (tmp_path / "run_provenance.json").exists()
+
+
+def test_run_llm_does_not_relabel_provenance_when_nothing_pending(tmp_path, monkeypatch):
+    """Reanudar sin llamadas no puede etiquetar con el motor actual.
+
+    El corpus local de PhysioNet se generó con Ollama 0.30.7; al copiarlo al
+    servidor (0.40.6), una reanudación sin `--tag` reescribía la procedencia y
+    afirmaba un motor que no lo produjo (mismo riesgo que se corrigió en el
+    barrido de degradación).
+    """
+    from scripts import run_p3_physionet as pn
+
+    record = _one_record()
+    (tmp_path / "physionet2017.responses.jsonl").write_text(
+        json.dumps({"record_id": record.record_id, "status": "valid_response"}) + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "run_provenance.json").write_text(
+        json.dumps({"ollama_version": "0.30.7", "model": "qwen2.5:7b"}),
+        encoding="utf-8",
+    )
+
+    calls: list[str] = []
+    monkeypatch.setattr(pn, "check_model_available", lambda m: calls.append(m) or True)
+    monkeypatch.setattr(
+        pn, "ollama_run_provenance", lambda m: pytest.fail("no debe consultarse")
+    )
+    monkeypatch.setattr(pn, "_call_ollama_chat", lambda *a, **k: pytest.fail("sin LLM"))
+
+    centers = {name: 0.0 for name in CANONICAL_FEATURES}
+    scales = {name: 1.0 for name in CANONICAL_FEATURES}
+    responses = pn.run_llm(
+        [record],
+        output_dir=tmp_path,
+        centers=centers,
+        scales=scales,
+        model="qwen2.5:7b",
+        temperature=0.0,
+        seed=42,
+        max_records=None,
+    )
+
+    assert len(responses) == 1
+    assert calls == []  # ni se comprueba el modelo: no hay nada que generar
+    prov = json.loads((tmp_path / "run_provenance.json").read_text(encoding="utf-8"))
+    assert prov["ollama_version"] == "0.30.7"
+
+
+def test_run_llm_warns_when_engine_changes_mid_corpus(tmp_path, monkeypatch, capsys):
+    """Con llamadas pendientes y otro motor registrado, avisa antes de mezclar."""
+    from scripts import run_p3_physionet as pn
+
+    (tmp_path / "physionet2017.responses.jsonl").write_text(
+        json.dumps({"record_id": "B99999", "status": "valid_response"}) + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "run_provenance.json").write_text(
+        json.dumps({"ollama_version": "0.30.7"}), encoding="utf-8"
+    )
+
+    monkeypatch.setattr(pn, "check_model_available", lambda _model: True)
+    monkeypatch.setattr(
+        pn,
+        "ollama_run_provenance",
+        lambda model: {"model": model, "ollama_version": "0.40.6"},
+    )
+    monkeypatch.setattr(
+        pn,
+        "_call_ollama_chat",
+        lambda *a, **k: (_VALID_RHYTHM_OUTPUT, {"model": "qwen2.5:7b"}),
+    )
+
+    centers = {name: 0.0 for name in CANONICAL_FEATURES}
+    scales = {name: 1.0 for name in CANONICAL_FEATURES}
+    pn.run_llm(
+        [_one_record()],
+        output_dir=tmp_path,
+        centers=centers,
+        scales=scales,
+        model="qwen2.5:7b",
+        temperature=0.0,
+        seed=42,
+        max_records=None,
+    )
+
+    out = capsys.readouterr().out
+    assert "AVISO" in out and "0.30.7" in out and "0.40.6" in out
+    prov = json.loads((tmp_path / "run_provenance.json").read_text(encoding="utf-8"))
+    assert prov["ollama_version"] == "0.40.6"
+
+
+# ---------------------------------------------------------------------------
+# Análisis de una corrida con --tag (re-ejecución en el servidor)
+# ---------------------------------------------------------------------------
+
+
+def test_analysis_run_paths_selects_tagged_files(tmp_path):
+    from scripts import analyze_p3_physionet as an
+
+    historical = an.run_paths(tmp_path)
+    assert historical["responses"].name == "physionet2017.responses.jsonl"
+    assert historical["labels"].name == "physionet2017.labels.jsonl"
+    assert historical["summary"].name == "physionet2017_summary.json"
+    assert historical["provenance"].name == "run_provenance.json"
+
+    tagged = an.run_paths(tmp_path, "srv")
+    assert tagged["responses"].name == "physionet2017_srv.responses.jsonl"
+    assert tagged["labels"].name == "physionet2017_srv.labels.jsonl"
+    assert tagged["summary"].name == "physionet2017_srv_summary.json"
+    assert tagged["provenance"].name == "run_provenance_srv.json"
+
+
+def test_development_labels_rebuilds_split_from_cache(tmp_path):
+    """Sin el fichero de la ablación, el split se reconstruye igual (CRC32)."""
+    from scripts import analyze_p3_physionet as an
+
+    labels = {
+        **{f"N{i:03d}": "normal" for i in range(40)},
+        **{f"A{i:03d}": "af" for i in range(40)},
+        **{f"O{i:03d}": "other-rhythm" for i in range(40)},
+        **{f"X{i:03d}": "noisy" for i in range(40)},
+    }
+    cache = {rid: {"label": label} for rid, label in labels.items()}
+
+    dev = an.development_labels(tmp_path, cache)
+    selected = select_records(labels, per_class=150, seed=42)
+    expected_dev, _ = split_records(selected, dev_fraction=0.3)
+    assert set(dev) == set(expected_dev)
+    assert all(dev[rid] == labels[rid] for rid in dev)
+
+    # Si existe el fichero histórico, manda él.
+    (tmp_path / "physionet2017_dev_nofs.labels.jsonl").write_text(
+        json.dumps({"record_id": "N000", "label": "normal"}) + "\n", encoding="utf-8"
+    )
+    assert an.development_labels(tmp_path, cache) == {"N000": "normal"}
+
+
+def test_few_shot_ablation_reports_missing_files(tmp_path):
+    from scripts import analyze_p3_physionet as an
+
+    result = an.few_shot_ablation(tmp_path, {"A00001": "normal"})
+    assert result["available"] is False
+    assert "physionet2017_dev_nofs" in result["missing"]

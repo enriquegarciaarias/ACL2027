@@ -271,6 +271,7 @@ def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
         _append_flag(argv, "--output", output)
     elif experiment == "physionet":
         _append_flag(argv, "--data-dir", external_data_dir("physionet"))
+        _append_flag(argv, "--tag", getattr(args, "tag", None))
         _append_flag(argv, "--output", output)
     elif experiment == "kemocon":
         # Sin LLM: referencia features-only y evaluación del piloto existente.
@@ -614,7 +615,9 @@ def _plan(phase: str) -> dict[str, Any]:
         "experiment": experiment,
         "paths": _paths_info(experiment, args),
         "subject": getattr(args, "subject", None),
-        "subjects": _subjects_for_plan(args),
+        # Los sujetos de WESAD no aplican a un dataset externo: mostrarlos aquí
+        # haría creer que el experimento se limita a esos doce.
+        "subjects": [] if experiment == "physionet" else _subjects_for_plan(args),
         "model": model,
         "representation": getattr(args, "representation", None),
         "conditions": getattr(args, "conditions", None) or None,
@@ -627,6 +630,7 @@ def _plan(phase: str) -> dict[str, Any]:
         "allow_engine_change": bool(getattr(args, "allow_engine_change", False)),
         "repetitions": max(int(getattr(args, "repetitions", None) or 1), 1),
         "sample_windows": getattr(args, "sample_windows", None),
+        "tag": getattr(args, "tag", None) or None,
     }
     if experiment == "dreamt":
         plan["windows_per_class"] = int(

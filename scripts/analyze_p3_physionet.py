@@ -38,12 +38,14 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sources.common.provenance import utc_now
+from sources.common.provenance import engine_from_provenance, utc_now
 from sources.external.physionet2017 import (
     CANONICAL_FEATURES,
     RHYTHM_CLASSES,
     RhythmRecord,
     population_reference,
+    select_records,
+    split_records,
     z_scores,
 )
 from sources.phase2.consistency import check_consistency, should_abstain
@@ -55,7 +57,6 @@ from sources.phase3.recovery import apply_recovery
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DIR = REPO_ROOT / "results" / "output" / "PHYSIONET2017" / "P3"
-DEFAULT_OUTPUT = DEFAULT_DIR / "physionet2017_analysis.json"
 
 VALID_STATUSES = ("valid_response", "valid_abstention")
 
@@ -89,6 +90,43 @@ def dedupe_responses(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
 def load_labels(path: Path) -> dict[str, str]:
     """``record_id -> etiqueta de experto``."""
     return {row["record_id"]: row["label"] for row in load_jsonl(path)}
+
+
+def run_paths(base_dir: Path, tag: str = "") -> dict[str, Path]:
+    """Rutas de una corrida; ``tag`` selecciona una ejecución alternativa.
+
+    El runner escribe ``physionet2017[_tag].responses.jsonl``,
+    ``physionet2017[_tag].labels.jsonl``, ``physionet2017[_tag]_summary.json`` y
+    ``run_provenance[_tag].json``. Sin ``--tag`` son los ficheros históricos.
+    """
+    suffix = f"_{tag}" if tag else ""
+    return {
+        "responses": base_dir / f"physionet2017{suffix}.responses.jsonl",
+        "labels": base_dir / f"physionet2017{suffix}.labels.jsonl",
+        "summary": base_dir / f"physionet2017{suffix}_summary.json",
+        "provenance": base_dir / f"run_provenance{suffix}.json",
+        "features": base_dir / "physionet2017.features.json",
+    }
+
+
+def development_labels(
+    base_dir: Path, cache: Mapping[str, Mapping[str, Any]]
+) -> dict[str, str]:
+    """Etiquetas del split de desarrollo (referencia y ablación few-shot).
+
+    Se prefiere el fichero de la ablación histórica. Si no está —por ejemplo en
+    el servidor solo se copió la corrida de evaluación— se reconstruye con el
+    mismo muestreo estratificado y el mismo CRC32 que el runner: el reparto
+    depende solo del conjunto de identificadores, así que es reproducible.
+    """
+    path = base_dir / "physionet2017_dev_nofs.labels.jsonl"
+    if path.is_file():
+        return load_labels(path)
+    labels_all = {rid: entry["label"] for rid, entry in cache.items()}
+    selected = select_records(labels_all, per_class=150, seed=42)
+    dev_ids, _ = split_records(selected, dev_fraction=0.3)
+    return {rid: labels_all[rid] for rid in dev_ids if rid in labels_all}
+
 
 
 def rhythm_records(
@@ -748,7 +786,10 @@ def few_shot_ablation(
 
     runs = {}
     for tag in ("dev_nofs", "dev_fs"):
-        rows = load_jsonl(base_dir / f"physionet2017_{tag}.responses.jsonl")
+        path = base_dir / f"physionet2017_{tag}.responses.jsonl"
+        if not path.is_file():
+            return {"available": False, "missing": path.name}
+        rows = load_jsonl(path)
         rows = [r for r in rows if r["record_id"] in labels]
         metrics = llm_metrics(rows, labels)
         metrics["claims"] = summarize_verdicts(
@@ -810,14 +851,15 @@ def few_shot_ablation(
 # ---------------------------------------------------------------------------
 # Orquestación
 # ---------------------------------------------------------------------------
-def analyze(base_dir: Path) -> dict[str, Any]:
+def analyze(base_dir: Path, tag: str = "") -> dict[str, Any]:
     """Ejecuta todos los bloques y devuelve el informe."""
-    labels_test = load_labels(base_dir / "physionet2017.labels.jsonl")
-    labels_dev = load_labels(base_dir / "physionet2017_dev_nofs.labels.jsonl")
-    cache = json.loads((base_dir / "physionet2017.features.json").read_text())
-    summary = json.loads((base_dir / "physionet2017_summary.json").read_text())
+    paths = run_paths(base_dir, tag)
+    cache = json.loads(paths["features"].read_text())
+    labels_test = load_labels(paths["labels"])
+    labels_dev = development_labels(base_dir, cache)
+    summary = json.loads(paths["summary"].read_text())
 
-    raw_rows = load_jsonl(base_dir / "physionet2017.responses.jsonl")
+    raw_rows = load_jsonl(paths["responses"])
     rows = dedupe_responses(raw_rows)
     dropped = [r["record_id"] for r in rows if r["record_id"] not in labels_test]
     rows = [r for r in rows if r["record_id"] in labels_test]
@@ -873,6 +915,8 @@ def analyze(base_dir: Path) -> dict[str, Any]:
         "task": "4-class rhythm (normal/af/other-rhythm/noisy)",
         "generated_at": utc_now(),
         "inputs": {
+            "tag": tag or None,
+            "engine": engine_from_provenance(paths["provenance"]),
             "n_response_lines": len(raw_rows),
             "n_unique_responses": len(dedupe_responses(raw_rows)),
             "dropped_unlabeled": dropped,
@@ -916,6 +960,11 @@ def print_report(report: Mapping[str, Any]) -> None:
     llm = report["llm"]
     reference = report["reference"]
     print("\n=== PhysioNet 2017 — análisis ===")
+    inputs = report["inputs"]
+    print(
+        f"Corrida: tag={inputs.get('tag') or 'histórica'} | motor="
+        f"Ollama {inputs.get('engine') or 'no registrado'}"
+    )
     print(
         f"Registros: {report['inputs']['n_test_labels']} test / "
         f"{report['inputs']['n_dev_labels']} desarrollo | "
@@ -1069,33 +1118,52 @@ def print_report(report: Mapping[str, Any]) -> None:
     )
 
     ablation = report["few_shot_ablation"]
-    print("\n-- Ablación few-shot (desarrollo, mismos registros) --")
-    for tag, key in (("sin few-shot", "no_few_shot"), ("con few-shot", "few_shot")):
-        block = ablation[key]
+    if ablation.get("available") is False:
         print(
-            f"  {tag:<14} acc={block['accuracy']:.3f} bal={block['balanced_accuracy']:.3f} "
-            f"decisiones={block['decisions']} inválidas={block['n_invalid']} "
-            f"claims resp={block['claims']['supported_rate']:.3f} "
-            f"certeza={block['certainty_index_mean']:+.2f}"
+            "\n-- Ablación few-shot: no disponible "
+            f"(falta {ablation['missing']}) --"
         )
-    paired = ablation["paired"]
-    print(
-        f"  acuerdo={paired['decision_agreement']:.3f} | "
-        f"solo acierta sin fs: {paired['correct_only_no_few_shot']} | "
-        f"solo acierta con fs: {paired['correct_only_few_shot']} | "
-        f"McNemar p={paired['mcnemar_exact_p']:.3f}"
-    )
+    else:
+        print("\n-- Ablación few-shot (desarrollo, mismos registros) --")
+        for tag, key in (("sin few-shot", "no_few_shot"), ("con few-shot", "few_shot")):
+            block = ablation[key]
+            print(
+                f"  {tag:<14} acc={block['accuracy']:.3f} bal={block['balanced_accuracy']:.3f} "
+                f"decisiones={block['decisions']} inválidas={block['n_invalid']} "
+                f"claims resp={block['claims']['supported_rate']:.3f} "
+                f"certeza={block['certainty_index_mean']:+.2f}"
+            )
+        paired = ablation["paired"]
+        print(
+            f"  acuerdo={paired['decision_agreement']:.3f} | "
+            f"solo acierta sin fs: {paired['correct_only_no_few_shot']} | "
+            f"solo acierta con fs: {paired['correct_only_few_shot']} | "
+            f"McNemar p={paired['mcnemar_exact_p']:.3f}"
+        )
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dir", default=str(DEFAULT_DIR), help="Directorio P3.")
-    parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="JSON de salida.")
+    parser.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "JSON de salida (por defecto physionet2017_analysis.json, o "
+            "physionet2017_analysis_<tag>.json con --tag)."
+        ),
+    )
+    parser.add_argument(
+        "--tag",
+        default="",
+        help="Sufijo de la corrida a analizar (physionet2017_<tag>.*).",
+    )
     args = parser.parse_args(argv)
 
     base_dir = Path(args.dir)
-    report = analyze(base_dir)
-    output = Path(args.output)
+    report = analyze(base_dir, tag=args.tag)
+    suffix = f"_{args.tag}" if args.tag else ""
+    output = Path(args.output) if args.output else base_dir / f"physionet2017_analysis{suffix}.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     print_report(report)

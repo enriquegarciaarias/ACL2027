@@ -59,7 +59,10 @@ fi
 
 if (( HAS_SUBJECT == 0 )); then
     echo "[ERROR] falta --subject (destino en results/output/{subject}/)."
-    echo "        para WESAD: --subject WESAD"
+    echo "        WESAD:      --subject WESAD"
+    echo "        DREAMT:     --subject DREAMT"
+    echo "        PhysioNet:  --subject PHYSIONET2017"
+    echo "        K-EmoCon:   --subject KEMOCON"
     echo "        recibido: $*"
     exit 2
 fi

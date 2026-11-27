@@ -185,6 +185,27 @@ def opaque_window_id(window_id: str) -> str:
     return "win_" + hashlib.sha256(window_id.encode()).hexdigest()[:8]
 
 
+def engine_from_provenance(path: Path) -> Optional[str]:
+    """Versión de Ollama registrada en un ``run_provenance*.json``.
+
+    Devuelve ``None`` si el fichero no existe, no es JSON válido o no trae
+    versión. Se usa para no reescribir una procedencia ajena: si un corpus se
+    generó con otro motor, etiquetarlo con el actual sería una falsificación de
+    la procedencia (pasó al copiar el corpus local 0.30.7 al servidor).
+    """
+    candidate = Path(path)
+    if not candidate.is_file():
+        return None
+    try:
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    version = payload.get("ollama_version")
+    return str(version) if version else None
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)

@@ -128,33 +128,31 @@ intervalos **sobre sujetos**, que es la unidad de generalización.
 
 ## 5. Ejecución
 
+La ejecución publicada (§7) se lanzó en el **servidor** con el lanzador y
+`--subject DREAMT`; los comandos de abajo son la versión local equivalente,
+válida para desarrollo. Reglas de nodo y de Ollama en
+[`ejecucion_slurm.md`](ejecucion_slurm.md).
+
 ```bash
 # 1) preparar (features de la noche, referencia intra-sujeto, prompts, P0)
-.venv/bin/python scripts/run_p4_dreamt.py --phase prepare \
-  --cohort scale --windows-per-class 10
+.venv/bin/python scripts/run_p4_dreamt.py --phase prepare --cohort scale --windows-per-class 10
 
 # 2) generar (reanudable por ventana × condición × representación)
-.venv/bin/python scripts/run_p4_dreamt.py --phase generate \
-  --cohort scale --windows-per-class 10 --representation both --model qwen2.5:7b
+.venv/bin/python scripts/run_p4_dreamt.py --phase generate --cohort scale --windows-per-class 10 --representation both --model qwen2.5:7b
 
 # 3) evaluar
-.venv/bin/python scripts/run_p4_dreamt.py --phase evaluate \
-  --cohort scale --model qwen2.5:7b --recovery --reference
+.venv/bin/python scripts/run_p4_dreamt.py --phase evaluate --cohort scale --model qwen2.5:7b --recovery --reference
 
 # 4) comparar modelos (IC sobre sujetos y deltas pareados de todos los pares)
-.venv/bin/python scripts/compare_dreamt_models.py \
-  --cohort scale --models qwen2.5:7b,llama3.1:8b,medgemma:4b \
-  --representation both --recovery \
-  --output results/output/DREAMT/PHASE2/scale/model_comparison.json
+.venv/bin/python scripts/compare_dreamt_models.py --cohort scale --models qwen2.5:7b,llama3.1:8b,medgemma:4b --representation both --recovery --output results/output/DREAMT/PHASE2/scale/model_comparison.json
 ```
 
-O por el CLI de fases:
+O por el CLI de fases (en el servidor, por `sbatch` o el lanzador; ver
+[`ejecucion_slurm.md`](ejecucion_slurm.md)):
 
 ```bash
-python main.py --proc GENERATE --experiment dreamt --cohort scale \
-  --windows-per-class 10 --model qwen2.5:7b
-python main.py --proc EVALUATE --experiment dreamt --cohort scale \
-  --model qwen2.5:7b --recovery --reference
+python main.py --proc GENERATE --experiment dreamt --subject DREAMT --cohort scale --windows-per-class 10 --model qwen2.5:7b
+python main.py --proc EVALUATE --experiment dreamt --subject DREAMT --cohort scale --model qwen2.5:7b --recovery --reference
 ```
 
 Artefactos en `results/output/DREAMT/PHASE2/scale/` (gitignorado):
@@ -171,213 +169,212 @@ sujetos y `n_subjects`).
 - [x] Cohorte congelada (§2) y documentada antes de generar.
 - [x] `prepare`: 15 sujetos (3 de desarrollo + 12 de escala), 2.880 prompts por
   representación, P0 8/8.
-- [x] Generación `qwen2.5:7b`: **5.760 llamadas**, 42 inválidas de formato
-  (0,73 %; 1 en numérico, 41 en texto), 0 errores de llamada, 3 h 26.
-- [x] Generación `llama3.1:8b`: **5.760 llamadas, 0 inválidas**, 6 h 58.
-- [x] Generación `medgemma:4b`: **5.760 llamadas**, **661 inválidas de forma**
-  (11,48 %; 247 numéricas, 414 textuales), 0 errores de llamada. Requiere
-  `--recovery`.
+- [x] Generación en el **servidor** (Ollama 0.40.6), 5.760 llamadas por modelo:
+  `qwen2.5:7b` 69 inválidas (1,2 %), 2 h 00 · `llama3.1:8b` 0 inválidas, 2 h 16
+  · `medgemma:4b` **1.144 inválidas** (19,9 %; 618 irrecuperables con
+  `--recovery`), 3 h 57.
 - [x] Evaluación con intervalos de los tres modelos y comparación pareada (§7).
+- [ ] Repeticiones de prompt (§7.8): una pasada por modelo. El run local previo
+  (0.30.7) queda solo como registro de desarrollo y no se cita (§7.6).
 
 ---
 
-## 7. Resultados
+## 7. Resultados (servidor, Ollama 0.40.6)
 
-### 7.1 `qwen2.5:7b` (12 sujetos, 480 ventanas por condición)
+Todas las cifras de esta sección están generadas en el **servidor** (partición
+`A5000`, Ollama **0.40.6**), que es el motor de los resultados citables; el run
+local con 0.30.7 queda como desarrollo y su diferencia se declara en §7.6.
 
-| Vista | Condición | Abstención [IC 95 %] | `acc*` [IC 95 %] | Balanced [IC 95 %] |
-|---|---|---|---:|---:|
-| numérico | `C0_clean` | 0,000 [0,000; 0,000] | 0,300 [0,269; 0,329] | 0,300 [0,269; 0,329] |
-| numérico | `C1_absent_eda` | 0,294 [0,231; 0,352] | 0,242 [0,206; 0,281] | 0,331 [0,289; 0,369] |
-| numérico | `C2_degenerate_eda` | 0,006 [0,000; 0,012] | 0,362 [0,335; 0,392] | 0,365 [0,336; 0,395] |
-| numérico | `C3_absent_hrv` | 0,008 [0,000; 0,021] | 0,267 [0,246; 0,290] | 0,268 [0,248; 0,290] |
-| numérico | `C4_absent_core` | **1,000** [1,000; 1,000] | 0,000 | 0,000 |
-| numérico | `NC_absent` | **1,000** [1,000; 1,000] | 0,000 | 0,000 |
-| texto | `C0_clean` | 0,000 [0,000; 0,000] | 0,296 [0,254; 0,342] | 0,296 [0,254; 0,342] |
-| texto | `C1_absent_eda` | **0,996** [0,990; 1,000] | 0,004 [0,000; 0,010] | 0,167 [0,000; 0,417] |
-| texto | `C2_degenerate_eda` | 0,000 [0,000; 0,000] | 0,304 [0,279; 0,333] | 0,304 [0,279; 0,333] |
-| texto | `C3_absent_hrv` | 0,085 [0,054; 0,123] | 0,246 [0,212; 0,273] | 0,269 [0,234; 0,297] |
-| texto | `C4_absent_core` | **1,000** [1,000; 1,000] | 0,000 | 0,000 |
-| texto | `NC_absent` | **1,000** [1,000; 1,000] | 0,000 | 0,000 |
+Procedencia: generación en los jobs 16630 (`qwen2.5:7b`, 2 h 00), 16653
+(`llama3.1:8b`, 2 h 16) y 16692 (`medgemma:4b`, 3 h 57); evaluaciones 16699,
+16700 y 16702; comparación pareada 16704. Cada brazo escribe
+`run_provenance.json` con versión de Ollama, `model_digest`, tamaño y parámetros
+por defecto del modelo.
 
-Referencia features-only (LOSO, 4.065 ventanas, las mismas 18 features):
-**acc 0,408 · balanced 0,362** (azar 0,250).
+Convenciones de lectura (fijadas antes de medir, §4.1):
 
-`C0` recall por clase (numérico / texto): `wake` 0,32/0,33 · `n1` 0,30/0,41 ·
-`n2` 0,53/0,39 · `rem` **0,05/0,06**.
+- 480 ventanas por condición y modelo (12 sujetos × 40).
+- `abs` (abstención) y `cov` (cobertura) dividen por **todas** las ventanas;
+  `inv` es la salida irrecuperable, que no cuenta ni como decisión ni como
+  abstención. Cuando `abs + cov = 1` el corpus no tiene inválidas.
+- `acc*` = accuracy con la abstención como error = `acc × cov`.
+- Tasa base 0,25 (cuatro clases); referencia LOSO **acc 0,408 · balanced 0,362**
+  (4.065 ventanas, las mismas 18 features).
 
-### 7.2 Qué replica y qué no
+### 7.1 Formato y recuperación
 
-1. **La matriz de abstención del piloto se sostiene y se estrecha** (§19 de
-   [`piloto_dreamt.md`](piloto_dreamt.md)): `C4` y `NC_absent` al 100 % en las
-   dos vistas; `C1` numérico en 0,294 (piloto 0,250) y textual en **0,996**
-   (piloto 0,988); `C3` textual 0,085 (piloto 0,125). El «espejo» —el modelo de
-   texto se retira cuando falta la EDA y el numérico no— no era un artefacto de
-   cuatro noches: el intervalo del texto está pegado a 1.
-2. **La EDA es el canal que se echa en falta**: `C1` (ausente) mueve la
-   abstención, `C2` (a cero) prácticamente no (0,006 / 0,000), aunque `C2` sea
-   un valor fisiológicamente imposible. La detección es de **ausencia**, no de
-   degeneración.
-3. **`C3` (bloque cardíaco ausente) apenas se nota** en esta tarea: 0,008
-   numérico y 0,085 textual. Coherente con que la EDA y el movimiento concentren
-   la firma de la clase.
-4. **La corrección no mejora con 12 sujetos**: `acc*` en `C0` 0,300/0,296 frente
-   a referencia 0,408 y azar 0,250; con el núcleo ausente (`C4`) la decisión
-   cae a 0,000 porque el modelo se abstiene (no «acierta» por azar).
-5. **`rem` sigue sin recall** (0,05/0,06, IC no publicado por clase): confirma
-   que, con esta evidencia, la tarea medida es `wake`/`n1`/`n2`.
-
-### 7.3 `llama3.1:8b` (12 sujetos, 480 ventanas por condición)
-
-5.760 llamadas, **0 inválidas**, 6 h 58.
-
-| Vista | Condición | Abstención [IC 95 %] | `acc*` [IC 95 %] | Balanced [IC 95 %] | Claims respaldados |
-|---|---|---|---:|---:|---:|
-| numérico | `C0_clean` | 0,000 [0,000; 0,000] | 0,285 [0,248; 0,323] | 0,285 [0,248; 0,323] | 0,623 |
-| numérico | `C1_absent_eda` | 0,000 [0,000; 0,000] | 0,331 [0,296; 0,371] | 0,331 [0,296; 0,371] | 0,590 |
-| numérico | `C2_degenerate_eda` | 0,000 [0,000; 0,000] | 0,325 [0,296; 0,354] | 0,325 [0,296; 0,354] | 0,544 |
-| numérico | `C3_absent_hrv` | 0,000 [0,000; 0,000] | 0,273 [0,231; 0,313] | 0,273 [0,231; 0,312] | 0,639 |
-| numérico | `C4_absent_core` | **0,523** [0,490; 0,552] | 0,131 [0,115; 0,148] | **0,250** [0,250; 0,250] | **0,276** |
-| numérico | `NC_absent` | **1,000** [1,000; 1,000] | 0,000 | 0,000 | — |
-| texto | `C0_clean` | 0,000 [0,000; 0,000] | 0,298 [0,267; 0,329] | 0,298 [0,267; 0,329] | 0,472 |
-| texto | `C1_absent_eda` | **0,000** [0,000; 0,000] | 0,321 [0,292; 0,356] | 0,321 [0,292; 0,356] | 0,571 |
-| texto | `C2_degenerate_eda` | 0,000 [0,000; 0,000] | 0,300 [0,277; 0,319] | 0,300 [0,277; 0,319] | 0,470 |
-| texto | `C3_absent_hrv` | 0,000 [0,000; 0,000] | 0,260 [0,227; 0,292] | 0,260 [0,227; 0,292] | 0,587 |
-| texto | `C4_absent_core` | **0,000** [0,000; 0,000] | 0,258 [0,246; 0,271] | 0,258 [0,246; 0,271] | 0,448 |
-| texto | `NC_absent` | **1,000** [1,000; 1,000] | 0,000 | 0,000 | — |
-
-`C0` recall por clase (numérico / texto): `wake` 0,24/0,30 · `n1` 0,30/0,40 ·
-`n2` 0,60/0,49 · `rem` **0,00/0,00**.
-
-### 7.4 Contraste `qwen2.5:7b` × `llama3.1:8b`
-
-| Condición | `qwen2.5:7b` num. | `llama3.1:8b` num. | `qwen2.5:7b` txt. | `llama3.1:8b` txt. |
+| Modelo | Inválidas al generar | % de 5.760 | Irrecuperables tras `--recovery` | % |
 |---|---:|---:|---:|---:|
-| `C1` EDA ausente | 0,294 [0,231; 0,352] | **0,000** | **0,996** [0,990; 1,000] | **0,000** |
-| `C3` cardíaco ausente | 0,008 | **0,000** | 0,085 [0,054; 0,123] | **0,000** |
-| `C4` núcleo ausente | **1,000** | **0,523** [0,490; 0,552] | **1,000** | **0,000** |
-| `NC_absent` | 1,000 | 1,000 | 1,000 | 1,000 |
+| `qwen2.5:7b` | 69 | 1,2 | 0 | 0,0 |
+| `llama3.1:8b` | 0 | 0,0 | 0 | 0,0 |
+| `medgemma:4b` | 1.144 | 19,9 | 618 | 10,7 |
 
-1. **El invariante sigue siendo `NC_absent`** (100 % en los 4 brazos de la
-   escala, como en los 6 del piloto): «no hay ninguna feature» es el único
-   umbral que todos los modelos comparten.
-2. **`C4` no es universal, y ahora está medido con 12 sujetos**:
-   `llama3.1:8b` decide en el 47,7 % de las ventanas y su balanced es
-   **0,250 [0,250; 0,250]**, es decir, azar exacto: clasifica con la temperatura
-   que queda, sin información de la clase. `qwen2.5:7b` se abstiene al 100 %.
-3. **La detección de ausencia parcial es del par (modelo, canal, vista)**: el
-   «espejo» de `qwen` (0,294 numérico frente a 0,996 textual en `C1`) no
-   aparece en `llama3.1:8b`, que **no se abstiene nunca** fuera de `C4` y
-   `NC_absent` (0,000 en las ocho celdas restantes).
-4. **El respaldo de claims cae justo donde el modelo decide sin evidencia**:
-   `llama3.1:8b` numérico pasa de 0,54–0,64 en `C0`–`C3` a **0,276** en `C4`
-   (cita la temperatura, que es lo único que le queda). Coherente con la
-   excepción de H5 del piloto.
-5. **La corrección no mejora con más sujetos**: ningún brazo supera el azar de
-   forma apreciable en `C0` (0,285–0,300 frente a 0,250 y a una referencia de
-   0,408), y `rem` sigue con recall 0,00 en `llama3.1:8b`.
-6. **La métrica premia al que contesta sin evidencia, y esta vez con el mismo
-   modelo en las dos direcciones.** Comparación pareada (12 sujetos,
-   `llama3.1:8b − qwen2.5:7b`): en `C4` numérico `Δcobertura = −0,477`
-   [−0,510; −0,448], `Δbal = +0,250` [+0,250; +0,250] y `Δaccuracy = +0,281`
-   [+0,237; +0,326] — `llama` gana accuracy **precisamente porque decide al
-   azar** en vez de abstenerse. En `C1` textual el signo se invierte: `qwen` se
-   abstiene al 99,6 % (cobertura 0,004) y su `acc*` cae a 0,004, mientras
-   `llama`, que contesta, obtiene 0,321. Es decir, `acc*` **castiga la
-   abstención** aunque sea la respuesta honesta. De ahí la regla de leer siempre
-   las tres columnas juntas: cobertura, abstención y balanced; la accuracy sola
-   ordena a los modelos al revés.
+`medgemma:4b` falla en la **forma** del claim (`direction: "high"`,
+`channel: "fraction"`); la recuperación tolerante conserva la decisión y
+descarta el claim mal formado. El fallo no es uniforme: se concentra donde
+escasea la evidencia — 143 irrecuperables en `C2` numérico, 134 en `C3`
+numérico y 109 en `C4` textual. Ahí su cobertura deja de ser comparable.
 
-### 7.5 `medgemma:4b` (12 sujetos, 480 ventanas por condición)
+### 7.2 Abstención
 
-5.760 llamadas, **661 inválidas de forma** (11,48 %; 247 numéricas, 414
-textuales), 0 errores de llamada. Todas se recuperan con `--recovery`: la
-decisión se conserva y los claims mal formados se descartan.
+Fracción de las 480 ventanas de cada condición:
 
-| Vista | Condición | Abstención [IC 95 %] | `acc*` [IC 95 %] | Balanced [IC 95 %] | Claims respaldados |
-|---|---|---|---:|---:|---:|
-| numérico | `C0_clean` | 0,004 [0,000; 0,010] | 0,342 [0,317; 0,371] | 0,344 [0,318; 0,377] | 0,656 |
-| numérico | `C1_absent_eda` | 0,023 [0,012; 0,035] | 0,354 [0,319; 0,385] | 0,367 [0,338; 0,395] | 0,553 |
-| numérico | `C2_degenerate_eda` | 0,125 [0,048; 0,219] | 0,317 [0,281; 0,350] | 0,365 [0,339; 0,397] | 0,725 |
-| numérico | `C3_absent_hrv` | **0,200** [0,167; 0,235] | 0,271 [0,242; 0,300] | 0,335 [0,308; 0,363] | 0,702 |
-| numérico | `C4_absent_core` | **1,000** [1,000; 1,000] | 0,000 | 0,000 | 0,409 |
-| numérico | `NC_absent` | **1,000** [1,000; 1,000] | 0,000 | 0,000 | — |
-| texto | `C0_clean` | 0,013 [0,002; 0,025] | 0,285 [0,260; 0,312] | 0,291 [0,265; 0,320] | 0,591 |
-| texto | `C1_absent_eda` | 0,044 [0,012; 0,081] | 0,271 [0,244; 0,298] | 0,283 [0,257; 0,310] | 0,453 |
-| texto | `C2_degenerate_eda` | 0,033 [0,000; 0,075] | 0,294 [0,267; 0,321] | 0,303 [0,280; 0,327] | 0,566 |
-| texto | `C3_absent_hrv` | 0,108 [0,056; 0,169] | 0,229 [0,206; 0,250] | 0,248 [0,231; 0,269] | 0,460 |
-| texto | `C4_absent_core` | **1,000** [1,000; 1,000] | 0,000 | 0,000 | 0,607 |
-| texto | `NC_absent` | **1,000** [1,000; 1,000] | 0,000 | 0,000 | — |
-
-`C0` recall por clase (numérico / texto): `wake` 0,46/0,30 · `n1` **0,00/0,00** ·
-`n2` **0,92/0,86** · `rem` **0,00/0,00**. Decisiones numéricas en `C0`: 360 `n2`,
-118 `wake`, 2 abstención.
-
-1. **`C4` y `NC_absent` al 100 % en las dos vistas**: `medgemma` se alinea con
-   `qwen`, no con `llama`. El atajo de la temperatura es **propio de
-   `llama3.1:8b`**, no una consecuencia inevitable de dejar un canal vivo.
-2. **Es el único modelo que percibe el bloque cardíaco ausente**: `C3` numérico
-   **0,200** [0,167; 0,235] frente a 0,008 de `qwen` y 0,000 de `llama`
-   (pareado `medgemma − llama` = **+0,200** [+0,167; +0,235]). Replica el 26,3 %
-   del piloto: el patrón no era ruido de cuatro noches.
-3. **También es el único que reacciona a la degeneración**, aunque poco: `C2`
-   (EDA a cero) 0,125 [0,048; 0,219] numérico frente a 0,006 de `qwen` y 0,000
-   de `llama` (pareado `medgemma − llama` = +0,125 [+0,048; +0,219]). Parcial,
-   pero rompe la lectura «nadie distingue ceros de ausencia».
-4. **En cambio, apenas nota la ausencia de EDA**: `C1` 0,023 numérico y 0,044
-   textual, frente a 0,294/0,996 de `qwen`. Cada modelo tiene **su** canal
-   sensible; no hay un detector genérico de ausencia.
-5. **Su mejor accuracy es un artefacto de colapso**: 0,342/0,344 en `C0`
-   numérico (la más alta de los tres, y significativa frente a `llama`:
-   +0,058 [+0,023; +0,095]) la consigue prediciendo solo `wake` o `n2` —
-   `n1` y `rem` tienen recall **0,00**. Sigue por debajo de la referencia 0,408
-   y su balanced (0,344) es apenas distinguible del de `qwen` (0,300) y `llama`
-   (0,285).
-
-### 7.6 Contraste final de los tres modelos
-
-Matriz de abstención (12 sujetos, 480 ventanas por condición; IC bootstrap sobre
-sujetos):
-
-| Condición | `qwen2.5:7b` num. | `llama3.1:8b` num. | `medgemma:4b` num. | `qwen2.5:7b` txt. | `llama3.1:8b` txt. | `medgemma:4b` txt. |
+| Condición | `qwen` num. | `llama` num. | `medgemma` num. | `qwen` txt. | `llama` txt. | `medgemma` txt. |
 |---|---:|---:|---:|---:|---:|---:|
-| `C0` limpio | 0,000 | 0,000 | 0,004 | 0,000 | 0,000 | 0,013 |
-| `C1` EDA ausente | 0,294 | 0,000 | 0,023 | **0,996** | 0,000 | 0,044 |
-| `C2` EDA a cero | 0,006 | 0,000 | **0,125** | 0,000 | 0,000 | 0,033 |
-| `C3` cardíaco ausente | 0,008 | 0,000 | **0,200** | 0,085 | 0,000 | 0,108 |
-| `C4` núcleo ausente | **1,000** | **0,523** | **1,000** | **1,000** | **0,000** | **1,000** |
-| `NC_absent` | **1,000** | **1,000** | **1,000** | **1,000** | **1,000** | **1,000** |
+| `C0` limpio | 0,025 | 0,000 | 0,073 | 0,004 | 0,000 | 0,092 |
+| `C1` EDA ausente | **0,879** | 0,013 | 0,171 | **1,000** | 0,000 | 0,185 |
+| `C2` EDA a cero | 0,310 | 0,000 | 0,254 | 0,054 | 0,000 | 0,242 |
+| `C3` cardíaco ausente | 0,458 | 0,002 | **0,565** | 0,462 | 0,000 | 0,310 |
+| `C4` núcleo ausente | 1,000 | 1,000 | 0,983 | 1,000 | **0,952** | 0,773 ¹ |
+| `NC_absent` | 1,000 | 1,000 | 1,000 | 1,000 | 1,000 | 1,000 |
 
-1. **El único invariante es `NC_absent`** (100 % en 6/6 brazos modelo × vista en
-   la escala, como en los 6 del piloto): «no queda ninguna feature» es el único
-   umbral compartido.
-2. **`C4` depende del par (modelo, vista)**: `qwen` y `medgemma` se abstienen al
-   100 % en las dos vistas; `llama` decide en el 47,7 % de las ventanas
-   numéricas (balanced **0,250 = azar exacto**) y en el 100 % de las textuales.
-   La predicción registrada al cerrar el piloto —si `llama3.1:8b` volvía a
-   decidir en `C4` con la temperatura en 12 sujetos, la abstención sería
-   propiedad del par (modelo, canales) y no de la tarea— **se cumplió**.
-3. **Cada modelo tiene un canal sensible distinto**: `qwen` la EDA en texto
-   (0,996), `medgemma` el bloque cardíaco en numérico (0,200) y la degeneración
-   (0,125), `llama` ninguno salvo la ausencia total. H4 se enuncia por tanto como
-   **(modelo, canal, representación)**, no como «el LLM se abstiene cuando falta
-   evidencia».
-4. **Ningún brazo supera el azar de forma apreciable en `C0`**: `acc*`
-   0,300 / 0,285 / 0,342 (numérico) y 0,296 / 0,298 / 0,285 (texto) frente a
-   referencia LOSO **0,408** y azar 0,250. `rem` sigue con recall ≈ 0 en los tres
-   (`qwen` 0,05/0,06; `llama` y `medgemma` 0,00).
-5. **`supported` no distingue modelos en limpio** (0,62–0,66), pero sí señala la
-   inferencia sin evidencia: `llama` cae a **0,276** en `C4` numérico. Que
-   `medgemma` mantenga 0,409–0,607 con abstención del 100 % recuerda que los
-   claims son **locales**: puede citar correctamente la temperatura que sí ve
-   mientras se retira de la decisión.
-6. **La conclusión de la escala es negativa en precisión y positiva en
-   mecanismo**, igual que el piloto y ahora con intervalos: la evidencia de
-   muñeca no resuelve cuatro estadios, y lo que se replica entre modelos es la
-   abstención ante ausencia total y los claims localmente ciertos, no la
-   detección de ausencias parciales.
+¹ el 22,7 % restante son inválidas irrecuperables: `medgemma` no decide, pero
+tampoco emite una abstención bien formada.
 
-### 7.7 Pendiente
+IC 95 % sobre sujetos del brazo **numérico** (`abs`): `qwen` 0,025
+[0,010; 0,040] · 0,879 [0,852; 0,908] · 0,310 [0,148; 0,477] · 0,458
+[0,406; 0,515]; `llama` 0,000 · 0,013 [0,002; 0,025] · 0,000 · 0,002
+[0,000; 0,006]; `medgemma` 0,073 [0,054; 0,094] · 0,171 [0,131; 0,210] ·
+0,254 [0,175; 0,335] · 0,565 [0,506; 0,625]. En texto, las celdas extremas son
+exactas: `qwen` `C1` = 1,000 [1,000; 1,000] y `llama` `C4` = 0,952
+[0,929; 0,971].
+
+### 7.3 Corrección y utilidad
+
+`acc*` (abstención como error) y balanced, por condición:
+
+| Condición | `qwen` acc\* | `llama` acc\* | `medgemma` acc\* | `qwen` bal | `llama` bal | `medgemma` bal |
+|---|---:|---:|---:|---:|---:|---:|
+| `C0` | 0,315 | 0,298 | 0,304 | 0,323 | 0,298 | 0,356 |
+| `C1` | **0,052** | 0,329 | 0,290 | 0,354 | 0,335 | 0,375 |
+| `C2` | 0,254 | 0,329 | 0,177 | 0,353 | 0,329 | **0,443** |
+| `C3` | 0,144 | 0,269 | **0,067** | 0,284 | 0,270 | **0,417** |
+| `C4` | 0,000 | 0,000 | 0,000 | 0,000 | 0,000 | 0,000 |
+| `NC_absent` | 0,000 | 0,000 | 0,000 | 0,000 | 0,000 | 0,000 |
+
+IC 95 % de `acc*` (numérico): `qwen` `C0` [0,273; 0,362] · `C1` [0,035; 0,073]
+· `C2` [0,198; 0,317] · `C3` [0,119; 0,169]; `llama` [0,258; 0,335] ·
+[0,300; 0,360] · [0,300; 0,358] · [0,229; 0,308]; `medgemma` [0,273; 0,337] ·
+[0,252; 0,327] · [0,117; 0,238] · [0,050; 0,085].
+
+Texto: `acc*` en `C0` 0,275 / 0,275 / 0,240 y en `C1` **0,000** / 0,321 / 0,212.
+El `acc*` 0,010 de `llama` en `C4` textual se calcula sobre cobertura 0,048
+(23 ventanas): no se cita.
+
+Ningún brazo alcanza la referencia en limpio (0,30 frente a 0,408), y en DREAMT
+no hay referencia por condición —a diferencia de WESAD—, así que el coste se
+mide contra `C0` y contra el techo de la tarea, no como exceso sobre una
+referencia degradada.
+
+### 7.4 Tres modos de fallo sobre la misma evidencia
+
+El resultado de la escala no es un ranking sino una **tipología**: con la misma
+degradación, los tres modelos fallan de forma distinta y medible.
+
+1. **Retirada graduada** (`qwen2.5:7b`). Se retira en proporción a lo que falta
+   (`C1` 0,879 · `C3` 0,458 · `C2` 0,310 en numérico; `C1` 1,000 · `C3` 0,462 ·
+   `C2` 0,054 en texto) y su utilidad se hunde donde se retira: `acc*` 0,052
+   [0,035; 0,073] en `C1`. Detecta la ausencia de EDA, pero no da servicio.
+   Su reducción de accuracy solo es significativa en `C1` y `C3`; en `C2`
+   (valor imposible) se mantiene a nivel de `C0`.
+2. **Invariancia** (`llama3.1:8b`). No se retira nunca fuera de `C4`/`NC`
+   (≤ 0,013) y su `acc*` va de 0,298 a 0,329 a 0,269 con **IC solapados**: no
+   pierde corrección porque **nunca usó la evidencia**. Es la forma limpia de lo
+   que en el run local se leyó como «atajo de la temperatura»; aquí no decide en
+   `C4` (0,952 de abstención textual), simplemente responde con la misma
+   distribución en todas las condiciones.
+3. **Selección** (`medgemma:4b`). Es el único cuya accuracy **sobre lo que
+   conserva** sube mientras cae la cobertura: `C2` 0,460 con cobertura 0,448
+   (balanced 0,443 [0,363; 0,562]) y `C3` 0,458 con cobertura 0,156 (balanced
+   0,417 [0,333; 0,491]). En `C3` su balanced está por encima del azar
+   (0,25) y su intervalo incluye la referencia (0,362); frente a `qwen`
+   `Δacc = +0,194 [+0,087; +0,300]` y frente a `llama` `+0,189 [+0,052; +0,316]`,
+   absteniéndose 57 puntos más.
+
+El precio de esa selección es la métrica: `Δacc*` de `medgemma` frente a `qwen`
+en `C3` es **−0,077 [−0,096; −0,060]** y frente a `llama` **−0,202**. Es decir,
+**el modelo que mejor selecciona es el que peor puntúa en `acc*`**, porque cada
+abstención correcta se contabiliza como error. `acc*` ordena a los modelos por
+cobertura, no por calidad de la decisión.
+
+### 7.5 Claims, coherencia y certeza
+
+Respaldo (`supported`) y coherencia (fracción de claims cuya dirección favorece
+la clase decidida) por condición:
+
+| Condición | `qwen` sop / coh | `llama` sop / coh | `medgemma` sop / coh |
+|---|---|---|---|
+| num. `C0` | 0,663 / 0,831 | 0,579 / 0,944 | 0,694 / 0,947 |
+| num. `C2` | 0,684 / 0,860 | 0,493 / 0,966 | 0,754 / 0,895 |
+| num. `C3` | 0,619 / 0,659 | 0,607 / 0,927 | 0,760 / 0,985 |
+| num. `C4` | — | — | 0,463 / — |
+| txt. `C0` | 0,548 / 0,869 | 0,433 / 0,902 | 0,520 / 0,978 |
+| txt. `C3` | 0,488 / 0,816 | 0,561 / 0,933 | 0,593 / 1,000 |
+| txt. `C4` | — | 0,551 / — | 0,252 / — |
+
+1. **El respaldo no cae donde cae la decisión**: `medgemma` mantiene 0,463 de
+   respaldo en `C4` numérico con abstención 0,983, y `llama` 0,551 en `C4`
+   textual. Los claims son **locales**: puede citar correctamente la temperatura
+   que sí ve mientras retira la decisión.
+2. **La coherencia es alta incluso cuando la decisión es mala** (`llama` 0,93–
+   0,97 en todas las condiciones): el modelo cita evidencia que *favorece* su
+   respuesta, y su respuesta sigue estando al nivel del azar. Coherencia mide
+   consistencia interna, no corrección.
+3. **`—` significa «sin claims evaluables»**: cuando la respuesta es una
+   abstención limpia no hay claims que verificar; no es un fallo del
+   verificador.
+4. **La certeza lingüística es plana** en las respuestas decididas: índice 0,00
+   en casi todas las celdas de los tres modelos, y negativo solo en las
+   abstenciones (`qwen` `C1` −28,57; `llama` `C4` textual −5,72; `medgemma`
+   `C3` −0,98). Coincide con WESAD: la certeza no informa de la calidad de la
+   evidencia.
+
+### 7.6 Qué cambió respecto del run local (0.30.7)
+
+La estructura **cualitativa** replica y el **nivel** no:
+
+| Celda | Local 0.30.7 | Servidor 0.40.6 |
+|---|---:|---:|
+| `qwen` num. `C1` (EDA ausente) | 0,294 | **0,879** |
+| `qwen` num. `C2` (EDA a cero) | 0,006 | **0,310** |
+| `qwen` num. `C3` (cardíaco) | 0,008 | **0,458** |
+| `medgemma` num. `C1` / `C3` | 0,023 / 0,200 | 0,171 / **0,565** |
+| `llama` num. `C4` (núcleo) | 0,523 | **1,000** |
+| `llama` txt. `C4` | 0,000 | **0,952** |
+
+1. **El perfil de canal se conserva**: `qwen` reacciona a la EDA (`C1`) y
+   `medgemma` al bloque cardíaco (`C3`) en los dos motores. Eso es lo que
+   sostiene la lectura de H4.
+2. **El nivel de abstención es del motor**: el 0.40.6 se retira entre 3 y 30
+   veces más en las condiciones parciales. Un cambio de motor mueve una métrica
+   de 0,29 a 0,88 sin tocar el prompt ni la semilla.
+3. **Un hallazgo local no replica**: `llama` decidía en `C4` con la temperatura
+   y su balanced era azar exacto. En el servidor se retira al 95–100 %. El
+   «atajo de la temperatura» era del motor 0.30.7, no del modelo; **no se cita**.
+4. Por eso todos los números publicados de DREAMT son los de esta sección y los
+   locales quedan solo como registro de desarrollo (§19 de
+   [`piloto_dreamt.md`](piloto_dreamt.md)).
+
+### 7.7 Lectura para la tesis
+
+- **H1 (coste)**: ningún brazo alcanza la referencia en limpio (0,30 vs 0,408) y
+  la degradación no produce un coste común sino tres perfiles. El coste de
+  `qwen` es de cobertura; el de `llama`, nulo en corrección porque su salida ya
+  era independiente de la evidencia; el de `medgemma`, de cobertura con
+  corrección retenida por encima del azar.
+- **H4 (abstención)**: el único umbral compartido es «ninguna feature» (100 % en
+  `C4`/`NC_absent` en los seis brazos). Por debajo, la abstención es
+  **(modelo × canal × representación)** y ahora está medida con intervalos.
+- **H5 (respaldo)**: el respaldo de claims no acompaña a la corrección; en
+  `medgemma` incluso sube de `C0` a `C3` (0,694 → 0,760) mientras su `acc*` cae
+  de 0,304 a 0,067.
+- **H2 (calibración/certeza)**: la certeza es plana en las decididas; la
+  confianza ya se documentó con dos valores en el piloto. DREAMT no aporta
+  resolución nueva a H2a.
+- **H6**: no evaluable en esta tarea; no hay indicador de calidad propio para
+  sueño.
+
+### 7.8 Pendiente
 
 - Indicador de calidad para sueño (cobertura + coherencia interna) para que H6
   sea evaluable en esta tarea.

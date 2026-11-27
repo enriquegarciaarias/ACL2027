@@ -107,6 +107,10 @@ prioridad si usas el script directamente.
 
 ## 5. Comprobación antes de lanzar
 
+En el servidor, desde un **nodo de cálculo** (`srun --pty`), no en `sirius`: el
+`--dry-run` importa numpy y el nodo de login aborta con `Illegal instruction`
+(ver [`ejecucion_slurm.md`](ejecucion_slurm.md) §5).
+
 ```bash
 python main.py --proc GENERATE --experiment physionet --dry-run
 python main.py --proc GENERATE --experiment kemocon  --dry-run

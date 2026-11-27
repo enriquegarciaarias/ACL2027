@@ -542,6 +542,16 @@ def test_plan_warns_when_external_data_missing(tmp_path, monkeypatch):
     assert any("dato externo" in w for w in info["warnings"])
 
 
+def test_evaluate_physionet_forwards_tag():
+    """``--tag`` elige la corrida a analizar (re-ejecución en otro motor)."""
+    argv = pipelines.build_evaluate_argv("physionet", _args(tag="srv"))
+    assert "--tag" in argv
+    assert argv[argv.index("--tag") + 1] == "srv"
+
+    plain = pipelines.build_evaluate_argv("physionet", _args())
+    assert "--tag" not in plain
+
+
 def test_plan_incluye_informe_de_gpu(monkeypatch):
     """El plan de ``--dry-run`` informa del hardware (sin confundir 'sin GPU')."""
     from sources.common import paramsManager

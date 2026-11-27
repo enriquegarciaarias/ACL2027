@@ -378,12 +378,14 @@ desarrollo.
 - El detector de calidad de §5.7 es exploratorio: entrenado en desarrollo y
   evaluado en test, pero no preregistrado; su curva de compuerta sirve para
   dimensionar el problema, no como resultado confirmatorio.
-- **Procedencia del motor incompleta.** Las 403 respuestas se generaron en local
-  con Ollama 0.30.7 y el runner de entonces no escribía `run_provenance.json`
-  (ya corregido). El motor no es un detalle: con el mismo prompt y la misma
-  semilla dio 0 abstenciones en el servidor (Ollama 0.40.6) y 28 en local. Para
-  citar estas cifras junto a los corpus del servidor hay que **re-ejecutarlas
-  allí**, con la misma versión y semilla; son 400 llamadas (~20 min).
+- **Procedencia del motor incompleta en el corpus histórico.** Las 403 respuestas
+  se generaron en local con Ollama 0.30.7 y el runner de entonces no escribía
+  `run_provenance.json` (ya corregido). El motor no es un detalle: con el mismo
+  prompt y la misma semilla dio 0 abstenciones en el servidor (Ollama 0.40.6) y
+  28 en local. Para citar estas cifras junto a los corpus del servidor hay que
+  **re-ejecutarlas allí**, con la misma versión y semilla: son ~420 llamadas
+  (~20 min) y se hacen con `--tag` para no mezclarlas con las históricas
+  (§8.1).
 
 ## 8. Reproducción
 
@@ -410,7 +412,7 @@ python scripts/run_p3_physionet.py --eval-split dev --max-records 40 --few-shot
 python scripts/analyze_p3_physionet.py
 ```
 
-Salidas:
+Salidas de la corrida histórica (`--tag` vacío):
 
 - `physionet2017.responses.jsonl` (sin etiquetas)
 - `physionet2017.labels.jsonl`
@@ -422,8 +424,43 @@ Salidas:
 - `physionet2017_analysis.json` (informe del análisis: corrección, referencia,
   abstención, claims, certeza, señal de calidad, consistencia, ablación)
 
+Con `--tag srv` los cuatro primeros pasan a `physionet2017_srv.*` y el informe a
+`physionet2017_analysis_srv.json`: una corrida nueva **no pisa** la histórica ni
+su procedencia.
+
 El runner **aborta** si el modelo no está descargado (`ollama pull <modelo>`);
 antes escribía un `timeout` por registro que la reanudación reutilizaba. Para
 que las cifras del servidor sean comparables con las de WESAD y DREAMT, el
 motor debe ser el mismo: comprobar `ollama --version` y el `model_digest` de
 `run_provenance.json` antes de mezclar corpus.
+
+### 8.1 Re-ejecución en el servidor (cifras citables)
+
+Requisito previo: el motor del servidor es **Ollama 0.40.6** y el de las 403
+respuestas históricas es 0.30.7, así que las cifras sólo son citables junto a los
+corpus de WESAD/DREAMT si se vuelven a generar allí. Dos salvaguardas:
+
+- la procedencia **sólo se escribe cuando hay llamadas pendientes** (si todo está
+  respondido, el runner imprime el motor registrado y sale sin tocar el fichero:
+  antes bastaba una reanudación inocente para etiquetar un corpus ajeno con el
+  motor actual);
+- con llamadas pendientes y otro motor registrado, avisa (`AVISO`) antes de
+  mezclar; separar motores es responsabilidad del `--tag`.
+
+Una línea por comando, desde el despliegue `~/data`:
+
+```bash
+~/data/launch_lsi.sh --proc run_ACL.sh --time 02:00:00 -- --proc GENERATE --experiment physionet --subject PHYSIONET2017 --per-class 150 --model qwen2.5:7b --tag srv
+```
+
+```bash
+~/data/launch_lsi.sh --proc run_ACL.sh --time 00:30:00 -- --proc EVALUATE --experiment physionet --subject PHYSIONET2017 --tag srv
+```
+
+El análisis imprime en la primera línea `tag` y motor (`Ollama 0.40.6`) leídos de
+`run_provenance_srv.json`, y ambos quedan en `inputs.tag` / `inputs.engine` del
+informe: la cifra publicada queda atada a su motor. La ablación few-shot usa los
+ficheros `physionet2017_dev_*.responses.jsonl`; si no están en la máquina, el
+informe la marca como no disponible en lugar de fallar, y las etiquetas del split
+de desarrollo se reconstruyen con el mismo muestreo (`per_class=150`, `seed=42`)
+y el mismo CRC32 que el runner.

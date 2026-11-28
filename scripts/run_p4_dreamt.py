@@ -46,7 +46,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from sources.common.llm_client import check_model_available, ollama_run_provenance
-from sources.common.provenance import guard_engine
+from sources.common.provenance import (
+    guard_corpus_engine,
+    legacy_repetition_provenance_name,
+    repetition_provenance_name,
+)
 from sources.external import dreamt
 from sources.external.paths import DREAMT_DIR
 from sources.ingestion.config import get_ingestion_config
@@ -189,12 +193,16 @@ def responses_directory(repetitions: int) -> str:
     return "responses" if int(repetitions) <= 1 else f"responses_rep{int(repetitions)}"
 
 
-def provenance_filename(repetitions: int) -> str:
-    """Nombre del ``run_provenance`` de la corrida (por número de repeticiones)."""
-    return (
-        "run_provenance.json"
-        if int(repetitions) <= 1
-        else f"run_provenance_rep{int(repetitions)}.json"
+def provenance_filename(repetitions: int, model: str | None = None) -> str:
+    """Nombre del ``run_provenance`` de la corrida (repeticiones y modelo).
+
+    El corpus vive en ``responses_rep{R}/{modelo}/``, así que la procedencia
+    también es por modelo: compartirla hacía que el segundo modelo abortara en la
+    guardia de motor (job 16719) o que sobrescribiera el registro del primero.
+    Sin ``model`` se devuelve el nombre histórico, para leer corpus anteriores.
+    """
+    return repetition_provenance_name(
+        repetitions, model_slug(model) if model else None
     )
 
 
@@ -890,7 +898,8 @@ def phase_generate(args: argparse.Namespace) -> int:
             f"         Instálalo con: ollama pull {config.model}"
         )
 
-    provenance_path = output_dir / provenance_filename(repetitions)
+    provenance_path = output_dir / provenance_filename(repetitions, config.model)
+    legacy_provenance_path = output_dir / legacy_repetition_provenance_name(repetitions)
     provenance = ollama_run_provenance(config.model)
     provenance["config"] = config.to_dict()
     provenance["started_at"] = utc_now()
@@ -899,8 +908,9 @@ def phase_generate(args: argparse.Namespace) -> int:
     if not args.dry_run:
         # El motor forma parte del experimento: mezclar versiones dentro del
         # mismo fichero haría indistinguible del ruido el efecto que se mide.
-        guard_engine(
+        guard_corpus_engine(
             provenance_path,
+            legacy_provenance_path,
             provenance,
             bool(getattr(args, "allow_engine_change", False)),
             label="DREAMT",

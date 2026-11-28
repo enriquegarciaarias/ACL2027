@@ -257,6 +257,75 @@ def read_provenance(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def repetition_provenance_name(repetitions: int = 1, slug: str | None = None) -> str:
+    """Nombre del ``run_provenance`` de una corrida de repeticiones.
+
+    Incluye el **modelo** cuando se conoce: el corpus de respuestas vive en un
+    directorio por modelo (``responses_rep{R}/{slug}/``), así que la procedencia
+    también debe serlo. Con un fichero compartido, el segundo modelo abortaba en
+    la guardia de motor (``medgemma`` contra ``qwen2.5``, job 16719) o —peor—
+    sobrescribía el registro del primero, que es lo que ya había pasado con
+    ``run_provenance.json`` en la cohorte de escala de DREAMT.
+
+    Args:
+        repetitions: número de repeticiones de la corrida.
+        slug: identificador del modelo (``qwen2.5:7b`` → ``qwen2_5_7b``); si es
+            ``None`` se devuelve el nombre histórico compartido.
+
+    Returns:
+        str: ``run_provenance[_rep{R}][_{slug}].json``.
+    """
+    suffix = "" if int(repetitions) <= 1 else f"_rep{int(repetitions)}"
+    return f"run_provenance{suffix}{f'_{slug}' if slug else ''}.json"
+
+
+def legacy_repetition_provenance_name(repetitions: int = 1) -> str:
+    """Nombre **anterior** (sin modelo), solo para leer corpus ya generados."""
+    return (
+        "run_provenance.json"
+        if int(repetitions) <= 1
+        else f"run_provenance_rep{int(repetitions)}.json"
+    )
+
+
+def guard_corpus_engine(
+    current_path: Path,
+    legacy_path: Path | None,
+    current: Mapping[str, Any] | None,
+    allow_change: bool = False,
+    *,
+    label: str = "RUN",
+) -> list[str]:
+    """Guardia de motor sobre la procedencia del modelo y la antigua compartida.
+
+    La procedencia antigua era un único fichero por cohorte, compartido entre
+    modelos. Solo se compara cuando su ``model`` coincide con el de la ejecución
+    actual: si no, describe **otro** corpus, y abortar por él impediría correr un
+    segundo modelo en el mismo directorio (job 16719).
+
+    Args:
+        current_path: procedencia de esta ejecución (por modelo).
+        legacy_path: procedencia antigua compartida (o ``None``).
+        current: bloque de procedencia de la ejecución actual.
+        allow_change: permiso explícito para cambiar de motor.
+        label: etiqueta del runner para los mensajes.
+
+    Returns:
+        list[str]: conflictos detectados (vacío si no hay).
+    """
+    conflicts = guard_engine(current_path, current, allow_change, label=label)
+    if legacy_path is None or Path(legacy_path) == Path(current_path):
+        return conflicts
+    stored = read_provenance(Path(legacy_path))
+    if not stored:
+        return conflicts
+    stored_model = stored.get("model")
+    current_model = (current or {}).get("model")
+    if stored_model not in (None, "") and current_model and str(stored_model) != str(current_model):
+        return conflicts
+    return conflicts + guard_engine(legacy_path, current, allow_change, label=label)
+
+
 def engine_conflicts(
     stored: Mapping[str, Any] | None,
     current: Mapping[str, Any] | None,

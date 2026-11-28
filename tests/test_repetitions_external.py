@@ -344,3 +344,86 @@ def test_print_report_shows_zero_coverage_instead_of_nan(capsys):
     assert cells[2] == "1.000"  # acuerdo modal
     assert cells[3] == "—"      # accuracy sin registros decididos
     assert cells[5] == "0.000"  # cobertura: 0, no nan
+
+
+# ---------------------------------------------------------------------------
+# Procedencia por modelo (el corpus es por modelo; la procedencia también)
+# ---------------------------------------------------------------------------
+def test_dreamt_provenance_name_includes_the_model():
+    """Dos modelos en la misma cohorte no comparten fichero de procedencia.
+
+    Regresión del 2026-11-28 (job 16719): el guard abortaba ``medgemma:4b``
+    porque ``run_provenance_rep3.json`` decía ``qwen2.5:7b``. La procedencia
+    compartida impedía correr un segundo modelo en la cohorte y, si hubiera
+    pasado, habría borrado el registro del primero.
+    """
+    assert dr.provenance_filename(3, "qwen2.5:7b") == "run_provenance_rep3_qwen2_5_7b.json"
+    assert dr.provenance_filename(3, "medgemma:4b") == "run_provenance_rep3_medgemma_4b.json"
+    assert dr.provenance_filename(1, "medgemma:4b") == "run_provenance_medgemma_4b.json"
+    # Sin modelo: nombre histórico, para leer corpus anteriores.
+    assert dr.provenance_filename(3) == "run_provenance_rep3.json"
+
+
+def test_guard_corpus_engine_ignores_another_models_provenance(tmp_path):
+    from sources.common.provenance import guard_corpus_engine
+
+    legacy = tmp_path / "run_provenance_rep3.json"
+    legacy.write_text(
+        json.dumps({"model": "qwen2.5:7b", "model_digest": "aaa", "ollama_version": "0.40.6"}),
+        encoding="utf-8",
+    )
+    current = {
+        "model": "medgemma:4b",
+        "model_digest": "bbb",
+        "ollama_version": "0.40.6",
+    }
+
+    conflicts = guard_corpus_engine(tmp_path / "run_provenance_rep3_medgemma_4b.json", legacy, current)
+
+    assert conflicts == []
+
+
+def test_guard_corpus_engine_aborts_on_a_change_within_the_same_model(tmp_path):
+    from sources.common.provenance import guard_corpus_engine
+
+    legacy = tmp_path / "run_provenance_rep3.json"
+    legacy.write_text(
+        json.dumps({"model": "qwen2.5:7b", "model_digest": "aaa", "ollama_version": "0.30.7"}),
+        encoding="utf-8",
+    )
+    current = {
+        "model": "qwen2.5:7b",
+        "model_digest": "bbb",
+        "ollama_version": "0.40.6",
+    }
+
+    with pytest.raises(SystemExit):
+        guard_corpus_engine(tmp_path / "run_provenance_rep3_qwen2_5_7b.json", legacy, current)
+
+
+def test_dreamt_provenance_path_prefers_the_models_own_file(tmp_path):
+    (tmp_path / "run_provenance_rep3.json").write_text(
+        json.dumps({"model": "qwen2.5:7b", "ollama_version": "0.40.6"}), encoding="utf-8"
+    )
+    (tmp_path / "run_provenance_rep3_medgemma_4b.json").write_text(
+        json.dumps({"model": "medgemma:4b", "ollama_version": "0.40.6"}), encoding="utf-8"
+    )
+
+    medgemma = reps.dreamt_provenance_path(tmp_path, 3, "medgemma:4b")
+    qwen = reps.dreamt_provenance_path(tmp_path, 3, "qwen2.5:7b")
+
+    assert medgemma.name == "run_provenance_rep3_medgemma_4b.json"
+    # ``qwen`` no tiene fichero propio: se lee la procedencia antigua, que sí es suya.
+    assert qwen.name == "run_provenance_rep3.json"
+
+
+def test_dreamt_provenance_path_ignores_a_foreign_legacy_file(tmp_path):
+    """Sin fichero propio, la procedencia antigua solo vale si es del mismo modelo."""
+    (tmp_path / "run_provenance_rep3.json").write_text(
+        json.dumps({"model": "qwen2.5:7b", "ollama_version": "0.40.6"}), encoding="utf-8"
+    )
+
+    path = reps.dreamt_provenance_path(tmp_path, 3, "medgemma:4b")
+
+    assert path.name == "run_provenance_rep3_medgemma_4b.json"
+    assert not path.exists()

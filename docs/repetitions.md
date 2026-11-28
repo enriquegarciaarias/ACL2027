@@ -468,7 +468,9 @@ el acuerdo modal sale ≥ 0,98 en la ampliación, el brazo se cierra con una not
   `cov1` **0,000** (abstención 1,000, como la publicada) → brazo cerrado con
   nota. Detalle en §9.7.
 - [ ] B3 (`medgemma:4b` `C3_absent_hrv`) y Fase C (PhysioNet) ejecutados en el
-  servidor.
+  servidor. **El primer intento de B3 (job 16719) abortó** en la guardia de
+  motor porque la procedencia de DREAMT era un fichero por cohorte: ver §9.8.
+
 - [ ] Copia opcional de la repetición 0 desde el corpus base (A2/A4), con
   verificación de prompts.
 
@@ -582,3 +584,42 @@ Lectura:
    ese 0 en `nan`, ver la incidencia de esta sesión). El dato que sostiene la
    conclusión es la cobertura, no una accuracy de 0 que describiría a un
    clasificador que falla cuando en realidad no clasificó.
+
+### 9.8 Procedencia por modelo (incidencia del job 16719)
+
+El intento de B3 (`medgemma:4b`, `C3_absent_hrv`) abortó en 25 s con código 1:
+
+```
+[ERROR] El corpus de run_provenance_rep3.json se generó con otro motor
+        (model: qwen2.5:7b -> medgemma:4b; model_digest: 845dbda0… -> 9fe4e9a6…)
+```
+
+El diagnóstico del guard era correcto; el **alcance** no: en DREAMT el corpus de
+respuestas vive en `responses_rep{R}/{modelo}/`, pero la procedencia era un
+único `run_provenance_rep{R}.json` por cohorte. Consecuencias:
+
+1. El segundo modelo de una cohorte **no podía ejecutarse nunca** con `R > 1`
+   (y con `R = 1` solo a costa de sobrescribir el registro del primero, que es
+   lo que ya había pasado: `run_provenance.json` de `scale/` dice `medgemma:4b`
+   aunque el corpus lo generaron tres modelos).
+2. La alternativa que sugería el mensaje («usa otro `--tag`»), que es la correcta
+   en PhysioNet, no existe en DREAMT: `--cohort` no separa modelos.
+
+Arreglo:
+
+- `provenance.repetition_provenance_name(R, slug)` →
+  `run_provenance_rep{R}_{modelo}.json` (y `run_provenance_{modelo}.json` con
+  `R = 1`). El nombre sin modelo queda como **legado de lectura**.
+- `provenance.guard_corpus_engine(current_path, legacy_path, …)` compara la
+  procedencia del modelo y, además, la antigua compartida **solo si su `model`
+  coincide**: si no, describe otro corpus y abortar por ella impediría correr un
+  segundo modelo. Un cambio de motor dentro del mismo modelo sigue abortando.
+- `analyze_repetitions_external.dreamt_provenance_path()` lee la del modelo y cae
+  a la antigua con la misma regla, para que las cifras publicadas de B1/B2
+  conserven su motor y un modelo ajeno no pueda heredarlas.
+
+`--tag` sigue siendo la separación correcta en PhysioNet, donde la procedencia y
+el fichero de respuestas son por tag y mezclar modelos en el mismo fichero sí
+sería un error. 5 tests nuevos (nombres por modelo, guardia que ignora la
+procedencia ajena, guardia que aborta dentro del mismo modelo y resolución del
+analizador).

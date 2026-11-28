@@ -42,7 +42,12 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 from sources.common.paths import atomic_write_json
-from sources.common.provenance import read_provenance, utc_now
+from sources.common.provenance import (
+    legacy_repetition_provenance_name,
+    read_provenance,
+    repetition_provenance_name,
+    utc_now,
+)
 from sources.phase2.llm_config import model_slug
 from sources.phase3.records import evaluate_records
 from sources.phase3.repetition_stats import (
@@ -310,14 +315,34 @@ def analyze_dreamt(
         draws=draws,
         seed=seed,
         provenance=read_provenance(
-            output_dir
-            / (
-                "run_provenance.json"
-                if repetitions <= 1
-                else f"run_provenance_rep{repetitions}.json"
-            )
+            dreamt_provenance_path(output_dir, repetitions, model)
         ),
     )
+
+
+def dreamt_provenance_path(
+    output_dir: Path, repetitions: int, model: str | None
+) -> Path:
+    """Procedencia del corpus de DREAMT analizado (por modelo, con caída).
+
+    La procedencia es por modelo desde 2026-11-28; los corpus anteriores
+    escribieron un fichero compartido por cohorte. Se acepta ese fichero como
+    respaldo **solo si su ``model`` coincide** con el que se analiza: si no,
+    describe otro corpus y publicar su motor sería un dato falso.
+    """
+    candidates = [output_dir / repetition_provenance_name(repetitions, model_slug(model) if model else None)]
+    legacy = output_dir / legacy_repetition_provenance_name(repetitions)
+    if legacy not in candidates:
+        candidates.append(legacy)
+    for path in candidates:
+        stored = read_provenance(path)
+        if stored is None:
+            continue
+        stored_model = stored.get("model")
+        if model and stored_model and str(stored_model) != str(model):
+            continue
+        return path
+    return candidates[0]
 
 
 def analyze_physionet(

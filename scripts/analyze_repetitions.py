@@ -52,6 +52,7 @@ from sources.phase3.repetition_stats import (
     USABLE_STATUSES,
     aggregate_window,
     extrapolate,
+    format_metric,
     subsets,
     summarize_stability,
     vote,
@@ -395,11 +396,11 @@ def print_report(report: Mapping[str, Any]) -> None:
         )
         single = data["single_run"]
         print(
-            f"  una pasada: acc={single['accuracy']['mean']:.3f} "
-            f"±{single['accuracy']['sd']:.3f} | "
-            f"bal={single['balanced_accuracy']['mean']:.3f} "
-            f"±{single['balanced_accuracy']['sd']:.3f} | "
-            f"cov={single['coverage']['mean']:.3f}"
+            f"  una pasada: acc={format_metric(single['accuracy']['mean'])} "
+            f"±{format_metric(single['accuracy']['sd'])} | "
+            f"bal={format_metric(single['balanced_accuracy']['mean'])} "
+            f"±{format_metric(single['balanced_accuracy']['sd'])} | "
+            f"cov={format_metric(single['coverage']['mean'])}"
         )
         confidence = data["confidence"]
         print(

@@ -582,7 +582,7 @@ python main.py --proc GENERATE --experiment physionet --subject PHYSIONET2017 \
   --per-class 150 --model qwen2.5:7b --tag srv --repetitions 3
 
 # Análisis: acuerdo modal, confianza, convergencia y k implícito (sin LLM)
-python main.py --proc EVALUATE --experiment physionet --tag srv --repetitions 3
+python main.py --proc EVALUATE --experiment physionet --tag srv --subject PHYSIONET2017 --repetitions 3
 ```
 
 El análisis lo hace `scripts/analyze_repetitions_external.py` con la

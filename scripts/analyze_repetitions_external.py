@@ -50,6 +50,7 @@ from sources.phase3.repetition_stats import (
     USABLE_STATUSES,
     aggregate_window,
     extrapolate,
+    format_metric,
     summarize_stability,
     window_stability,
 )
@@ -427,19 +428,27 @@ def print_report(report: Mapping[str, Any]) -> None:
     for key, group in report["groups"].items():
         single = group["single_run"]
         accuracy = single.get("accuracy", {})
+        coverage = single.get("coverage", {}).get("mean")
         implied = group.get("implied_k", {}).get("implied_k", {})
+        # Sin ventanas decididas la accuracy no está definida: ``evaluate_records``
+        # devuelve 0.0 por comodidad numérica, pero publicar ese 0.0 como
+        # «accuracy 0 %» describiría un clasificador que falla cuando en realidad
+        # no clasificó nada.
+        decided = coverage if coverage else None
         print(
             f"{key:<28}{group['n_windows']:>5}"
-            f"{group['stability'].get('mean_modal_share', float('nan')):>9.3f}"
-            f"{accuracy.get('mean') or float('nan'):>8.3f}"
-            f"{accuracy.get('sd') if accuracy.get('sd') is not None else float('nan'):>7.3f}"
-            f"{(single.get('coverage', {}).get('mean') or float('nan')):>7.3f}"
+            f"{format_metric(group['stability'].get('mean_modal_share'), 9)}"
+            f"{format_metric(accuracy.get('mean') if decided else None, 8)}"
+            f"{format_metric(accuracy.get('sd') if decided else None, 7)}"
+            f"{format_metric(coverage, 7)}"
             f"{group['n_invalid']:>6}"
             f"{implied.get('2pp') or 0:>8}"
         )
     print(
         "[REP-EXT] 'acuerdo' = proporción modal media entre repeticiones; "
         "'acc1'/'sd1' = accuracy y su desviación con una sola pasada; "
+        "'cov1' = fracción decidida (1 − abstención) en una pasada; "
+        "'—' = sin registros decididos (no hay accuracy que promediar); "
         "'k(2pp)' = repeticiones que pediría la ley sd/sqrt(k) para ±2 puntos."
     )
 

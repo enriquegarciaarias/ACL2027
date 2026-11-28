@@ -249,6 +249,34 @@ def extrapolate(
     }
 
 
+def format_metric(value: Any, width: int = 0, spec: str = ".3f") -> str:
+    """Formatea una métrica para consola: ``0.0`` se respeta, ``nan`` es ``—``.
+
+    Existe porque el idioma ``valor or nan`` convierte un **0.0 legítimo** en
+    indefinido: la cobertura de un brazo que se abstiene al 100 % (texto `C1` de
+    DREAMT, 2026-11-28) se imprimía como ``nan`` cuando vale exactamente 0, y el
+    número que sostiene la conclusión es precisamente ese 0.
+
+    Args:
+        value: métrica (``None``, ``nan`` o número).
+        width: ancho mínimo del campo (0 = sin relleno).
+        spec: formato de ``format()`` para el número (p. ej. ``".3f"``).
+
+    Returns:
+        str: celda lista para imprimir.
+    """
+    if value is None:
+        text = "—"
+    else:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            text = "—"
+        else:
+            text = "—" if not math.isfinite(number) else format(number, spec)
+    return f"{text:>{width}}" if width else text
+
+
 def distribution(values: Sequence[float]) -> dict[str, Any]:
     """Media, desviación típica y valores de una muestra."""
     clean = [v for v in values if math.isfinite(v)]

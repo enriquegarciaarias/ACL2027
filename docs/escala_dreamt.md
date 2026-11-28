@@ -383,7 +383,14 @@ La estructura **cualitativa** replica y el **nivel** no:
   varianza de muestreo. **Mecanismo implementado (2026-11-28)**: `--repetitions
   R` en `scripts/run_p4_dreamt.py` (salida `responses_rep{R}/`, reanudación por
   ventana×condición×rep, semillas `--seed + r`, guardia de motor) y análisis en
-  `scripts/analyze_repetitions_external.py`; falta lanzar los brazos B1–B3 de
-  [`repetitions.md`](repetitions.md) §9.3.
+  `scripts/analyze_repetitions_external.py`.
+  **B1 y B2 medidos** (`qwen` `C1`, R=3, numérico y texto): numérico con
+  abstención 0,885 frente a 0,879 publicada, `acc*` 0,052 frente a 0,052,
+  acuerdo modal 0,988 y `sd` de accuracy 0,001; texto con acuerdo modal
+  **1,000**, `cov1` **0,000** (abstención 1,000, como la publicada) y 0
+  inválidas. Las dos vistas son **deterministas** en esta condición, así que los
+  dos brazos se cierran con nota y la diferencia 0,885 vs 1,000 entre formatos
+  no es varianza de muestreo. Falta B3 (`medgemma` `C3`). Detalle en
+  [`repetitions.md`](repetitions.md) §9.7.
 - Heredados de WESAD: `qwen3:8b` en `C0`/`C4`, sensibilidad de temperatura,
   decisión sobre H6 y el mensaje al administrador por `sirius`.

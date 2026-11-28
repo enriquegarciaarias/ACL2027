@@ -291,3 +291,56 @@ def test_dreamt_analyzer_groups_by_representation_and_condition(tmp_path):
         assert group["single_run"]["accuracy"]["mean"] == pytest.approx(1.0)
         assert group["implied_k"]["implied_k"]["2pp"] == 1
     assert report["n_classes_labelled"] == 4
+
+
+# ---------------------------------------------------------------------------
+# Presentación: un 0.0 legítimo no es «indefinido»
+# ---------------------------------------------------------------------------
+def test_format_metric_keeps_zero_and_marks_undefined():
+    from sources.phase3.repetition_stats import format_metric
+
+    assert format_metric(0.0, 7) == "  0.000"
+    assert format_metric(0.1154) == "0.115"
+    assert format_metric(None, 5) == "    —"
+    assert format_metric(float("nan"), 5) == "    —"
+
+
+def test_print_report_shows_zero_coverage_instead_of_nan(capsys):
+    """Un brazo que se abstiene al 100 % tiene cobertura 0, no indefinida.
+
+    Regresión del 2026-11-28: el idioma ``valor or nan`` imprimía ``nan`` para
+    ``cov1`` cuando valía exactamente 0 (texto `C1` de DREAMT), ocultando el
+    número que sostiene la conclusión.
+    """
+    report = {
+        "experiment": "dreamt",
+        "model": "qwen2.5:7b",
+        "repetitions": 3,
+        "seeds": [42, 43, 44],
+        "dir": "/tmp/x",
+        "engine": {"ollama_version": "0.40.6", "model_digest": "abc"},
+        "n_classes_labelled": 4,
+        "draws": 10,
+        "groups": {
+            "text|C1_absent_eda": {
+                "n_windows": 480,
+                "n_invalid": 0,
+                "stability": {"mean_modal_share": 1.0},
+                "single_run": {
+                    "accuracy": {"mean": 0.0, "sd": 0.0},
+                    "coverage": {"mean": 0.0},
+                },
+                "implied_k": {"implied_k": {"2pp": 1}},
+            }
+        },
+    }
+
+    reps.print_report(report)
+
+    row = [line for line in capsys.readouterr().out.splitlines() if line.startswith("text|")][0]
+    cells = row.split()
+    assert cells[0] == "text|C1_absent_eda"
+    assert cells[1] == "480"
+    assert cells[2] == "1.000"  # acuerdo modal
+    assert cells[3] == "—"      # accuracy sin registros decididos
+    assert cells[5] == "0.000"  # cobertura: 0, no nan

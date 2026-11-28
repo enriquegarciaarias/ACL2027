@@ -456,7 +456,19 @@ el acuerdo modal sale ≥ 0,98 en la ampliación, el brazo se cierra con una not
   (`scripts/analyze_repetitions_external.py`, 2026-11-28).
 - [x] Fase C: `--repetitions` en `run_p3_physionet.py` (mismo analizador) y
   guardia de motor que **aborta** en vez de avisar.
-- [ ] Fase B/C **ejecutadas** en el servidor (el código está; los jobs no).
+- [x] **B1 ejecutado** (2026-11-28): `qwen2.5:7b` numérico `C1_absent_eda`, R=3
+  (semillas 42–44), 1.440 llamadas en 17 min 34 s, 2 inválidas (0,14 %).
+  `acuerdo 0,988`, `sd1` de accuracy **0,001**, `cov1` 0,115 → abstención
+  **0,885** frente a **0,879** [0,852; 0,908] de la pasada única y `acc*`
+  implícito **0,052** (publicado 0,052 [0,035; 0,073]), `k(2pp)=1`.
+  **Brazo cerrado con nota** por el criterio de parada (acuerdo ≥ 0,98): `C1`
+  numérico es determinista bajo tres semillas y no se escala.
+- [x] **B2 ejecutado** (2026-11-28): `qwen2.5:7b` texto `C1_absent_eda`, R=3,
+  1.440 llamadas en 12 min 49 s, **0 inválidas**; acuerdo modal **1,000**,
+  `cov1` **0,000** (abstención 1,000, como la publicada) → brazo cerrado con
+  nota. Detalle en §9.7.
+- [ ] B3 (`medgemma:4b` `C3_absent_hrv`) y Fase C (PhysioNet) ejecutados en el
+  servidor.
 - [ ] Copia opcional de la repetición 0 desde el corpus base (A2/A4), con
   verificación de prompts.
 
@@ -510,9 +522,15 @@ python scripts/analyze_repetitions_external.py --experiment physionet --tag srv 
 Por CLI de fases, con enrutado automático al mismo analizador:
 
 ```bash
-python main.py --proc EVALUATE --experiment dreamt --cohort scale --model qwen2.5:7b --repetitions 3
-python main.py --proc EVALUATE --experiment physionet --tag srv --repetitions 3
+python main.py --proc EVALUATE --experiment dreamt --cohort scale --model qwen2.5:7b --subject DREAMT --repetitions 3
+python main.py --proc EVALUATE --experiment physionet --tag srv --subject PHYSIONET2017 --repetitions 3
 ```
+
+> En el servidor, `run_ACL.sh` **exige** `--subject` (`WESAD`, `DREAMT`,
+> `PHYSIONET2017`) y sale con código 2 si falta, aunque el análisis resuelva su
+> ruta con `--cohort`/`--tag`. Es la única bandera obligatoria que el lanzador
+> impone y no el analizador: un EVALUATE sin ella muere antes de arrancar
+> (job 16715, 1 s, `2:0`).
 
 El informe (`repetitions_rep{R}_{modelo}.json` / `repetitions_{tag}_rep{R}.json`)
 agrupa por `(representación, condición)` y da: acuerdo modal, entropía, fracción
@@ -523,3 +541,44 @@ una pasada), convergencia por voto mayoritario `k = 1..R` y `k` implícito para
 opaco recalculado) y de `physionet2017[_tag]_rep{R}.labels.jsonl`; las clases
 son las de cada tarea (`wake/n1/n2/rem` y `normal/af/other-rhythm/noisy`), no
 las afectivas de WESAD.
+
+### 9.7 Primeros resultados (B1/B2, 2026-11-28): `C1` es determinista en las dos vistas
+
+`qwen2.5:7b`, `C1_absent_eda` (EDA ausente), 480 ventanas × 3 semillas
+(42, 43, 44), Ollama 0.40.6, digest `845dbda0…` (el mismo del corpus
+publicado). Numérico: 1.440 llamadas, 17 min 34 s, 2 inválidas (0,14 %). Texto:
+1.440 llamadas, 12 min 49 s, **0 inválidas**.
+
+| Vista | n | Acuerdo modal | `sd` de accuracy (una pasada) | `cov1` | Abstención publicada | `k` ±2 pp |
+|---|---:|---:|---:|---:|---:|---:|
+| numérico | 480 | 0,988 | **0,001** | 0,115 | **0,879** [0,852; 0,908] | 1 |
+| texto | 480 | **1,000** | 0,000 | **0,000** | **1,000** | 1 |
+
+Lectura:
+
+1. **El brazo se cierra con una nota**: el acuerdo (0,988) supera el umbral
+   pre-registrado de 0,98, así que no se escala a más sujetos ni se sube `R`.
+   La retirada del modelo ante la EDA ausente es una propiedad estable, no un
+   artefacto de una semilla.
+2. **La reproducción es exacta**: la abstención cae dentro del IC publicado y el
+   `acc*` coincide al milésimo, con una `sd` de 0,001 entre semillas. Sirve de
+   control de que el corpus de repeticiones y el publicado son comparables
+   (mismo motor, mismo `model_digest`, mismos prompts).
+3. **La referencia correcta es la del servidor.** La cifra 0,294 de `C1`
+   numérico que circula en `piloto_dreamt.md` §19 es del piloto local con Ollama
+   **0.30.7**; en 0.40.6 la misma condición abstiene 0,879 (contraste en
+   `escala_dreamt.md` §7.6). Comparar contra 0,294 habría hecho parecer un
+   cambio de comportamiento donde solo hay un cambio de motor.
+4. **Las dos representaciones son deterministas aquí, y difieren de forma
+   estable.** El texto se abstiene en las 480 ventanas (`cov1` 0,000) con
+   acuerdo modal 1,000 y cero inválidas, frente al 0,115 de cobertura del
+   numérico. Es decir: la diferencia 0,885 vs 1,000 que sostiene el «espejo» de
+   H4/H3 en esta condición **no es ruido de una pasada**; es una propiedad del
+   formato que tres semillas reproducen exactamente. Sin un brazo de
+   repeticiones esto solo se podía suponer.
+5. **Con cobertura 0 la accuracy no se publica como 0.** Una pasada sin ninguna
+   ventana decidida deja la accuracy indefinida; el impresor muestra `—` en
+   `acc1`/`sd1` y `0.000` en `cov1` (antes, el idioma `valor or nan` convertía
+   ese 0 en `nan`, ver la incidencia de esta sesión). El dato que sostiene la
+   conclusión es la cobertura, no una accuracy de 0 que describiría a un
+   clasificador que falla cuando en realidad no clasificó.

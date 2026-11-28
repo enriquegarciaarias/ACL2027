@@ -21,6 +21,7 @@ Esqueleto reutilizable (patrón común heredado de PSRI y SLIP).
 from sources.common import environment
 from sources.common.common import processControl, logger, writeLog
 from sources.common.paramsManager import getConfigs
+from sources.common.provenance import code_state, format_code_state
 
 # ---------------------------------------------------------------------------
 # Registro de procesos disponibles.
@@ -98,6 +99,9 @@ def _run() -> int:
     getConfigs()
     writeLog("info", logger,
              f"********** STARTING {processControl.args.proc.upper() if processControl.args and processControl.args.proc else 'PROJECT'} Process **********")
+    # Qué código corre: un despliegue sin actualizar es indistinguible de uno
+    # correcto salvo por esta línea (incidente del job 16712).
+    writeLog("info", logger, format_code_state(code_state()))
 
     proc = getattr(processControl.args, "proc", None)
     step = getattr(processControl.args, "step", None)

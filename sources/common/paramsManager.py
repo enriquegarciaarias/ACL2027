@@ -244,9 +244,10 @@ def manageArgs():
         '--repetitions',
         type=int,
         default=None,
-        help="GENERATE degradation: repeticiones del mismo prompt con semillas "
-             "distintas (varianza de muestreo). Con R>1 la salida va a "
-             "{nombre}_rep{R}/.",
+        help="Repeticiones del mismo prompt con semillas distintas (varianza de "
+             "muestreo): GENERATE en degradation, dreamt y physionet, y EVALUATE "
+             "en los tres. Con R>1 la salida va a un corpus aparte "
+             "(*_rep{R}) y nunca se mezcla con el de una pasada.",
     )
     parser.add_argument(
         '--max-records',

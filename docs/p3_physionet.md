@@ -89,6 +89,11 @@ el conjunto de evaluación es del 25,6 %.
 
 ## 5. Resultados
 
+Las cifras de §5.1–§5.10 son de la **corrida histórica** (Ollama 0.30.7, sin
+procedencia registrada). La **§5.11** las contrasta registro a registro con la
+corrida `srv` (Ollama 0.40.6, procedencia registrada), que es la **citable**
+junto a WESAD y DREAMT.
+
 ### 5.1 Corrección: colapso en la clase ya predicha, no en la mayoritaria
 
 | Métrica | LLM | Referencia (logreg) | Mayoría trivial (`other-rhythm`) |
@@ -224,9 +229,10 @@ de claims contradichos: ni siquiera la descripción es fiable.
 | **`noisy`** | **−0,64** | 103 |
 
 - Kruskal-Wallis entre las cuatro clases: H = 11,74, **p = 0,008**.
-- `noisy` frente al resto: Mann-Whitney **p = 0,0008**, Cliff δ = **+0,60**
-  (efecto grande): el modelo escribe con **más seguridad** precisamente en los
-  registros que el experto descartó por ilegibles.
+- `noisy` frente al resto: Mann-Whitney **p = 0,0008**, P(`noisy` > resto) =
+  **0,603**, **Cliff δ = +0,206**: el modelo escribe con **más seguridad**
+  precisamente en los registros que el experto descartó por ilegibles.
+  (La corrida `srv` conserva el signo con menos intensidad; §5.11.)
 - En WESAD la certeza bajaba con la degradación controlada; aquí **sube** con la
   degradación natural. La dirección del efecto depende de si el modelo *sabe*
   que hay un problema: cuando la señal se degrada por un experimento, el texto
@@ -317,6 +323,9 @@ desarrollo.
   no como patrón numérico. La ablación mide, por tanto, el efecto de la etiqueta
   más que el del patrón; una versión corregida debería usar registros
   prototípicos o varios ejemplos por clase.
+- **Procedencia**: esta ablación se generó con Ollama **0.30.7** y el informe de
+  la corrida `srv` la reutiliza tal cual (los ficheros `physionet2017_dev_*` no
+  se regeneraron). No es comparable con §5.11 y se cita con su motor.
 
 ### 5.10 Respuestas inválidas y recuperación
 
@@ -330,6 +339,60 @@ desarrollo.
 - El fichero de respuestas tiene 406 líneas: 3 registros pertenecen a una
   ejecución previa de prueba y no están en el conjunto de evaluación. El análisis
   los descarta (ver `inputs.dropped_unlabeled` del informe).
+- La corrida `srv` (0.40.6) tiene **1 inválida** (no 4) y ninguna fila ajena:
+  403 respuestas, 402 decididas. La recuperación tolerante no cambia ninguna
+  conclusión en ninguno de los dos brazos.
+
+### 5.11 Contraste de motores: 0.30.7 (histórico) frente a 0.40.6 (`srv`)
+
+La corrida `srv` (job 16707, **18 min**, **403 llamadas**, 0 errores) reutiliza la
+misma caché de features —indexada por `record_id`, no por huella— y los mismos
+prompts, así que los dos corpus son **pareados registro a registro**. El contraste
+lo calcula `scripts/compare_physionet_runs.py` (McNemar exacto, Wilson por clase,
+bootstrap de 2.000 remuestreos sobre registros):
+
+| Métrica | Histórico (0.30.7) | `srv` (0.40.6) | Δ pareado [IC 95 %] |
+|---|---:|---:|---:|
+| Accuracy (decididas) | 0,243 | 0,241 | **0,000** [0,000; 0,000] |
+| Balanced accuracy | 0,250 | 0,250 | — |
+| Abstención en `noisy` | 0/103 | **0/103** | — |
+| Decisiones | 398 `normal` + 1 `af` | 402 `normal` | 1 cambio |
+| Inválidas de formato | 4 | **1** | — |
+| Claims respaldados | 0,524 (905) | **0,596** (1.168) | **+0,064** [+0,039; +0,089] |
+| Claims contradichos | 0,476 (822) | 0,404 (793) | — |
+| Certeza (índice) | −1,17 | **−0,60** | **+0,565** [+0,312; +0,814] |
+| Hedges / 100 palabras | 0,589 | 0,398 | −32 % |
+| `noisy` vs resto (Cliff δ) | +0,206 (p=0,0008) | +0,139 (p=0,019) | — |
+
+**La conducta no cambia; el lenguaje sí.**
+
+- De 403 registros, **402 tienen la misma predicción**. El único cambio es una
+  predicción `af` que pasa a `normal`: el registro **no era `af`**, así que las
+  dos eran incorrectas. Por eso hay **0 pares discordantes** (McNemar exacto
+  p = 1,000), el número de aciertos es el mismo (97) y la accuracy solo se mueve
+  por el denominador (399 decididas frente a 402). Esto refuerza H4: 0/103
+  abstenciones en evidencia ilegible en **dos motores**.
+- **Claims**: el motor nuevo escribe **13,5 % más claims** (1.727 → 1.961) y los
+  nuevos son casi todos respaldados; el **número absoluto de claims falsos apenas
+  se mueve** (822 → 793, −3,5 %). Es decir, la tasa de respaldo sube porque hay
+  más claims, no porque el modelo lea mejor. La disociación con el acierto se
+  refuerza: el respaldo es 0,572 en aciertos y 0,602 en fallos (**AUROC 0,475**,
+  por debajo del azar; histórico 0,510).
+- **Certeza**: 0.40.6 usa un tercio menos de hedges. El **orden se conserva**
+  —`noisy` sigue siendo la clase menos dubitativa en los dos motores— pero la
+  separación se debilita: Kruskal p 0,008 → **0,078** (no significativo entre las
+  cuatro clases) y δ +0,206 → +0,139, significativo solo en el contraste dirigido
+  `noisy` vs resto (p = 0,019). **El signo del hallazgo de H2b replica; su
+  magnitud es dependiente del motor.**
+- Señal de calidad y compuerta de consistencia **idénticas**: AUROC multivariante
+  0,873 / AP 0,692 y los mismos 32 fallos (`ecg_n_beats_vs_hr`), con 24 vetos en
+  `noisy` y 8 en limpio. Son deterministas respecto a las features, así que el
+  motor no las toca; sirve de control de que la pareja de corpus comparte entrada.
+
+**Lectura para el paper**: el nivel de las métricas de **lenguaje** (H2b, H5) es
+una propiedad del motor, no de la tarea; la **corrección** y la **abstención**
+(H1, H4) no dependen de él. Cualquier cifra de claims o de certeza debe citarse
+con su motor y su `model_digest`.
 
 ---
 
@@ -345,9 +408,11 @@ desarrollo.
    problema de calibración del umbral, es que la opción no se usa.
 3. **La certeza lingüística se invierte con la degradación natural.** En WESAD
    (degradación controlada) el texto se vuelve cauto; en PhysioNet (ruido real)
-   se vuelve **más** asertivo (Cliff δ = +0,60, p = 0,0008). El modelo reacciona
-   a la *señal de que algo va mal*, no a la falta de información: si el ruido le
-   parece un patrón, lo describe con seguridad.
+   se vuelve **más** asertivo (P(`noisy`>resto) = 0,603, Cliff δ = +0,206,
+   p = 0,0008). El modelo reacciona a la *señal de que algo va mal*, no a la falta
+   de información: si el ruido le parece un patrón, lo describe con seguridad. El
+   **signo** replica en el motor 0.40.6 (δ = +0,139, p = 0,019) y el **nivel** no:
+   es un resultado de dirección, no de magnitud (§5.11).
 4. **El respaldo de claims es bajo (0,476 contradichos) y no informa del acierto**
    (AUROC 0,510). Es la versión extrema del hallazgo de WESAD: allí el modelo
    citaba bien y fallaba al combinar; aquí falla ya en la lectura.
@@ -382,10 +447,18 @@ desarrollo.
   se generaron en local con Ollama 0.30.7 y el runner de entonces no escribía
   `run_provenance.json` (ya corregido). El motor no es un detalle: con el mismo
   prompt y la misma semilla dio 0 abstenciones en el servidor (Ollama 0.40.6) y
-  28 en local. Para citar estas cifras junto a los corpus del servidor hay que
-  **re-ejecutarlas allí**, con la misma versión y semilla: son ~420 llamadas
-  (~20 min) y se hacen con `--tag` para no mezclarlas con las históricas
-  (§8.1).
+  28 en local. **Resuelto por la corrida `srv`** (§5.11): las cifras citables son
+  las de 0.40.6, con procedencia registrada, y el histórico queda como contraste
+  de motor.
+- **La ablación few-shot de §5.9 sigue siendo del motor 0.30.7.** El analizador
+  reutiliza `physionet2017_dev_{fs,nofs}.responses.jsonl`, que no se regeneraron
+  con `--tag`, así que sus cifras no son comparables con el brazo `srv` y hay que
+  citarlas con su motor (o regenerarlas: 2 × 40 llamadas, los mismos 40
+  registros de desarrollo, ~10 min).
+- **Las métricas de lenguaje (H2b, H5) dependen del motor**: la tasa de claims
+  respaldados cambia +6,4 pp y el índice de certeza +0,57 entre 0.30.7 y 0.40.6
+  con la misma entrada y las mismas decisiones. Ninguna cifra de claims o de
+  hedges debe citarse sin su motor y su `model_digest`.
 
 ## 8. Reproducción
 
@@ -420,7 +493,8 @@ Salidas de la corrida histórica (`--tag` vacío):
 - `physionet2017_summary.json` (resumen de la ejecución)
 - `run_provenance[_tag].json` (versión de Ollama, digest y tamaño del modelo,
   parámetros por defecto y configuración experimental; se escribe **antes** de
-  generar, para que quede registrada aunque el job se corte)
+  generar las llamadas pendientes, para que quede registrada aunque el job se
+  corte, y **no se reescribe** si no hay nada que generar)
 - `physionet2017_analysis.json` (informe del análisis: corrección, referencia,
   abstención, claims, certeza, señal de calidad, consistencia, ablación)
 
@@ -432,7 +506,10 @@ El runner **aborta** si el modelo no está descargado (`ollama pull <modelo>`);
 antes escribía un `timeout` por registro que la reanudación reutilizaba. Para
 que las cifras del servidor sean comparables con las de WESAD y DREAMT, el
 motor debe ser el mismo: comprobar `ollama --version` y el `model_digest` de
-`run_provenance.json` antes de mezclar corpus.
+`run_provenance.json` antes de mezclar corpus. Si hay llamadas pendientes y el
+`run_provenance*.json` existente declara otro motor, el runner **aborta** con
+código 2; `--allow-engine-change` degrada el aborto a aviso (y reescribe la
+procedencia, así que el corpus queda etiquetado con el motor nuevo).
 
 ### 8.1 Re-ejecución en el servidor (cifras citables)
 
@@ -444,8 +521,9 @@ corpus de WESAD/DREAMT si se vuelven a generar allí. Dos salvaguardas:
   respondido, el runner imprime el motor registrado y sale sin tocar el fichero:
   antes bastaba una reanudación inocente para etiquetar un corpus ajeno con el
   motor actual);
-- con llamadas pendientes y otro motor registrado, avisa (`AVISO`) antes de
-  mezclar; separar motores es responsabilidad del `--tag`.
+- con llamadas pendientes y otro motor registrado, **aborta** con la versión
+  registrada y la actual; separar motores es responsabilidad del `--tag`, y
+  `--allow-engine-change` es el opt-in explícito para mezclarlos.
 
 Una línea por comando, desde el despliegue `~/data`:
 
@@ -464,3 +542,52 @@ ficheros `physionet2017_dev_*.responses.jsonl`; si no están en la máquina, el
 informe la marca como no disponible en lugar de fallar, y las etiquetas del split
 de desarrollo se reconstruyen con el mismo muestreo (`per_class=150`, `seed=42`)
 y el mismo CRC32 que el runner.
+
+Resultado de la corrida (2026-11-28): 403/403 respuestas, 18 min, 0 errores,
+`qwen2.5:7b`, Ollama 0.40.6. Cifras en §5.11.
+
+### 8.2 Contraste pareado entre corridas
+
+`scripts/compare_physionet_runs.py` empareja dos corridas por `record_id` y
+reporta validez, matriz de transiciones, **McNemar exacto** sobre los pares
+discordantes, abstención por clase con Wilson, respaldo de claims recalculado
+desde el prompt guardado y certeza lingüística, con IC por bootstrap sobre
+registros. No llama al LLM y no reescribe el corpus: solo lee y escribe un JSON.
+Delega el nombrado de ficheros en `analyze_p3_physionet.run_paths`, para que
+comparador y analizador no puedan divergir.
+
+```bash
+# Histórico (0.30.7) frente a la corrida del servidor (0.40.6)
+python scripts/compare_physionet_runs.py --tag-b srv
+
+# Omitir el recálculo de claims (más rápido)
+python scripts/compare_physionet_runs.py --tag-b srv --no-claims
+```
+
+Salida por defecto: `physionet2017_comparison_<tag_b>.json`. Si una corrida no
+tiene procedencia, `engine_changed` queda en `false`: no se puede afirmar un
+cambio de motor que no está registrado.
+
+### 8.3 Repeticiones de prompt (varianza de muestreo)
+
+`--repetitions R` repite el **mismo prompt** con semillas `--seed + r`. El
+prompt se construye una vez por registro, la reanudación se indexa por
+`(record_id, repetición)` y la salida va aislada en
+`physionet2017[_tag]_rep{R}.*`: una corrida de repeticiones no puede mezclarse
+con el corpus de una pasada (con `R = 1` las rutas son las de siempre).
+
+```bash
+# 403 registros x 3 repeticiones = 1.209 llamadas (desde la base: 806 nuevas)
+python main.py --proc GENERATE --experiment physionet --subject PHYSIONET2017 \
+  --per-class 150 --model qwen2.5:7b --tag srv --repetitions 3
+
+# Análisis: acuerdo modal, confianza, convergencia y k implícito (sin LLM)
+python main.py --proc EVALUATE --experiment physionet --tag srv --repetitions 3
+```
+
+El análisis lo hace `scripts/analyze_repetitions_external.py` con la
+estadística compartida de `sources/phase3/repetition_stats.py`; el runner de la
+tarea no entiende de réplicas y contaría cada registro `R` veces, así que el
+despachador lo enruta aparte cuando `R > 1`. Diseño y criterio de parada
+(acuerdo modal ≥ 0,98 cierra el brazo) en
+[`repetitions.md`](repetitions.md) §3 y §9.6.

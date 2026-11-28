@@ -23,16 +23,20 @@ generaron también en el servidor y se citan desde sus informes de evaluación.
 | **WESAD** | binario `stress` / `non-stress` (`schmidt`: baseline + amusement), sin temperatura | `qwen2.5:7b`, `qwen3:14b` | `C0`, `C1` resp, `C2` EDA parcial, `C4` EDA a cero, `C5` ambas | 424 ventanas, 12 sujetos (S5–S17 sin S12) | servidor, Ollama 0.40.6 |
 | **WESAD** | 4 clases afectivas (baseline/amusement/stress/meditation) | los mismos 2 | las mismas 5 | 567 ventanas, 12 sujetos | servidor, Ollama 0.40.6 |
 | **DREAMT** | 4 estadios (wake/n1/n2/rem), N3 excluido | `qwen2.5:7b`, `llama3.1:8b`, `medgemma:4b` | `C0`, `C1` EDA ausente, `C2` EDA degenerada, `C3` cardíaco ausente, `C4` núcleo ausente, `NC_absent` | 480 ventanas/condición, 12 sujetos, 2 vistas | servidor, Ollama 0.40.6 |
-| **PhysioNet 2017** | 4 ritmos (normal/af/other/noisy) | `qwen2.5:7b` | una sola (limpia) + clase `noisy` de experto | 403 registros | local, Ollama 0.30.7 (re-ejecución lista, pendiente de lanzar) |
+| **PhysioNet 2017** | 4 ritmos (normal/af/other/noisy) | `qwen2.5:7b` | una sola (limpia) + clase `noisy` de experto | 403 registros | 0.30.7 (histórico) **y** 0.40.6 (`srv`, pareado) |
 
 Los motores **no se mezclan**: con el mismo prompt y la misma semilla, Ollama
-0.40.6 dio 0 abstenciones y 0.30.7 dio 28. WESAD y DREAMT comparten ya el motor
-del servidor; PhysioNet sigue en 0.30.7 y su re-ejecución está pendiente (el
-runner y el analizador ya soportan `--tag srv` para aislarla, ver
-[`p3_physionet.md`](p3_physionet.md) §8.1), así que sus cifras se citan como
-**patrón**. Las comparaciones entre modelos se hacen
-**dentro** de cada dataset, y las comparaciones entre datasets se hacen sobre el
-**patrón**, nunca sobre el número.
+0.40.6 dio 0 abstenciones y 0.30.7 dio 28. WESAD y DREAMT comparten el motor del
+servidor. **PhysioNet se re-ejecutó allí** (2026-11-28, `--tag srv`, 403
+llamadas) y el contraste pareado registro a registro da la medida exacta de lo
+que cambia el motor ([`p3_physionet.md`](p3_physionet.md) §5.11): **402 de 403
+predicciones idénticas** (McNemar p = 1,000), 0/103 abstenciones en `noisy` en
+los dos brazos, y en cambio **+6,4 pp de claims respaldados** y **+0,57 de
+índice de certeza** (menos *hedges*). Es decir: la **corrección y la abstención**
+(H1, H4) no dependen del motor; el **nivel** de las métricas de lenguaje (H2b,
+H5) sí. Las comparaciones entre modelos se hacen **dentro** de cada dataset, y
+las comparaciones entre datasets se hacen sobre el **patrón**, nunca sobre el
+número.
 
 ---
 
@@ -188,8 +192,13 @@ ese brazo y no con DREAMT.
   **+0,064** (≈1,9 sd). Para describir una ventana harían falta k ≈ 20; para el
   agregado, k = 3.
 - **PhysioNet**: el efecto se **invierte**. Con evidencia inutilizable (`noisy`),
-  el modelo no solo no se abstiene: se vuelve **más asertivo** (Cliff δ = +0,60,
-  p = 0,0008), mientras en WESAD la degradación aumenta los *hedges*.
+  el modelo no solo no se abstiene: se vuelve **más asertivo** (P(`noisy`>resto)
+  = 0,603, **Cliff δ = +0,206**, p = 0,0008), mientras en WESAD la degradación
+  aumenta los *hedges*. El **signo** replica con el motor 0.40.6 (δ = +0,139,
+  p = 0,019) pero la **magnitud es del motor**: el índice global pasa de −1,17 a
+  −0,60 y la heterogeneidad entre las cuatro clases deja de ser significativa
+  (Kruskal p 0,008 → 0,078) con las mismas decisiones. Se cita la **dirección**;
+  el nivel, con su motor.
 
 Conclusión para el paper: la confianza y la certeza son **canales de la
 respuesta**, no lecturas de la evidencia. Reportar ECE y AUROC(confianza) es
@@ -231,15 +240,17 @@ detecta la compuerta) o **está a cero** (nadie lo detecta).
 
 ## 9. Amenazas a la validez (para la sección de limitaciones)
 
-1. **Motor.** WESAD y DREAMT (escala) se generaron con Ollama **0.40.6**;
-   PhysioNet sigue en 0.30.7 y está pendiente de re-ejecución con `--tag srv`
-   (la procedencia solo se escribe si hay llamadas pendientes, así que reanudar
-   sin `--tag` no puede reetiquetar el corpus histórico). El motor altera la
-   abstención de forma material: la misma condición de DREAMT pasó de 0,294 a
-   0,879 en `qwen`/`C1` al cambiar de motor, y un hallazgo local (`llama3.1:8b`
-   decidiendo en `C4`) desapareció. Las comparaciones entre datasets son de
-   **patrón**; cualquier cifra conjunta exige un motor único
-   (`run_provenance.json` lo registra).
+1. **Motor.** WESAD, DREAMT (escala) y **PhysioNet (`srv`)** se generaron con
+   Ollama **0.40.6**; el corpus histórico de PhysioNet es de 0.30.7 y se conserva
+   como **contraste de motor** (la procedencia solo se escribe si hay llamadas
+   pendientes, así que reanudar sin `--tag` no puede reetiquetarlo). El contraste
+   pareado cuantifica el efecto por primera vez: con la misma entrada y **402 de
+   403 decisiones idénticas**, el motor nuevo produce **+6,4 pp de claims
+   respaldados** y **+0,57 de índice de certeza**. En DREAMT el motor alteró la
+   abstención de forma aún mayor: la misma condición pasó de 0,294 a 0,879 en
+   `qwen`/`C1`, y un hallazgo local (`llama3.1:8b` decidiendo en `C4`)
+   desapareció. Las comparaciones entre datasets son de **patrón**; las cifras de
+   claims y certeza exigen motor único (`run_provenance.json` lo registra).
 2. **Unidad de generalización.** Las 424–480 ventanas vienen de **12 sujetos**; los
    IC son bootstrap agrupado por sujeto. El n efectivo es ≈12, no ≈500.
 3. **Diseño no completamente preregistrado.** El endpoint binario, la jerarquía

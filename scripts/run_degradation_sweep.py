@@ -51,7 +51,7 @@ from typing import Any, Mapping
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sources.common.llm_client import check_model_available, ollama_run_provenance
-from sources.common.provenance import sha256_file, utc_now
+from sources.common.provenance import engine_conflicts, sha256_file, utc_now
 from sources.ingestion.represent import LLM_ALLOWED_FEATURES, _opaque_window_id
 from sources.phase2.development_split import (
     DEV_SUBJECTS,
@@ -180,39 +180,6 @@ def ensure_model_available(model: str) -> None:
             f"      Instálalo con: ollama pull {model}\n"
             f"      (comprueba también OLLAMA_MODELS: el job usa $HOME/data/.ollama/models)"
         )
-
-
-def engine_conflicts(
-    stored: Mapping[str, Any] | None,
-    current: Mapping[str, Any] | None,
-) -> list[str]:
-    """Diferencias de identidad del motor entre el corpus y la ejecución actual.
-
-    El motor forma parte del experimento: dos builds del mismo nombre no dan el
-    mismo corpus (2026-11-18: 0 frente a 28 abstenciones con Ollama 0.40.6 y
-    0.30.7). La caché de reanudación se indexa por ``(ventana, condición,
-    repetición)``, **sin** identidad de motor, así que reanudar tras un cambio de
-    versión mezclaría corpora en silencio: en un experimento de varianza de
-    muestreo eso es indistinguible del ruido que se quiere medir.
-
-    Args:
-        stored: bloque ``ollama`` de un ``run_provenance.json`` previo.
-        current: bloque ``ollama`` de la ejecución actual.
-
-    Returns:
-        Lista de descripciones ``campo: antes -> ahora``. Vacía si no hay
-        diferencias comprobables (también si falta el campo en alguno de los dos,
-        porque entonces no se puede afirmar que haya cambiado).
-    """
-    if not stored or not current:
-        return []
-    conflicts: list[str] = []
-    for field in ("model", "model_digest", "ollama_version"):
-        before = stored.get(field)
-        after = current.get(field)
-        if before and after and str(before) != str(after):
-            conflicts.append(f"{field}: {before} -> {after}")
-    return conflicts
 
 
 def output_directory(

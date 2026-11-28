@@ -90,7 +90,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip wheel
 pip install -r requirements.txt
 pip install -r requirements-dev.txt   # pytest (opcional, para tests)
-python -m pytest -q                   # 683 tests
+python -m pytest -q                   # 727 tests
 ```
 
 `requirements.txt` incluye `torch` y fija el índice de PyTorch en
@@ -217,6 +217,8 @@ python main.py --proc GENERATE --experiment degradation --subject WESAD --repres
 # Validación externa
 python main.py --proc GENERATE --experiment physionet --per-class 150
 python main.py --proc GENERATE --experiment kemocon --task arousal
+# Contraste pareado entre corridas del mismo dataset (p. ej. motores distintos)
+python scripts/compare_physionet_runs.py --tag-b srv
 
 # Segunda tarea (estadios de sueño, DREAMT): prepare + generate en una llamada
 python main.py --proc GENERATE --experiment dreamt --representation both
@@ -386,6 +388,7 @@ ACL2027/
 │   ├── run_p3_kemocon.py            # validación externa K-EmoCon
 │   ├── run_p3_physionet.py          # validación externa PhysioNet 2017
 │   ├── analyze_p3_physionet.py      # análisis de PhysioNet 2017 (claims, calidad, ablación)
+│   ├── compare_physionet_runs.py    # contraste pareado entre corridas (McNemar, claims, certeza)
 │   ├── run_p4_dreamt.py             # segunda tarea: estadios de sueño (prepare/generate/evaluate)
 │   ├── compare_dreamt_models.py     # comparación de modelos DREAMT con IC sobre sujetos
 │   ├── compare_models.py            # comparación de modelos (tabla + bootstrap por sujeto)
@@ -400,7 +403,7 @@ ACL2027/
 │   ├── phase2/                  # prompts, LLM, esquema de respuesta, controles negativos, gate de consistencia
 │   ├── phase3/                  # evaluación, claims, certeza, calibración, degradación
 │   └── external/                # adaptadores K-EmoCon, PhysioNet 2017 y DREAMT
-├── tests/                       # 683 tests (sin dependencia de los datasets reales)
+├── tests/                       # 727 tests (sin dependencia de los datasets reales)
 └── results/                     # NO versionado: input/ y output/ por subject
 ```
 
@@ -412,7 +415,7 @@ ACL2027/
 python -m pytest -q
 ```
 
-**683 tests**: infraestructura, ingesta, features, representaciones, prompts, esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y adaptadores externos. No requieren descargar WESAD ni Ollama.
+**727 tests**: infraestructura, ingesta, features, representaciones, prompts, esquema de respuesta, orquestador, consistencia, calibración, claims/certeza y adaptadores externos. No requieren descargar WESAD ni Ollama.
 
 ---
 

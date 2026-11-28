@@ -104,6 +104,25 @@ def test_generate_physionet_argv():
     assert "--subjects" not in argv  # el muestreo es interno
 
 
+def test_generate_physionet_forwards_model():
+    """``--model`` no puede ignorarse: el runner generaría con su defecto."""
+    argv = pipelines.build_generate_argv("physionet", _args(model="qwen3:14b"))
+    assert argv[argv.index("--model") + 1] == "qwen3:14b"
+    # Sin --model explícito se usa el primario de config, nunca se omite.
+    processControl.defaults = {"llm": {"primary_model": "qwen2.5:7b"}}
+    try:
+        fallback = pipelines.build_generate_argv("physionet", _args(model=None))
+        assert fallback[fallback.index("--model") + 1] == "qwen2.5:7b"
+    finally:
+        processControl.defaults = {}
+
+
+def test_generate_physionet_does_not_forward_evidence_temperature():
+    """La ``--temperature`` global es de la evidencia; en el runner es muestreo."""
+    argv = pipelines.build_generate_argv("physionet", _args(temperature="exclude"))
+    assert "--temperature" not in argv
+
+
 def test_generate_kemocon_argv():
     argv = pipelines.build_generate_argv(
         "kemocon", _args(task="arousal", max_windows=5)
@@ -700,3 +719,67 @@ def test_generate_argv_forwards_engine_change_opt_in():
         "degradation", _args(allow_engine_change=True)
     )
     assert "--allow-engine-change" in argv
+
+
+# ---------------------------------------------------------------------------
+# Repeticiones de prompt en datasets externos (DREAMT y PhysioNet)
+# ---------------------------------------------------------------------------
+def test_generate_external_forwards_repetitions_and_engine_opt_in():
+    """``R`` y el opt-in de motor son banderas reales de ambos runners."""
+    for experiment in ("physionet", "dreamt"):
+        argv = pipelines.build_generate_argv(
+            experiment, _args(experiment=experiment, repetitions=3)
+        )
+        assert "--repetitions" in argv and "3" in argv
+        assert "--allow-engine-change" not in argv
+        argv = pipelines.build_generate_argv(
+            experiment,
+            _args(
+                experiment=experiment,
+                repetitions=3,
+                allow_engine_change=True,
+            ),
+        )
+        assert "--allow-engine-change" in argv
+
+
+def test_evaluate_external_repetitions_uses_the_external_analyzer():
+    """El analizador de la tarea contaría R veces cada ventana: se enruta aparte."""
+    for experiment in ("physionet", "dreamt"):
+        argv = pipelines.build_evaluate_argv(
+            experiment, _args(experiment=experiment, repetitions=3)
+        )
+        assert argv[:2] == ["--experiment", experiment]
+        assert "--repetitions" in argv and "3" in argv
+        assert pipelines._script_for_evaluate(experiment) != (
+            "analyze_repetitions_external"
+        )
+
+
+def test_evaluate_external_without_repetitions_keeps_task_analyzer():
+    argv = pipelines.build_evaluate_argv("physionet", _args(experiment="physionet"))
+    assert "--experiment" not in argv
+    assert "--phase" in pipelines.build_evaluate_argv(
+        "dreamt", _args(experiment="dreamt")
+    )
+
+
+def test_external_estimate_scales_with_repetitions():
+    """La estimación del plan debe incluir las réplicas (si no, engaña por R×)."""
+    single = pipelines._estimate_calls(
+        "physionet", [], _args(experiment="physionet", per_class=10)
+    )
+    triple = pipelines._estimate_calls(
+        "physionet", [], _args(experiment="physionet", per_class=10, repetitions=3)
+    )
+    assert triple == 3 * single
+
+    dreamt_single = pipelines._estimate_calls(
+        "dreamt", ["S001"], _args(experiment="dreamt", windows_per_class=2)
+    )
+    dreamt_triple = pipelines._estimate_calls(
+        "dreamt",
+        ["S001"],
+        _args(experiment="dreamt", windows_per_class=2, repetitions=3),
+    )
+    assert dreamt_triple == 3 * dreamt_single

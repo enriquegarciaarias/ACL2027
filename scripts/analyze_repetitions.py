@@ -37,10 +37,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from collections import Counter, defaultdict
-from itertools import combinations
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -49,6 +47,18 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sources.common.provenance import opaque_window_id, utc_now
+from sources.phase3.repetition_stats import (
+    DEFAULT_TARGETS,
+    USABLE_STATUSES,
+    aggregate_window,
+    extrapolate,
+    subsets,
+    summarize_stability,
+    vote,
+    window_stability,
+)
+from sources.phase3.repetition_stats import convergence as _generic_convergence
+from sources.phase3.repetition_stats import distribution as _distribution
 from sources.phase2.binary_variants import (
     DEFAULT_NONSTRESS_VARIANT,
     NONSTRESS_VARIANTS,
@@ -62,9 +72,6 @@ from sources.phase3.records import evaluate_binary_records, evaluate_records
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INGEST_DIR = REPO_ROOT / "results" / "output" / "WESAD" / "INGEST"
-
-USABLE_STATUSES = ("valid_response", "valid_abstention")
-DEFAULT_TARGETS = (0.01, 0.02, 0.03)
 
 
 # ---------------------------------------------------------------------------
@@ -149,81 +156,14 @@ def allowed_labels(decision_mode: str, nonstress_variant: str) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
-# Estabilidad por ventana
+# Delegación en los estadísticos compartidos
 # ---------------------------------------------------------------------------
-def vote(decisions: Sequence[str]) -> str:
-    """Voto mayoritario; empate → ``abstain`` (criterio conservador)."""
-    counts = Counter(decisions)
-    top = max(counts.values())
-    winners = [decision for decision, count in counts.items() if count == top]
-    return winners[0] if len(winners) == 1 else "abstain"
+# ``vote``, ``window_stability``, ``summarize_stability``, ``subsets``,
+# ``aggregate_window``, ``extrapolate`` y ``_distribution`` viven en
+# ``sources.phase3.repetition_stats`` porque DREAMT y PhysioNet calculan la
+# misma varianza de muestreo con otro vocabulario de etiquetas.
 
 
-def window_stability(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Estadísticos de una ventana a lo largo de sus repeticiones."""
-    usable = [r for r in records if r.get("status") in USABLE_STATUSES]
-    decisions = [str(r.get("decision")) for r in usable]
-    confidences = [
-        float(r["confidence"]) for r in usable if r.get("confidence") is not None
-    ]
-    counts = Counter(decisions)
-    n = len(decisions)
-    modal_share = max(counts.values()) / n if n else 0.0
-    entropy = -sum(
-        (count / n) * math.log2(count / n) for count in counts.values()
-    ) if n else 0.0
-    return {
-        "window_id_opaque": records[0].get("window_id_opaque", ""),
-        "n": len(records),
-        "n_usable": n,
-        "n_invalid": len(records) - n,
-        "decisions": dict(counts),
-        "modal_decision": vote(decisions) if decisions else "",
-        "modal_share": modal_share,
-        "entropy_bits": entropy,
-        "n_distinct_decisions": len(counts),
-        "confidence_mean": float(np.mean(confidences)) if confidences else None,
-        "confidence_std": float(np.std(confidences)) if confidences else None,
-        "confidence_min": float(np.min(confidences)) if confidences else None,
-        "confidence_max": float(np.max(confidences)) if confidences else None,
-        "confidence_n_distinct": len(set(confidences)),
-        "abstain_share": (
-            sum(1 for d in decisions if d == "abstain") / n if n else 0.0
-        ),
-    }
-
-
-def _summarize_stability(stabilities: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    if not stabilities:
-        return {}
-    conf_stds = [
-        s["confidence_std"] for s in stabilities if s.get("confidence_std") is not None
-    ]
-    return {
-        "n_windows": len(stabilities),
-        "mean_modal_share": float(np.mean([s["modal_share"] for s in stabilities])),
-        "frac_deterministic": float(
-            np.mean([1.0 if s["modal_share"] == 1.0 else 0.0 for s in stabilities])
-        ),
-        "frac_single_decision": float(
-            np.mean([1.0 if s["n_distinct_decisions"] == 1 else 0.0 for s in stabilities])
-        ),
-        "mean_entropy_bits": float(
-            np.mean([s["entropy_bits"] for s in stabilities])
-        ),
-        "mean_confidence_std": float(np.mean(conf_stds)) if conf_stds else 0.0,
-        "frac_confidence_constant": float(
-            np.mean([1.0 if s["confidence_std"] == 0.0 else 0.0 for s in stabilities])
-        ),
-        "mean_abstain_share": float(
-            np.mean([s["abstain_share"] for s in stabilities])
-        ),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Métricas agregadas
-# ---------------------------------------------------------------------------
 def metrics_for(
     voted: Sequence[Mapping[str, Any]],
     labels: Mapping[str, str],
@@ -246,56 +186,6 @@ def metrics_for(
     }
 
 
-def aggregate_window(
-    records: Sequence[Mapping[str, Any]],
-    reps: Sequence[int],
-) -> dict[str, Any] | None:
-    """Voto mayoritario de las repeticiones indicadas y confianza media.
-
-    La confianza agregada es la media de la confianza de las repeticiones que
-    votaron la decisión ganadora: promediar réplicas da resolución a un modelo
-    que solo emite dos valores distintos.
-    """
-    by_rep = {int(r.get("repetition", 0) or 0): r for r in records}
-    selected = [by_rep[rep] for rep in reps if rep in by_rep]
-    usable = [r for r in selected if r.get("status") in USABLE_STATUSES]
-    if not usable:
-        return None
-    decisions = [str(r.get("decision")) for r in usable]
-    voted = vote(decisions)
-    if voted == "abstain":
-        confidence = 0.0
-        status = "valid_abstention"
-    else:
-        agreeing = [
-            float(r["confidence"])
-            for r in usable
-            if r.get("decision") == voted and r.get("confidence") is not None
-        ]
-        confidence = float(np.mean(agreeing)) if agreeing else 0.0
-        status = "valid_response"
-    return {
-        "window_id_opaque": usable[0].get("window_id_opaque", ""),
-        "decision": voted,
-        "confidence": confidence,
-        "status": status,
-    }
-
-
-def _subsets(n: int, k: int, rng: np.random.Generator, max_combos: int) -> list[tuple[int, ...]]:
-    """Combinaciones de tamaño ``k`` (todas si son pocas; si no, aleatorias)."""
-    if k < 1 or k > n:
-        return []
-    total = math.comb(n, k)
-    if total <= max_combos:
-        return list(combinations(range(n), k))
-    seen: set[tuple[int, ...]] = set()
-    while len(seen) < max_combos:
-        draw = tuple(sorted(int(i) for i in rng.choice(n, size=k, replace=False)))
-        seen.add(draw)
-    return sorted(seen)
-
-
 def convergence(
     windows: Mapping[str, Sequence[Mapping[str, Any]]],
     labels: Mapping[str, str],
@@ -304,75 +194,14 @@ def convergence(
     rng: np.random.Generator,
     max_combos: int,
 ) -> list[dict[str, Any]]:
-    """Métricas por número de repeticiones agregadas (``k = 1..R``)."""
-    rows: list[dict[str, Any]] = []
-    for k in range(1, len(reps) + 1):
-        acc: list[float] = []
-        bal: list[float] = []
-        cov: list[float] = []
-        abst: list[float] = []
-        for subset in _subsets(len(reps), k, rng, max_combos):
-            chosen = [reps[i] for i in subset]
-            voted = [
-                aggregated
-                for records in windows.values()
-                if (aggregated := aggregate_window(records, chosen)) is not None
-            ]
-            if not voted:
-                continue
-            metrics = metrics_for(voted, labels, decision_mode)
-            acc.append(metrics["accuracy"])
-            bal.append(metrics["balanced_accuracy"])
-            cov.append(metrics["coverage"])
-            abst.append(metrics["abstention_rate"])
-        if not acc:
-            continue
-        rows.append(
-            {
-                "k": k,
-                "n_combinations": len(acc),
-                "accuracy_mean": float(np.mean(acc)),
-                "accuracy_sd": float(np.std(acc)),
-                "balanced_mean": float(np.nanmean(bal)),
-                "balanced_sd": float(np.nanstd(bal)),
-                "coverage_mean": float(np.mean(cov)),
-                "abstention_mean": float(np.mean(abst)),
-            }
-        )
-    return rows
-
-
-def extrapolate(sd1: float, targets: Sequence[float] = DEFAULT_TARGETS) -> dict[str, Any]:
-    """``k`` para bajar el error de muestreo de ``sd1`` a cada umbral.
-
-    Supone independencia entre repeticiones y ``sd_k ≈ sd_1 / sqrt(k)``; es una
-    cota optimista (si el modelo es determinista, ``sd1 = 0`` y no hace falta
-    ninguna repetición).
-    """
-    if not math.isfinite(sd1) or sd1 <= 0:
-        return {
-            "sd_single": float(sd1) if math.isfinite(sd1) else None,
-            "implied_k": {f"{pct}pp": 1 for pct in (1, 2, 3)},
-            "note": "sin varianza de muestreo: las repeticiones no cambiarían la métrica",
-        }
-    return {
-        "sd_single": float(sd1),
-        "implied_k": {
-            f"{int(round(target * 100))}pp": int(math.ceil((sd1 / target) ** 2))
-            for target in targets
-        },
-    }
-
-
-def _distribution(values: Sequence[float]) -> dict[str, Any]:
-    clean = [v for v in values if math.isfinite(v)]
-    if not clean:
-        return {"mean": None, "sd": None, "values": []}
-    return {
-        "mean": float(np.mean(clean)),
-        "sd": float(np.std(clean)),
-        "values": [float(v) for v in clean],
-    }
+    """Convergencia del voto mayoritario con la métrica de WESAD."""
+    return _generic_convergence(
+        windows,
+        lambda voted, _labels: metrics_for(voted, labels, decision_mode),
+        reps,
+        rng,
+        max_combos,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -514,7 +343,7 @@ def analyze(
             "n_windows": len(windows),
             "n_complete_windows": len(complete),
             "n_reps": len(reps),
-            "stability": _summarize_stability(stabilities),
+            "stability": summarize_stability(stabilities),
             "windows": stabilities,
             "single_run": single,
             "convergence": curve,

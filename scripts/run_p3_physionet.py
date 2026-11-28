@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sources.common.llm_client import check_model_available, ollama_run_provenance
 from sources.common.paths import atomic_write_json
-from sources.common.provenance import engine_from_provenance, utc_now
+from sources.common.provenance import engine_from_provenance, guard_engine, utc_now
 from sources.external.paths import PHYSIONET2017_DIR
 from sources.external.physionet2017 import (
     CANONICAL_FEATURES,
@@ -43,7 +43,11 @@ from sources.external.physionet2017 import (
     split_records,
     z_scores,
 )
-from sources.phase2.llm_config import build_experiment_config, create_ollama_chat_client
+from sources.phase2.llm_config import (
+    build_experiment_config,
+    create_ollama_chat_client,
+    model_slug,
+)
 from sources.phase2.orchestrator import _call_ollama_chat
 from sources.phase2.prompt_builder import (
     assert_no_leakage,
@@ -174,6 +178,35 @@ def class_exemplars(
     return exemplars
 
 
+def output_file_tag(
+    tag: str = "",
+    eval_split: str = "test",
+    few_shot: bool = False,
+    repetitions: int = 1,
+) -> str:
+    """Sufijo de los ficheros de salida (``""`` = corpus de referencia).
+
+    Las repeticiones añaden ``_rep{R}``: el corpus de una sola pasada sostiene
+    las cifras publicadas y no debe mezclarse con el de repeticiones.
+    """
+    base = tag or (
+        "dev_fs" if (eval_split == "dev" and few_shot)
+        else "dev_nofs" if eval_split == "dev"
+        else "test_fs" if few_shot
+        else ""
+    )
+    if int(repetitions) > 1:
+        base = f"{base}_rep{int(repetitions)}" if base else f"rep{int(repetitions)}"
+    return base
+
+
+def repetition_seeds(base_seed: int, repetitions: int) -> list[int]:
+    """Semillas de las repeticiones: ``base_seed + r`` para ``r = 0..R-1``."""
+    if int(repetitions) < 1:
+        raise ValueError(f"repetitions debe ser >= 1 (recibido {repetitions!r})")
+    return [int(base_seed) + r for r in range(int(repetitions))]
+
+
 def run_llm(
     records: list[RhythmRecord],
     output_dir: Path,
@@ -185,17 +218,19 @@ def run_llm(
     max_records: int | None,
     few_shot: str | None = None,
     tag: str = "",
+    repetitions: int = 1,
+    allow_engine_change: bool = False,
 ) -> list[dict[str, Any]]:
     suffix = f"_{tag}" if tag else ""
     responses_path = output_dir / f"physionet2017{suffix}.responses.jsonl"
     labels_path = output_dir / f"physionet2017{suffix}.labels.jsonl"
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    existing: dict[str, dict[str, Any]] = {}
+    existing: dict[tuple[str, int], dict[str, Any]] = {}
     if responses_path.is_file():
         for line in responses_path.open(encoding="utf-8"):
             record = json.loads(line)
-            existing[record["record_id"]] = record
+            existing[(record["record_id"], int(record.get("repetition", 0) or 0))] = record
 
     labels = [
         {
@@ -213,10 +248,20 @@ def run_llm(
         model=model, temperature=temperature, seed=seed,
         max_retries=3, cascade_enabled=False,
     )
+    repetitions = max(int(repetitions), 1)
+    seeds = repetition_seeds(config.seed, repetitions)
 
-    pending = [r for r in records if r.record_id not in existing]
+    pending = [
+        (record, rep)
+        for record in records
+        for rep in range(repetitions)
+        if (record.record_id, rep) not in existing
+    ]
     if max_records is not None:
-        pending = pending[:max_records]
+        # El tope es por registro (no por llamada): un registro conserva todas
+        # sus repeticiones, que es lo que permite medir su varianza.
+        allowed = {record.record_id for record in records[:max_records]}
+        pending = [(record, rep) for record, rep in pending if record.record_id in allowed]
 
     # Identidad del motor: el nombre del modelo no basta (Ollama 0.40.6 y 0.30.7
     # difieren en la abstención con el mismo prompt y semilla). La procedencia
@@ -241,7 +286,7 @@ def run_llm(
                 "[PN17] Sin procedencia del motor para estas respuestas: usa "
                 "--tag para una corrida nueva."
             )
-        return [existing[r.record_id] for r in records if r.record_id in existing]
+        return list(existing.values())
 
     # Un modelo sin descargar devolvería timeouts que la reanudación reutilizaría:
     # es más informativo abortar aquí (mismo criterio que el barrido).
@@ -260,33 +305,42 @@ def run_llm(
             "task": "physionet2017_rhythm4",
             "tag": tag or None,
             "few_shot": few_shot,
+            "repetitions": repetitions,
+            "seeds": seeds,
             "config": config.to_dict(),
         }
     )
-    previous = engine_from_provenance(provenance_path)
-    current = provenance.get("ollama_version")
-    if previous and current and previous != current:
-        print(
-            f"[PN17] AVISO: {provenance_path.name} se generó con Ollama "
-            f"{previous} y este proceso usa {current}; el corpus mezclará "
-            "motores (usa --tag para separarlos)."
-        )
+    # Mezclar motores dentro del mismo fichero invalida cualquier comparación
+    # (y la varianza de muestreo, que es indistinguible del cambio de motor):
+    # se aborta salvo permiso explícito.
+    guard_engine(
+        provenance_path,
+        provenance,
+        allow_engine_change,
+        label="PN17",
+    )
     atomic_write_json(provenance_path, provenance)
 
-    for index, record in enumerate(pending, start=1):
-        scores = z_scores(record.values, centers, scales)
-        payload = build_payload(record.record_id, scores, record.duration_s)
-        prompt = build_rhythm_prompt(
-            payload=payload,
-            window_id_opaque=payload["window"]["window_id"],
-            duration_s=record.duration_s,
-            num_ctx=config.num_ctx,
-            dataset_note=DATASET_NOTE,
-            few_shot_examples=few_shot,
-        )
-        assert_no_leakage(prompt)
+    prompts: dict[str, str] = {}
+    for index, (record, rep) in enumerate(pending, start=1):
+        if record.record_id not in prompts:
+            scores = z_scores(record.values, centers, scales)
+            payload = build_payload(record.record_id, scores, record.duration_s)
+            prompt = build_rhythm_prompt(
+                payload=payload,
+                window_id_opaque=payload["window"]["window_id"],
+                duration_s=record.duration_s,
+                num_ctx=config.num_ctx,
+                dataset_note=DATASET_NOTE,
+                few_shot_examples=few_shot,
+            )
+            assert_no_leakage(prompt)
+            prompts[record.record_id] = prompt
+        prompt = prompts[record.record_id]
         try:
-            raw_output, ollama_meta = _call_ollama_chat(client, prompt, config, seed=seed)
+            raw_output, ollama_meta = _call_ollama_chat(
+                client, prompt, config, seed=seeds[rep]
+            )
             validated = validate_llm_output(raw_output, decision_mode=DECISION_MODE_RHYTHM4)
             status, decision = validated.status, validated.decision
             confidence = validated.confidence
@@ -299,6 +353,11 @@ def run_llm(
 
         result = {
             "record_id": record.record_id,
+            "window_id_opaque": record.record_id,
+            "model": config.model,
+            "model_slug": model_slug(config.model),
+            "repetition": rep,
+            "seed": seeds[rep],
             "status": status,
             "decision": decision,
             "confidence": confidence,
@@ -312,13 +371,13 @@ def run_llm(
         }
         with responses_path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(result, ensure_ascii=False) + "\n")
-        existing[record.record_id] = result
+        existing[(record.record_id, rep)] = result
         print(
-            f"[PN17] {index}/{len(pending)} {record.record_id}: {status} "
-            f"decision={decision} conf={confidence}"
+            f"[PN17] {index}/{len(pending)} {record.record_id} rep={rep}: "
+            f"{status} decision={decision} conf={confidence}"
         )
 
-    return [existing[r.record_id] for r in records if r.record_id in existing]
+    return list(existing.values())
 
 
 def evaluate(
@@ -410,6 +469,19 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--model", default="qwen2.5:7b")
     parser.add_argument("--temperature", type=float, default=0.3)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        default=1,
+        help="Repeticiones del mismo prompt con semillas distintas (--seed+r). "
+        "Con R>1 la salida va a los ficheros *_rep{R} y el análisis agregado se "
+        "hace con scripts/analyze_repetitions_external.py.",
+    )
+    parser.add_argument(
+        "--allow-engine-change",
+        action="store_true",
+        help="Permite reanudar un corpus generado con otro motor de Ollama.",
+    )
     parser.add_argument("--max-records", type=int, default=None)
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT))
     parser.add_argument(
@@ -480,11 +552,9 @@ def main(argv: list[str] | None = None) -> None:
         print("[PN17] few-shot construido con medianas de desarrollo")
 
     eval_records = dev if args.eval_split == "dev" else test
-    file_tag = args.tag or (
-        "dev_fs" if (args.eval_split == "dev" and args.few_shot)
-        else "dev_nofs" if args.eval_split == "dev"
-        else "test_fs" if args.few_shot
-        else ""
+    repetitions = max(int(getattr(args, "repetitions", None) or 1), 1)
+    file_tag = output_file_tag(
+        args.tag, args.eval_split, args.few_shot, repetitions
     )
     responses = run_llm(
         eval_records,
@@ -497,9 +567,27 @@ def main(argv: list[str] | None = None) -> None:
         max_records=args.max_records,
         few_shot=few_shot_text,
         tag=file_tag,
+        repetitions=repetitions,
+        allow_engine_change=bool(getattr(args, "allow_engine_change", False)),
     )
-    metrics = evaluate(responses, labels)
+    if repetitions > 1:
+        # La métrica agregada de repeticiones es el voto mayoritario por
+        # registro: la calcula el analizador. Aquí se resume la repetición 0
+        # para dejar constancia en el resumen de la corrida.
+        base = [
+            record
+            for record in responses
+            if int(record.get("repetition", 0) or 0) == 0
+        ]
+        metrics = evaluate(base, labels)
+        metrics["note"] = (
+            "métricas de la repetición 0; el agregado por voto mayoritario está "
+            "en scripts/analyze_repetitions_external.py"
+        )
+    else:
+        metrics = evaluate(responses, labels)
     report["llm"] = metrics
+    report["repetitions"] = repetitions
 
     print("\n=== PhysioNet 2017 (evaluación) ===")
     print(

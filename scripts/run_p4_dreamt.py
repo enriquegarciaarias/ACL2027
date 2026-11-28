@@ -46,6 +46,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from sources.common.llm_client import check_model_available, ollama_run_provenance
+from sources.common.provenance import guard_engine
 from sources.external import dreamt
 from sources.external.paths import DREAMT_DIR
 from sources.ingestion.config import get_ingestion_config
@@ -165,6 +166,36 @@ DEFAULT_OUTPUT = DEFAULT_OUTPUTS["pilot"]
 # ---------------------------------------------------------------------------
 # Utilidades
 # ---------------------------------------------------------------------------
+
+
+def repetition_seeds(base_seed: int, repetitions: int) -> list[int]:
+    """Semillas de las repeticiones: ``base_seed + r`` para ``r = 0..R-1``.
+
+    La repetición 0 usa ``--seed`` (42 por defecto), de modo que una corrida con
+    ``R = 1`` y otra con ``R > 1`` comparten la primera muestra.
+    """
+    if int(repetitions) < 1:
+        raise ValueError(f"repetitions debe ser >= 1 (recibido {repetitions!r})")
+    return [int(base_seed) + r for r in range(int(repetitions))]
+
+
+def responses_directory(repetitions: int) -> str:
+    """Nombre del directorio de respuestas, aislado por número de repeticiones.
+
+    El corpus de una sola pasada (``responses/``) sostiene las cifras
+    publicadas; el de repeticiones vive en ``responses_rep{R}/`` y nunca se
+    mezcla con él.
+    """
+    return "responses" if int(repetitions) <= 1 else f"responses_rep{int(repetitions)}"
+
+
+def provenance_filename(repetitions: int) -> str:
+    """Nombre del ``run_provenance`` de la corrida (por número de repeticiones)."""
+    return (
+        "run_provenance.json"
+        if int(repetitions) <= 1
+        else f"run_provenance_rep{int(repetitions)}.json"
+    )
 
 
 def utc_now() -> str:
@@ -848,7 +879,9 @@ def phase_generate(args: argparse.Namespace) -> int:
         think=args.think,
     )
     slug = model_slug(config.model)
-    responses_dir = output_dir / "responses" / slug
+    repetitions = max(int(getattr(args, "repetitions", None) or 1), 1)
+    seeds = repetition_seeds(config.seed, repetitions)
+    responses_dir = output_dir / responses_directory(repetitions) / slug
     responses_dir.mkdir(parents=True, exist_ok=True)
 
     if not args.dry_run and check_model_available(config.model) is False:
@@ -857,10 +890,22 @@ def phase_generate(args: argparse.Namespace) -> int:
             f"         Instálalo con: ollama pull {config.model}"
         )
 
+    provenance_path = output_dir / provenance_filename(repetitions)
     provenance = ollama_run_provenance(config.model)
     provenance["config"] = config.to_dict()
     provenance["started_at"] = utc_now()
-    write_json(output_dir / "run_provenance.json", provenance)
+    provenance["repetitions"] = repetitions
+    provenance["seeds"] = seeds
+    if not args.dry_run:
+        # El motor forma parte del experimento: mezclar versiones dentro del
+        # mismo fichero haría indistinguible del ruido el efecto que se mide.
+        guard_engine(
+            provenance_path,
+            provenance,
+            bool(getattr(args, "allow_engine_change", False)),
+            label="DREAMT",
+        )
+        write_json(provenance_path, provenance)
 
     present = set(available_subjects(data_dir))
     cohort = cohort_of(args)
@@ -899,29 +944,37 @@ def phase_generate(args: argparse.Namespace) -> int:
         for representation in representations:
             path = responses_dir / f"{subject}.{representation}.jsonl"
             existing = {
-                (row["window_id"], row["condition_id"])
+                (
+                    row["window_id"],
+                    row["condition_id"],
+                    int(row.get("repetition", 0) or 0),
+                )
                 for row in read_jsonl(path)
                 if row.get("status") not in ("timeout",)
             }
             pending = [
-                row for row in prompt_rows if (row["window_id"], row["condition_id"]) not in existing
+                (row, rep)
+                for row in prompt_rows
+                for rep in range(repetitions)
+                if (row["window_id"], row["condition_id"], rep) not in existing
             ]
             planned += len(pending)
             if args.dry_run:
                 print(
                     f"[DREAMT] dry-run {subject} {representation}: "
-                    f"{len(pending)} llamadas pendientes de {len(prompt_rows)}"
+                    f"{len(pending)} llamadas pendientes de "
+                    f"{len(prompt_rows) * repetitions}"
                 )
                 continue
             print(
                 f"[DREAMT] {subject} {representation}: {len(pending)} pendientes "
-                f"({len(existing)} ya hechas)"
+                f"({len(existing)} ya hechas, {repetitions} repeticiones)"
             )
-            for index, row in enumerate(pending, start=1):
+            for index, (row, rep) in enumerate(pending, start=1):
                 prompt = row["prompts"][representation]
                 try:
                     raw_output, meta = _call_ollama_chat(
-                        client, prompt, config, seed=config.seed
+                        client, prompt, config, seed=seeds[rep]
                     )
                     validated = validate_llm_output(
                         raw_output,
@@ -950,6 +1003,8 @@ def phase_generate(args: argparse.Namespace) -> int:
                     "decision_mode": DECISION_MODE_SLEEP4,
                     "model": config.model,
                     "model_slug": slug,
+                    "repetition": rep,
+                    "seed": seeds[rep],
                     "status": status,
                     "decision": decision,
                     "confidence": confidence,
@@ -978,12 +1033,19 @@ def phase_generate(args: argparse.Namespace) -> int:
         "model_slug": slug,
         "representations": representations,
         "subjects": subjects,
+        "repetitions": repetitions,
+        "seeds": seeds,
         "n_calls_new": done,
         "n_errors": errors,
         "config": config.to_dict(),
         "finished_at": utc_now(),
     }
-    write_json(output_dir / "generate_summary.json", summary)
+    summary_name = (
+        "generate_summary.json"
+        if repetitions <= 1
+        else f"generate_summary_rep{repetitions}.json"
+    )
+    write_json(output_dir / summary_name, summary)
     print(f"[DREAMT] generate: {done} llamadas nuevas, {errors} errores/inválidas")
     return 0
 
@@ -1224,7 +1286,14 @@ def phase_evaluate(args: argparse.Namespace) -> int:
         ["numeric", "text"] if args.representation == "both" else [args.representation]
     )
     slug = model_slug(args.model or "")
-    responses_dir = output_dir / "responses" / slug
+    repetitions = max(int(getattr(args, "repetitions", None) or 1), 1)
+    if repetitions > 1:
+        raise SystemExit(
+            "[DREAMT] La varianza de muestreo se analiza con "
+            "scripts/analyze_repetitions_external.py: usa "
+            "`--proc EVALUATE --experiment dreamt --repetitions R`."
+        )
+    responses_dir = output_dir / responses_directory(repetitions) / slug
 
     present = set(available_subjects(Path(args.data_dir)))
     cohort = cohort_of(args)
@@ -1353,6 +1422,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--representation", choices=("numeric", "text", "both"), default="both")
     parser.add_argument("--model", default=None, help="modelo de Ollama (por defecto, config.json)")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--repetitions",
+        type=int,
+        default=1,
+        help="Repeticiones del mismo prompt con semillas distintas (--seed+r). "
+        "Con R>1 la salida va a responses_rep{R}/ (nunca se mezcla con el "
+        "corpus de una pasada).",
+    )
+    parser.add_argument(
+        "--allow-engine-change",
+        action="store_true",
+        help="Permite reanudar un corpus generado con otro motor de Ollama.",
+    )
     parser.add_argument("--max-retries", type=int, default=3)
     parser.add_argument("--think", action="store_true", help="activar modo *thinking* (solo qwen3)")
     parser.add_argument("--windows-per-class", type=int, default=5)

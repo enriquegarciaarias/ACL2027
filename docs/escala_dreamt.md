@@ -380,6 +380,10 @@ La estructura **cualitativa** replica y el **nivel** no:
   sea evaluable en esta tarea.
 - Validación humana de claims y hedges/boosters en los tres modelos.
 - Repeticiones de prompt en DREAMT: una pasada por modelo no cuantifica la
-  varianza de muestreo.
+  varianza de muestreo. **Mecanismo implementado (2026-11-28)**: `--repetitions
+  R` en `scripts/run_p4_dreamt.py` (salida `responses_rep{R}/`, reanudación por
+  ventana×condición×rep, semillas `--seed + r`, guardia de motor) y análisis en
+  `scripts/analyze_repetitions_external.py`; falta lanzar los brazos B1–B3 de
+  [`repetitions.md`](repetitions.md) §9.3.
 - Heredados de WESAD: `qwen3:8b` en `C0`/`C4`, sensibilidad de temperatura,
   decisión sobre H6 y el mensaje al administrador por `sirius`.

@@ -77,7 +77,7 @@ Si solo se lee un documento, que sea [`experimentos.md`](experimentos.md).
 | Documento | Contenido | Resultado |
 |---|---|---|
 | [`p3_kemocon.md`](p3_kemocon.md) | K-EmoCon: por qué no sirve para estrés; arousal/valencia no predecibles | Negativo documentado |
-| [`p3_physionet.md`](p3_physionet.md) | PhysioNet/CinC 2017: colapso a `normal` (balanced 0,25 vs 0,55 de la referencia), 0 % de abstención con 103 registros `noisy`, claims 47,6 % contradichos, certeza *mayor* en ruido; la calidad sí es detectable (AUROC 0,873) | Negativo documentado (con matices de H6) |
+| [`p3_physionet.md`](p3_physionet.md) | PhysioNet/CinC 2017: colapso a `normal` (balanced 0,25 vs 0,55 de la referencia), 0 % de abstención con 103 registros `noisy`, claims 47,6 % contradichos, certeza *mayor* en ruido; la calidad sí es detectable (AUROC 0,873). Re-ejecutado en el servidor (0.40.6) y contrastado pareado con el histórico (0.30.7): 402/403 decisiones idénticas, +6,4 pp de claims respaldados y +0,57 de certeza (§5.11) | Negativo documentado (con matices de H6) |
 
 ### Literatura y material de apoyo
 

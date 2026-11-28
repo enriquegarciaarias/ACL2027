@@ -84,3 +84,98 @@ def test_main_exits_3_when_environment_incomplete(monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         entrypoint._check_environment_or_exit()
     assert excinfo.value.code == 3
+
+
+# ---------------------------------------------------------------------------
+# Estado del código en el log de arranque
+#
+# Motivo: el 2026-11-28 un job se lanzó en el servidor sin `git pull`. El
+# despachador antiguo ignoró `--repetitions` en silencio, hizo 0 llamadas y el
+# log no lo delataba. La línea `código: <commit> (<rama>, <fecha>)` hace visible
+# qué código corrió.
+# ---------------------------------------------------------------------------
+def test_code_state_in_repository():
+    from sources.common import provenance
+
+    state = provenance.code_state()
+    assert state["available"] is True
+    assert len(str(state["commit"])) == 40
+    assert isinstance(state["dirty"], bool)
+    assert state["date"]
+
+
+def test_code_state_unavailable_without_git(monkeypatch):
+    from sources.common import provenance
+
+    monkeypatch.setattr(provenance, "git_info", lambda *a, **k: {"available": False})
+    state = provenance.code_state()
+    assert state["available"] is False
+    assert "desconocido" in provenance.format_code_state(state)
+
+
+def test_format_code_state_marks_uncommitted_changes():
+    from sources.common import provenance
+
+    line = provenance.format_code_state(
+        {
+            "available": True,
+            "commit": "0123456789abcdef0123456789abcdef01234567",
+            "branch": "main",
+            "date": "2026-11-28T12:00:00+01:00",
+            "dirty": True,
+        }
+    )
+    assert "código: 0123456" in line
+    assert "main" in line
+    assert "sin commitear" in line
+
+
+def test_format_code_state_clean_tree():
+    from sources.common import provenance
+
+    line = provenance.format_code_state(
+        {
+            "available": True,
+            "commit": "0123456789abcdef0123456789abcdef01234567",
+            "branch": "main",
+            "date": "2026-11-28T12:00:00+01:00",
+            "dirty": False,
+        }
+    )
+    assert "sin commitear" not in line
+
+
+def test_main_logs_code_state(monkeypatch):
+    """`main._run` registra el commit en ejecución antes de delegar."""
+    from types import SimpleNamespace
+
+    import main as entrypoint
+
+    messages: list[str] = []
+    monkeypatch.setattr(entrypoint, "_check_environment_or_exit", lambda: None)
+    monkeypatch.setattr(entrypoint, "getConfigs", lambda: None)
+    monkeypatch.setattr(
+        entrypoint,
+        "code_state",
+        lambda: {
+            "available": True,
+            "commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            "branch": "main",
+            "date": "2026-11-28T12:00:00+01:00",
+            "dirty": False,
+        },
+    )
+    monkeypatch.setattr(
+        entrypoint,
+        "writeLog",
+        lambda level, logger_, message: messages.append(str(message)),
+    )
+    monkeypatch.setattr(
+        entrypoint,
+        "processControl",
+        SimpleNamespace(args=SimpleNamespace(proc="EVALUATE", step=None)),
+    )
+    monkeypatch.setattr(entrypoint, "_run_registered_process", lambda proc: None)
+
+    assert entrypoint._run() == 0
+    assert any("código: deadbee" in message for message in messages)

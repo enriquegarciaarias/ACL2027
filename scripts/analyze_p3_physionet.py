@@ -528,12 +528,17 @@ def _certainty_significance(
         test = mannwhitneyu(noisy, clean, alternative="two-sided")
         wins = sum(1 for a in noisy for b in clean if a > b)
         ties = sum(1 for a in noisy for b in clean if a == b)
-        cliffs = (wins + 0.5 * ties) / (len(noisy) * len(clean))
+        # ``superiority`` = P(noisy > resto) + ½P(empate), en [0, 1]. Cliff's δ es
+        # el estadístico de dominancia con signo: δ = 2A − 1, en [−1, 1]. Se
+        # publican los dos porque A no es interpretable como «tamaño de efecto
+        # en escala de −1 a 1» y confundirlos triplica la magnitud leída.
+        superiority = (wins + 0.5 * ties) / (len(noisy) * len(clean))
         result.update(
             {
                 "noisy_vs_rest_u": float(test.statistic),
                 "noisy_vs_rest_p": float(test.pvalue),
-                "noisy_vs_rest_cliffs_delta": cliffs,
+                "noisy_vs_rest_superiority": superiority,
+                "noisy_vs_rest_cliffs_delta": 2.0 * superiority - 1.0,
                 "noisy_mean": float(np.mean(noisy)),
                 "rest_mean": float(np.mean(clean)),
             }
@@ -1064,6 +1069,7 @@ def print_report(report: Mapping[str, Any]) -> None:
         if "noisy_vs_rest_p" in significance:
             print(
                 f"  noisy vs resto: p={significance['noisy_vs_rest_p']:.4f} "
+                f"P(noisy>resto)={significance['noisy_vs_rest_superiority']:.3f} "
                 f"Cliff δ={significance['noisy_vs_rest_cliffs_delta']:+.3f} "
                 f"(medias {significance['noisy_mean']:+.2f} vs "
                 f"{significance['rest_mean']:+.2f})"

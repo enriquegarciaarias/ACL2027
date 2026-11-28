@@ -95,6 +95,29 @@ def _one_record() -> RhythmRecord:
     )
 
 
+def test_certainty_superiority_and_cliffs_delta_are_consistent():
+    """Cliff's δ es 2A − 1; publicar A como δ triplica la magnitud leída."""
+    from scripts.analyze_p3_physionet import _certainty_significance
+
+    # A = (2 victorias + 2 empates/2) / 4 = 0.75  →  δ = +0.5
+    grouped = {
+        "noisy": [{"certainty_index": 1.0}, {"certainty_index": 1.0}],
+        "normal": [{"certainty_index": -1.0}, {"certainty_index": 1.0}],
+    }
+    significance = _certainty_significance(grouped)
+    assert significance["noisy_vs_rest_superiority"] == pytest.approx(0.75)
+    assert significance["noisy_vs_rest_cliffs_delta"] == pytest.approx(0.5)
+
+    # Dominancia total: A = 1 → δ = +1 (y nunca 2).
+    extreme = {
+        "noisy": [{"certainty_index": 2.0}],
+        "normal": [{"certainty_index": 0.0}, {"certainty_index": 0.5}],
+    }
+    dominance = _certainty_significance(extreme)
+    assert dominance["noisy_vs_rest_superiority"] == pytest.approx(1.0)
+    assert dominance["noisy_vs_rest_cliffs_delta"] == pytest.approx(1.0)
+
+
 def test_run_llm_writes_engine_provenance(tmp_path, monkeypatch):
     from scripts import run_p3_physionet as pn
 
@@ -204,8 +227,12 @@ def test_run_llm_does_not_relabel_provenance_when_nothing_pending(tmp_path, monk
     assert prov["ollama_version"] == "0.30.7"
 
 
-def test_run_llm_warns_when_engine_changes_mid_corpus(tmp_path, monkeypatch, capsys):
-    """Con llamadas pendientes y otro motor registrado, avisa antes de mezclar."""
+def test_run_llm_aborts_when_engine_changes_mid_corpus(tmp_path, monkeypatch):
+    """Con llamadas pendientes y otro motor registrado, aborta por defecto.
+
+    Mezclar motores dentro del mismo fichero no se detectaría después (la caché
+    de reanudación no indexa el motor) y dejaría un corpus con dos motores.
+    """
     from scripts import run_p3_physionet as pn
 
     (tmp_path / "physionet2017.responses.jsonl").write_text(
@@ -216,6 +243,40 @@ def test_run_llm_warns_when_engine_changes_mid_corpus(tmp_path, monkeypatch, cap
         json.dumps({"ollama_version": "0.30.7"}), encoding="utf-8"
     )
 
+    monkeypatch.setattr(pn, "check_model_available", lambda _model: True)
+    monkeypatch.setattr(
+        pn,
+        "ollama_run_provenance",
+        lambda model: {"model": model, "ollama_version": "0.40.6"},
+    )
+
+    centers = {name: 0.0 for name in CANONICAL_FEATURES}
+    scales = {name: 1.0 for name in CANONICAL_FEATURES}
+    with pytest.raises(SystemExit) as excinfo:
+        pn.run_llm(
+            [_one_record()],
+            output_dir=tmp_path,
+            centers=centers,
+            scales=scales,
+            model="qwen2.5:7b",
+            temperature=0.0,
+            seed=42,
+            max_records=None,
+        )
+
+    message = str(excinfo.value)
+    assert "0.30.7" in message and "0.40.6" in message
+    stored = json.loads((tmp_path / "run_provenance.json").read_text(encoding="utf-8"))
+    assert stored["ollama_version"] == "0.30.7"
+
+
+def test_run_llm_allows_engine_change_with_flag(tmp_path, monkeypatch, capsys):
+    """``--allow-engine-change`` degrada el aborto a aviso y reescribe."""
+    from scripts import run_p3_physionet as pn
+
+    (tmp_path / "run_provenance.json").write_text(
+        json.dumps({"ollama_version": "0.30.7"}), encoding="utf-8"
+    )
     monkeypatch.setattr(pn, "check_model_available", lambda _model: True)
     monkeypatch.setattr(
         pn,
@@ -239,6 +300,7 @@ def test_run_llm_warns_when_engine_changes_mid_corpus(tmp_path, monkeypatch, cap
         temperature=0.0,
         seed=42,
         max_records=None,
+        allow_engine_change=True,
     )
 
     out = capsys.readouterr().out

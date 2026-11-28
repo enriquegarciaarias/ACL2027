@@ -1052,3 +1052,25 @@ corpus con `n` distinto por sujeto y no se fusionan. La escala se ejecutó en el
 4. **El atajo de la temperatura no replica**: con el motor del servidor
    `llama3.1:8b` se abstiene 1,000 / 0,952 en `C4`. Era un artefacto del 0.30.7
    local, y por eso las cifras de esta sección no se citan.
+
+## 21. Repeticiones de prompt (mecanismo listo, 2026-11-28)
+
+Una pasada por modelo no cuantifica la varianza de muestreo: DREAMT comparte con
+WESAD la pregunta de cuánto cambia la respuesta al mismo prompt con otra semilla.
+El mecanismo ya está implementado en `scripts/run_p4_dreamt.py`:
+
+- `--repetitions R` construye el prompt **una vez** por `(ventana, condición)` y
+  varía solo `options.seed` (`--seed + r`);
+- reanudación por `(ventana, condición, repetición)`, con `repetition` y `seed`
+  en cada registro;
+- salida aislada en `responses_rep{R}/{modelo}/` y procedencia
+  `run_provenance_rep{R}.json` (con `repetitions` y `seeds`); con `R = 1` todo
+  queda como estaba;
+- **guardia de motor**: aborta si el corpus existente se generó con otro
+  `ollama_version`/`model_digest`, salvo `--allow-engine-change`.
+
+El análisis es el mismo de WESAD (`sources/phase3/repetition_stats.py`), expuesto
+por `scripts/analyze_repetitions_external.py --experiment dreamt` y enrutado por
+`EVALUATE --experiment dreamt --repetitions R`. Brazos y coste (B1–B3, 1.440
+llamadas cada uno) en [`repetitions.md`](repetitions.md) §9.3. **No ejecutado
+todavía**: esta sección documenta el instrumento, no un resultado.

@@ -171,8 +171,24 @@ def build_generate_argv(
         _append_flag(argv, "--per-class", getattr(args, "per_class", None))
         _append_flag(argv, "--max-records", getattr(args, "max_records", None))
         _append_flag(argv, "--tag", getattr(args, "tag", None))
+        # ``--model`` debe reenviarse: el plan de ``--dry-run`` ya lo muestra y,
+        # sin esto, un ``--model`` explícito se ignoraba en silencio y el corpus
+        # quedaba generado con el modelo por defecto del runner.
+        _append_flag(
+            argv,
+            "--model",
+            getattr(args, "model", None)
+            or ((processControl.defaults or {}).get("llm", {}) or {}).get(
+                "primary_model"
+            ),
+        )
+        # Ojo: aquí NO se reenvía ``--temperature``; en el runner de PhysioNet
+        # esa bandera es la temperatura de muestreo, no la de la evidencia.
+        _append_flag(argv, "--repetitions", getattr(args, "repetitions", None))
         if getattr(args, "few_shot", False):
             argv.append("--few-shot")
+        if getattr(args, "allow_engine_change", False):
+            argv.append("--allow-engine-change")
     elif experiment == "kemocon":
         _append_flag(argv, "--data-dir", external_data_dir("kemocon"))
         _append_flag(argv, "--task", getattr(args, "task", None))
@@ -190,10 +206,13 @@ def build_generate_argv(
         _append_flag(argv, "--cohort", getattr(args, "cohort", None))
         _append_flag(argv, "--seed", getattr(args, "seed", None))
         _append_flag(argv, "--subjects", getattr(args, "subjects", None))
+        _append_flag(argv, "--repetitions", getattr(args, "repetitions", None))
         if getattr(args, "think", False):
             argv.append("--think")
         if getattr(args, "force", False):
             argv.append("--force")
+        if getattr(args, "allow_engine_change", False):
+            argv.append("--allow-engine-change")
     return argv
 
 
@@ -210,6 +229,39 @@ def _script_for_generate(experiment: str) -> str | None:
 # ---------------------------------------------------------------------------
 # EVALUATE
 # ---------------------------------------------------------------------------
+def build_external_repetitions_argv(
+    experiment: str,
+    args: Any,
+    repetitions: int,
+) -> list[str]:
+    """``argv`` del analizador de varianza de muestreo de un dataset externo.
+
+    DREAMT y PhysioNet no comparten la ruta ni el vocabulario de etiquetas de
+    WESAD, así que su varianza de muestreo la mide
+    ``scripts/analyze_repetitions_external.py`` con la misma estadística.
+    """
+    argv: list[str] = [
+        "--experiment",
+        experiment,
+        "--repetitions",
+        str(int(repetitions)),
+    ]
+    _append_flag(
+        argv,
+        "--model",
+        getattr(args, "model", None)
+        or ((processControl.defaults or {}).get("llm", {}) or {}).get(
+            "primary_model"
+        ),
+    )
+    if experiment == "dreamt":
+        _append_flag(argv, "--cohort", getattr(args, "cohort", None))
+    else:
+        _append_flag(argv, "--tag", getattr(args, "tag", None))
+    _append_flag(argv, "--output", getattr(args, "output", None))
+    return argv
+
+
 def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
     """``argv`` del analizador correspondiente al experimento."""
     if experiment not in EXPERIMENTS:
@@ -219,6 +271,12 @@ def build_evaluate_argv(experiment: str, args: Any) -> list[str]:
         )
     argv: list[str] = []
     output = getattr(args, "output", None)
+    repetitions = max(int(getattr(args, "repetitions", None) or 1), 1)
+    if repetitions > 1 and experiment in ("dreamt", "physionet"):
+        # La varianza de muestreo se mide sobre el corpus ``_rep{R}`` con la
+        # estadística compartida; el analizador de la tarea no entiende de
+        # réplicas y contaría cada ventana R veces.
+        return build_external_repetitions_argv(experiment, args, repetitions)
 
     if experiment == "controls":
         _append_flag(argv, "--model", getattr(args, "model", None))
@@ -462,7 +520,8 @@ def _estimate_calls(experiment: str, subjects: Sequence[str], args: Any) -> int 
         cap = getattr(args, "max_windows", None)
         if cap:
             windows = min(windows, int(cap) * max(len(subjects), 1))
-        return windows * n_conditions * n_views
+        n_reps = max(int(getattr(args, "repetitions", None) or 1), 1)
+        return windows * n_conditions * n_views * n_reps
 
     counts = [n for n in (_n_windows(s) for s in subjects) if n is not None]
     if not counts and experiment != "physionet":
@@ -501,10 +560,11 @@ def _estimate_calls(experiment: str, subjects: Sequence[str], args: Any) -> int 
     if experiment == "physionet":
         per_class = int(getattr(args, "per_class", None) or 150)
         n_records = 4 * per_class
+        n_reps = max(int(getattr(args, "repetitions", None) or 1), 1)
         max_records = getattr(args, "max_records", None)
         if max_records:
-            return min(n_records, int(max_records))
-        return int(round(n_records * 0.7))  # split test por defecto
+            return min(n_records, int(max_records)) * n_reps
+        return int(round(n_records * 0.7)) * n_reps  # split test por defecto
     return None
 
 
@@ -658,6 +718,8 @@ def _plan(phase: str) -> dict[str, Any]:
             except FileNotFoundError as exc:
                 plan["dir"] = None
                 plan["paths"]["warnings"].append(str(exc).splitlines()[0])
+        elif experiment in ("dreamt", "physionet") and repetitions > 1:
+            plan["runner"] = "scripts/analyze_repetitions_external.py"
         elif experiment == "degradation" and getattr(args, "hierarchy", False):
             plan["runner"] = "scripts/analyze_binary_hierarchy.py"
         elif experiment == "degradation" and getattr(args, "drift", False):
@@ -781,6 +843,10 @@ def run_evaluate() -> None:
     script = _script_for_evaluate(experiment)
     if experiment == "degradation" and repetitions > 1:
         script = "analyze_repetitions"
+    elif experiment in ("dreamt", "physionet") and repetitions > 1:
+        # Varianza de muestreo de un dataset externo (misma estadística, otra
+        # tarea y otras etiquetas).
+        script = "analyze_repetitions_external"
     elif experiment == "degradation" and getattr(args, "hierarchy", False):
         script = "analyze_binary_hierarchy"
     elif experiment == "degradation" and getattr(args, "drift", False):

@@ -413,18 +413,31 @@ copiar los registros de la repetición 0 desde el corpus base (mismo prompt y
 semilla 42) ahorra 567 llamadas por brazo; si se hace, se anota en el informe y
 se verifica con `scripts/verify_corpus_rebuild.py`.
 
-**Fase B — DREAMT, requiere implementar `--repetitions`** (hoy
-`scripts/run_p4_dreamt.py` no lo tiene; el diseño sería el mismo del barrido:
-prompt una vez, semillas 42+r, reanudación por `(ventana, condición, rep)`):
+**Fase B — DREAMT, ya implementado** (`scripts/run_p4_dreamt.py --repetitions R`;
+mismo diseño que el barrido: prompt construido una vez en `prepare`, semillas
+`--seed + r`, reanudación por `(ventana, condición, rep)`, salida aislada
+`responses_rep{R}/`, guardia de motor y procedencia con `repetitions`/`seeds`):
 
-| # | Brazo | Sujetos | Ventanas | `R` | Llamadas | Tiempo |
-|---|---|---|---:|---:|---:|---:|
-| B1 | `qwen2.5:7b` numérico `C5` | 12 escala | 480 | 3 | 1.440 | ~50 min |
-| B2 | `qwen2.5:7b` texto `C5` | 12 escala | 480 | 3 | 1.440 | ~50 min |
-| B3 | `medgemma:4b` numérico `C3` | 12 escala | 480 | 3 | 1.440 | ~1,5 h |
+| # | Brazo | Condición | Sujetos | Ventanas | `R` | Llamadas | Tiempo |
+|---|---|---|---|---:|---:|---:|---:|
+| B1 | `qwen2.5:7b` numérico | `C1_absent_eda` | 12 escala | 480 | 3 | 1.440 | ~50 min |
+| B2 | `qwen2.5:7b` texto | `C1_absent_eda` | 12 escala | 480 | 3 | 1.440 | ~50 min |
+| B3 | `medgemma:4b` numérico | `C3_absent_hrv` | 12 escala | 480 | 3 | 1.440 | ~1,5 h |
 
-**Fase C — PhysioNet, requiere `--repetitions` y el re-run del servidor**
-(400 registros × 3 = 1.200 llamadas; 800 nuevas sobre la pasada base, ~20 min).
+Condiciones elegidas por **poder mover una conclusión**, no por ser las más
+duras: `C1` es donde el brazo numérico se retira 0,294 y el textual 0,996 (la
+diferencia de representación que sostiene H3/H4), y `C3` es donde `medgemma`
+detecta el bloque cardíaco ausente (0,200) y nadie lo ha replicado. `C4` y
+`NC_absent` quedan fuera: los tres modelos se abstienen al 100 %, y una
+condición determinista no necesita réplicas. (El plan del 2026-11-26 citaba «C5»
+para DREAMT; esa condición **no existe** en esta tarea: su matriz es C0–C4 +
+`NC_absent`.)
+
+**Fase C — PhysioNet, ya implementado** (`scripts/run_p3_physionet.py
+--repetitions R`, ficheros `physionet2017[_tag]_rep{R}.*`; 400 registros × 3 =
+1.200 llamadas, 800 nuevas sobre la pasada base, ~20 min). El reparto por
+registro (no por llamada) garantiza que un registro conserve sus tres réplicas
+aunque se use `--max-records`.
 
 Coste total de las tres fases ≈ **9.300 llamadas**, ~6–7 h de GPU. Orden
 sugerido: A1 → A2 → B3 → A3 → A4 → B1/B2 → C. Criterio de parada por brazo: si
@@ -439,17 +452,74 @@ el acuerdo modal sale ≥ 0,98 en la ampliación, el brazo se cierra con una not
   modelo falta, salida `_rep{R}` aislada y análisis en el despachador.
 - [x] Corpus del piloto en el servidor: 7b (S5–S7, `C5`, R=20; 720) y 14b (S5,
   `C0`+`C5`, R=5; 120). En local solo el informe.
-- [ ] Fase B: `--repetitions` en `run_p4_dreamt.py` (y su análisis).
-- [ ] Fase C: `--repetitions` en `run_p3_physionet.py` + re-ejecución en el
-  servidor con el motor único.
+- [x] Fase B: `--repetitions` en `run_p4_dreamt.py` y análisis externo
+  (`scripts/analyze_repetitions_external.py`, 2026-11-28).
+- [x] Fase C: `--repetitions` en `run_p3_physionet.py` (mismo analizador) y
+  guardia de motor que **aborta** en vez de avisar.
+- [ ] Fase B/C **ejecutadas** en el servidor (el código está; los jobs no).
 - [ ] Copia opcional de la repetición 0 desde el corpus base (A2/A4), con
   verificación de prompts.
 
 ### 9.5 Qué NO se puede afirmar con el plan actual
 
 - La varianza de la **representación textual** en WESAD (no auditada) ni la de
-  DREAMT/PhysioNet (sin repeticiones).
+  DREAMT/PhysioNet (el mecanismo está implementado, pero no hay corpus de
+  repeticiones todavía).
 - La tasa de inestabilidad con precisión: A1 la mejora (6 sujetos, 60 ventanas
   aprox.), pero el n efectivo sigue siendo de sujetos, no de ventanas.
 - Nada de un brazo ejecutado con otro motor: la guardia impide reanudar, y el
   `R` medido en Ollama 0.40.6 no se traslada a otro build.
+
+### 9.6 Cómo se ejecuta (DREAMT y PhysioNet, código listo desde 2026-11-28)
+
+Los dos runners externos replican el diseño del barrido de WESAD:
+
+- **el prompt se construye una vez** por `(ventana/registro, condición)` y solo
+  cambia `options.seed` (`--seed + r`);
+- **reanudación por repetición**: la clave es
+  `(ventana/registro, condición, repetición)`, así que un corte no repite
+  llamadas ni mezcla réplicas;
+- **salida aislada**: `responses_rep{R}/` en DREAMT y
+  `physionet2017[_tag]_rep{R}.*` en PhysioNet. Con `R = 1` las rutas son las de
+  siempre, de modo que el corpus publicado no se toca;
+- **guardia de motor**: si el `run_provenance*.json` existente declara otra
+  versión de Ollama o otro `model_digest`, el runner **aborta** (código 2) salvo
+  `--allow-engine-change`. La caché de reanudación no indexa el motor;
+- **procedencia**: `repetitions` y `seeds` quedan en el JSON de procedencia, y
+  cada registro guarda `repetition`, `seed` y `model`.
+
+**Antes de lanzar, comprueba qué código hay en el servidor.** El 2026-11-28 un
+job se lanzó sin `git pull`: el despachador antiguo **ignoró `--repetitions` en
+silencio**, hizo 0 llamadas y el log no lo delataba (solo `0 pendientes`). Desde
+entonces el arranque imprime `código: <commit> (<rama>, <fecha>)` y el
+despachador imprime el `argv` exacto con el que invoca al runner. Si en el log no
+aparece `--repetitions` o el commit no es el esperado, el job **no** está
+ejecutando el código nuevo:
+
+```bash
+grep -n "repetitions" ~/data/proyectos/ACL2027/scripts/run_p4_dreamt.py | head -3
+```
+
+Y el análisis, sin coste de LLM:
+
+```bash
+python scripts/analyze_repetitions_external.py --experiment dreamt --cohort scale --model qwen2.5:7b --repetitions 3
+python scripts/analyze_repetitions_external.py --experiment physionet --tag srv --repetitions 3
+```
+
+Por CLI de fases, con enrutado automático al mismo analizador:
+
+```bash
+python main.py --proc EVALUATE --experiment dreamt --cohort scale --model qwen2.5:7b --repetitions 3
+python main.py --proc EVALUATE --experiment physionet --tag srv --repetitions 3
+```
+
+El informe (`repetitions_rep{R}_{modelo}.json` / `repetitions_{tag}_rep{R}.json`)
+agrupa por `(representación, condición)` y da: acuerdo modal, entropía, fracción
+de ventanas deterministas, dispersión de la confianza, variabilidad de la
+métrica con **una** pasada (su `sd` es el error de muestreo de un experimento de
+una pasada), convergencia por voto mayoritario `k = 1..R` y `k` implícito para
+±2/3 pp. Las etiquetas se leen de `labels/*.labels.jsonl` (DREAMT, con el id
+opaco recalculado) y de `physionet2017[_tag]_rep{R}.labels.jsonl`; las clases
+son las de cada tarea (`wake/n1/n2/rem` y `normal/af/other-rhythm/noisy`), no
+las afectivas de WESAD.

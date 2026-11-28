@@ -612,7 +612,9 @@ con menor accuracy (0,512), conserva balanced 0,613.
   **azar exacto** (balanced 0,250 frente a 0,552 de la referencia), **no se
   abstiene en 103/103** registros ilegibles y su certeza lingüística **sube**
   donde no hay evidencia. Aquí, a diferencia de WESAD, la calidad **sí** deja
-  rastro en las features (detector AUROC 0,873).
+  rastro en las features (detector AUROC 0,873). Re-ejecutado con el motor del
+  servidor: las decisiones son **las mismas** (402/403) y solo cambia el nivel de
+  claims y certeza (§3.9).
 - **K-EmoCon** (afecto en habla espontánea): sus etiquetas de arousal/valencia no
   son predecibles con EDA/HR de muñeca (AUROC ≤ 0,609). Resultado negativo
   documentado: no sirve como validación del endpoint.
@@ -654,7 +656,7 @@ de desarrollo).
 | E5 | Calibración y selectiva (P4) | ¿Se puede calibrar y abstenerse por riesgo? | Variante con rúbrica graduada + conformal por sujeto | 705 respuestas | ECE, cobertura selectiva | ECE 0,017; cobertura 6 % con precisión 1,000 | Exploratorio · **Contaminado** | [`p4_calibracion.md`](p4_calibracion.md) |
 | E6 | Representación centrada (E12) | ¿Ayuda normalizar por sujeto? | z robusto intra-sujeto, 15 sujetos | 705 respuestas | accuracy, AUROC | 0,485→0,587; AUROC stress 0,744→0,958 | Exploratorio · **Contaminado** | [`e12_resultados.md`](e12_resultados.md) |
 | E7 | Validación externa: K-EmoCon | ¿Se replica en afecto con muñeca? | 23 participantes, ventanas 60 s | ~5,5k ventanas | AUROC | Mejor 0,609; LLM 0,642 | Negativo documentado | [`p3_kemocon.md`](p3_kemocon.md) |
-| E8 | Validación externa: PhysioNet 2017 | ¿Se replica con otra tarea, sensor y clase `noisy`? | 600 registros (197 dev / 403 test), 5 features ECG | 403 respuestas | balanced accuracy, abstención | 0,250 vs 0,552; 0/103 abstenciones | Firme (análisis) | [`p3_physionet.md`](p3_physionet.md) |
+| E8 | Validación externa: PhysioNet 2017 | ¿Se replica con otra tarea, sensor y clase `noisy`? | 600 registros (197 dev / 403 test), 5 features ECG | 403 respuestas × 2 motores (pareado) | balanced accuracy, abstención | 0,250 vs 0,552; 0/103 abstenciones en los dos motores | Firme (análisis) | [`p3_physionet.md`](p3_physionet.md) |
 | E9 | **Modelos × tarea bajo degradación** | ¿Resiste mejor el modelo grande? ¿Cambia la tarea la abstención? | 2 modelos × {4 clases, binario} × C0,C1,C2,C4,C5; 12 sujetos eval. | 11.340 respuestas | balanced, cobertura, claims, certeza | En limpio empatan en binario (Δ +0,014 [−0,012; +0,040]); 14b en 4 clases tiene mejor acc (0,703 vs 0,611) pero por abstención (100 % en C5), no discriminación. Con EDA a cero fallan en direcciones opuestas (7b: bal 0,63 sobrerreclamando estrés; 14b: bal 0,50 diciendo non-stress) | **Firme** | [`resultados_binario.md`](resultados_binario.md) |
 | **E10** | **Jerarquía binaria Schmidt sin temperatura (diseño primario)** | ¿Se sostiene el binario al alinear la tarea con el paper y quitar el confusor térmico? | 2 modelos × 5 condiciones × 424 ventanas (12 sujetos eval.) | 5.670 respuestas | accuracy, acc*, cobertura, balanced, AUROC, H1–H6 | Empate en limpio (0,908 vs 0,915) e **igualdad con la referencia supervisada** (0,905); exceso de coste **+0,32/+0,21** (H1); el 14b se abstiene 22 % en C2 y predice estrés 1–3 veces en C4/C5 (balanced ≈0,51; `acc*` 0,70); respaldo de claims **sube** 0,768→0,811 y 0,876→0,915 (H5); H6 no se replica (ΔSQI inestable); la comparación entre modelos depende de la métrica (Δ acc +0,277 en C4 con Δ balanced −0,126) | **Firme** | [`resultados_jerarquia.md`](resultados_jerarquia.md) |
 | **E11** | **Repeticiones de prompt (varianza de muestreo)** | ¿Es la respuesta estable para el mismo prompt? ¿Cuántas repeticiones hacen falta? | 7b: S5–S7 · 12 ventanas · C5 · **R=20** (720). 14b: S5 · 12 ventanas · C0/C5 · R=5 (120). Ambos en el servidor | 840 respuestas | acuerdo modal, sd de accuracy, convergencia, confianza | **El agregado es estable; la ventana no.** 22/30 ventanas no cambian nunca y **0 de las 9 de estrés**; las 8 inestables son `non-stress` que a veces se reclaman como `stress`. Una pasada da accuracy 0,648 ± 0,043 (rango 0,533–0,700); k=20 la sube a 0,690 (+4,2 pp, ≈1 sd, no concluyente). **El caso decisivo**: una ventana sale 10/10 entre clases con **confianza 85 ± 0,0** en las 20 repeticiones → la confianza no codifica la incertidumbre, y repetir la revela pero no la arregla. 14b: 100 % determinista en la decisión y con confianza graduada (sd 0,64; 5 valores); su trampa de accuracy en C5 (1,000 acc / 0,500 balanced) es determinista | Firme (pilotos) · regla congelada: **R=3** para el agregado y **k≈20** para describir una ventana; **no** se repite todo (solo brazos con acuerdo < 0,98). Fases A–C y coste en §9 del documento | [`repetitions.md`](repetitions.md) |
@@ -915,7 +917,7 @@ few-shot. Referencia logística entrenada en desarrollo.
 - Claims: 1.727, con **47,6 % contradichos** y 0 `unsupported`; el respaldo **no**
   predice el acierto (AUROC 0,510).
 - Certeza lingüística **mayor** en `noisy` (−0,64 vs −1,36; p = 0,0008;
-  Cliff δ = +0,60).
+  P(`noisy`>resto) = 0,603, **Cliff δ = +0,206**).
 - La calidad **sí** es detectable aquí: AUROC multivariante 0,873; con recall 0,5
   en `noisy` se pierde 7,0 % de cobertura limpia. La compuerta de E3, sin
   aprender, detecta el 23,3 % de `noisy` con 2,7 % de falsos.
@@ -928,6 +930,18 @@ el azar. Aporta dos matices nuevos: (i) la certeza lingüística **sube** con la
 degradación natural, al contrario que con la degradación controlada; (ii) la
 calidad derivada de las features funciona cuando el ruido es real, lo que
 convierte a H6 en una recomendación de diseño (compuerta por dataset).
+
+**Re-ejecución en el servidor y contraste de motor (2026-11-28).** El corpus se
+regeneró con la misma entrada en Ollama **0.40.6** (`--tag srv`, 403 llamadas,
+18 min, 0 errores) y se comparó registro a registro
+([`p3_physionet.md`](p3_physionet.md) §5.11): **402 de 403 predicciones
+idénticas**, 0/103 abstenciones en `noisy` y McNemar p = 1,000 → la corrección y
+la abstención **no dependen del motor**. Cambia el lenguaje: claims respaldados
+0,524 → **0,596** (Δ +0,064 [+0,039; +0,089]) y certeza −1,17 → **−0,60**
+(Δ +0,565 [+0,312; +0,814]), con el mismo número absoluto de claims falsos (822
+→ 793) y la misma dirección del efecto `noisy` (δ +0,206 → +0,139, p = 0,019).
+Consecuencia para el paper: H1 y H4 se citan con cifras; el **nivel** de H2b y H5
+se cita con su motor y su `model_digest`.
 
 ## 3.10 E9 — Modelos × tarea bajo degradación (detalle)
 
@@ -1097,6 +1111,14 @@ ventanas).
 
 **Regla aplicada.** R=3 para el agregado; no se lanza corpus completo. Detalle en
 [`repetitions.md`](repetitions.md).
+
+**Estado del mecanismo (2026-11-28).** `--repetitions` está implementado en los
+tres runners (WESAD, DREAMT y PhysioNet) con el mismo diseño —prompt una vez,
+semillas `--seed + r`, reanudación por `(ventana/registro, condición, rep)`,
+salida aislada `_rep{R}`, guardia de motor y procedencia— y los tres comparten
+la estadística de `sources/phase3/repetition_stats.py`; DREAMT y PhysioNet se
+analizan con `scripts/analyze_repetitions_external.py`. Los brazos B1–B3 y C
+(≈9.300 llamadas) están planificados pero **no ejecutados**.
 
 ---
 
@@ -1373,7 +1395,9 @@ corrección cara —recalcular E1 con referencia de desarrollo— **no** se ejec
 2. **Varianza de muestreo medida solo en parte**: E11 la estima para el 7b en
    C5 (30 ventanas, R=20) y para el 14b en C0/C5 (10 ventanas, R=5). El corpus
    principal sigue siendo de una sola semilla; la extrapolación a 424 ventanas
-   es del orden de ±1 pp, no medida directamente.
+   es del orden de ±1 pp, no medida directamente. El mecanismo de repeticiones
+   ya existe para DREAMT y PhysioNet (2026-11-28), pero sus brazos (B1–B3 y C de
+   [`repetitions.md`](repetitions.md) §9.3) **no se han ejecutado**.
 3. **Etiquetas de WESAD y de PhysioNet** provienen de un único protocolo/experto;
    `amusement` es fisiológicamente casi idéntica a `baseline` (AUROC 0,621).
 4. **Umbral SCR** (0,05 µS) calibrado empíricamente sobre S3, no con literatura ni
@@ -1386,17 +1410,17 @@ corrección cara —recalcular E1 con referencia de desarrollo— **no** se ejec
 8. **Validación humana de claims y hedges/boosters** pendiente: el verificador es
    determinista y correcto por construcción, pero nadie ha comprobado si un lector
    humano aceptaría sus etiquetas.
-9. **Motor (versión de Ollama)**: WESAD **y la escala de DREAMT** se generaron
-   con **0.40.6**; PhysioNet y el piloto de DREAMT, con **0.30.7**. Con el mismo
-   prompt y la misma semilla la abstención cambia (0 frente a 28), y al re-ejecutar
-   DREAMT en el servidor una condición pasó de 0,294 a 0,879 de abstención y
-   desapareció un hallazgo local (el «atajo de la temperatura» de `llama`). Las
-   comparaciones **entre datasets** son de patrón, no de cifra. Las 403 respuestas
-   de PhysioNet en disco son anteriores a que el runner escribiera
-   `run_provenance.json`; re-ejecutarlas en el servidor es la forma de que sus
-   cifras sean citables junto a WESAD, y desde el 2026-11-27 se hace con
-   `--tag srv` (el analizador informa del motor y la procedencia solo se escribe
-   cuando hay llamadas pendientes; ver [`p3_physionet.md`](p3_physionet.md) §8.1).
+9. **Motor (versión de Ollama)**: WESAD, la escala de DREAMT **y PhysioNet
+   (`srv`)** se generaron con **0.40.6**; el corpus histórico de PhysioNet y el
+   piloto de DREAMT, con **0.30.7**. Con el mismo prompt y la misma semilla la
+   abstención cambia (0 frente a 28), y al re-ejecutar DREAMT en el servidor una
+   condición pasó de 0,294 a 0,879 de abstención y desapareció un hallazgo local
+   (el «atajo de la temperatura» de `llama`). En PhysioNet el efecto está medido:
+   **402/403 decisiones idénticas** pero **+6,4 pp de claims respaldados** y
+   **+0,57 de certeza**, es decir, el motor mueve el lenguaje y no la conducta
+   ([`p3_physionet.md`](p3_physionet.md) §5.11). Las comparaciones **entre
+   datasets** son de patrón, no de cifra; las de claims y certeza exigen motor
+   único y `run_provenance.json` lo registra.
 10. **n efectivo = 12 sujetos** en WESAD y en la escala de DREAMT: los IC son
    bootstrap agrupado por sujeto, no por ventana. PhysioNet usa registros (no
    sujetos) con muestreo balanceado por clase.
